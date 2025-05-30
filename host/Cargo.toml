@@ -1,0 +1,12 @@
+[package]
+edition = "2021"
+name = "hotline"
+version = "0.1.0"
+
+[dependencies]
+hot-lib-reloader = {version = "0.7", optional = true}
+lib = {path = "../lib"}
+
+[features]
+default = []
+reload = ["dep:hot-lib-reloader"]
