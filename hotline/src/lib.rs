@@ -96,54 +96,19 @@ pub trait TypedObject: Any + Send + Sync {
 /// helper macro to define typed objects with struct and methods
 #[macro_export]
 macro_rules! object {
-    // version with auto accessors
-    (
+    // new syntax with impl block
+    ({
         $(#[$attr:meta])*
         pub struct $name:ident {
             $(pub $field:ident: $field_ty:ty),* $(,)?
         }
         
-        accessors: [$($accessor_field:ident),* $(,)?]
-        
-        methods {
+        impl $impl_name:ident {
             $(
                 fn $method:ident(&mut $self:ident $(, $arg:ident: $arg_ty:ty)*) $(-> $ret:ty)? $body:block
             )*
         }
-    ) => {
-        object! {
-            $(#[$attr])*
-            pub struct $name {
-                $(pub $field: $field_ty),*
-            }
-            
-            methods {
-                // getters using field names
-                $(
-                    fn $accessor_field(&mut self) -> _ { self.$accessor_field }
-                )*
-                
-                // user methods
-                $(
-                    fn $method(&mut $self $(, $arg: $arg_ty)*) $(-> $ret)? $body
-                )*
-            }
-        }
-    };
-    
-    // base version without accessors
-    (
-        $(#[$attr:meta])*
-        pub struct $name:ident {
-            $(pub $field:ident: $field_ty:ty),* $(,)?
-        }
-        
-        methods {
-            $(
-                fn $method:ident(&mut $self:ident $(, $arg:ident: $arg_ty:ty)*) $(-> $ret:ty)? $body:block
-            )*
-        }
-    ) => {
+    }) => {
         $(#[$attr])*
         pub struct $name {
             $(pub $field: $field_ty),*
