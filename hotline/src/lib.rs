@@ -265,6 +265,15 @@ macro_rules! object {
                 }
             }
         }
+        
+        // Auto-generate registration function
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn register_objects(ctx: *mut std::ffi::c_void) {
+            let register = unsafe { 
+                &mut *(ctx as *mut Box<dyn FnMut(&str, Box<dyn Fn() -> Box<dyn Object>>)>) 
+            };
+            register(stringify!($name), Box::new(|| Box::new($name::default())));
+        }
     };
 }
 
@@ -287,18 +296,3 @@ macro_rules! init_with {
 
 
 
-// Macro for registering objects
-#[macro_export]
-macro_rules! register_objects {
-    ($($name:ident),* $(,)?) => {
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn register_objects(ctx: *mut std::ffi::c_void) {
-            let register = unsafe { 
-                &mut *(ctx as *mut Box<dyn FnMut(&str, Box<dyn Fn() -> Box<dyn Object>>)>) 
-            };
-            $(
-                register(stringify!($name), Box::new(|| Box::new($name::default())));
-            )*
-        }
-    };
-}

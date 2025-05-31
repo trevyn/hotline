@@ -1,5 +1,5 @@
 use hotline::{
-    Deserialize, Message, Object, Serialize, Value, dict, init_with, object, register_objects,
+    Deserialize, Message, Object, Serialize, Value, dict, init_with, object,
 };
 
 object! {
@@ -69,4 +69,3 @@ impl Rect {
     }
 }
 
-register_objects!(Rect);
