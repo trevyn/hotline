@@ -40,10 +40,10 @@ fn main() -> Result<(), String> {
     
     runtime.hot_reload(lib_path).expect("Failed to load rect library");
     
-    // Load the render function
-    let lib = unsafe { libloading::Library::new(lib_path) }.expect("Failed to load lib");
-    let render_rect: libloading::Symbol<unsafe extern "Rust" fn(&dyn Any, &mut [u8], i64, i64, i64)> = 
-        unsafe { lib.get(b"render_rect") }.expect("Failed to find render_rect");
+    // Store the library handle separately so we can reload render function
+    let mut render_lib = unsafe { libloading::Library::new(lib_path) }.expect("Failed to load lib");
+    let mut render_rect: libloading::Symbol<unsafe extern "Rust" fn(&dyn Any, &mut [u8], i64, i64, i64)> = 
+        unsafe { render_lib.get(b"render_rect") }.expect("Failed to find render_rect");
 
     let mut rects: Vec<ObjectHandle> = Vec::new();
     let mut drag_start = None;
@@ -140,9 +140,32 @@ fn main() -> Result<(), String> {
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {
                     println!("Reloading rect library...");
+                    
+                    // First rebuild the library
+                    println!("Rebuilding rect library...");
+                    std::process::Command::new("cargo")
+                        .args(&["build", "--release", "-p", "rect"])
+                        .status()
+                        .expect("Failed to build rect");
+                    
+                    // Reload the runtime's copy
                     if let Err(e) = runtime.hot_reload(lib_path) {
-                        eprintln!("Failed to reload: {}", e);
+                        eprintln!("Failed to reload runtime lib: {}", e);
                     }
+                    
+                    // Reload our render function
+                    drop(render_rect);
+                    drop(render_lib);
+                    
+                    // Small delay to ensure file is ready
+                    std::thread::sleep(Duration::from_millis(100));
+                    
+                    render_lib = unsafe { libloading::Library::new(lib_path) }
+                        .expect("Failed to reload render lib");
+                    render_rect = unsafe { render_lib.get(b"render_rect") }
+                        .expect("Failed to reload render_rect");
+                    
+                    println!("Reload complete!");
                 }
                 _ => {}
             }

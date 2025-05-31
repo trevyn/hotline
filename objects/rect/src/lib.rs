@@ -80,7 +80,7 @@ pub extern "Rust" fn render_rect(
             let offset = (y * (pitch as u32) + x * 4) as usize;
             if offset + 3 < buffer.len() {
                 buffer[offset] = 120; // B
-                buffer[offset + 1] = 120; // G
+                buffer[offset + 1] = 0; // G
                 buffer[offset + 2] = 0; // R
                 buffer[offset + 3] = 255; // A
             }

@@ -1,4 +1,4 @@
-use hotline::{TypedObject, TypedMessage, TypedValue, ObjectHandle};
+use hotline::{TypedObject, TypedMessage, TypedValue, ObjectHandle, MethodSignature};
 use std::collections::HashMap;
 use libloading::{Library, Symbol};
 
