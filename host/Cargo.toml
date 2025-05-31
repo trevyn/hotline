@@ -4,10 +4,18 @@ name = "hotline"
 version = "0.1.0"
 
 [dependencies]
+base64 = "0.22"
 hot-lib-reloader = {version = "0.7", optional = true}
 lib = {path = "../lib"}
 rand = "0.9"
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 sdl2 = {version = "0.37.0", features = ["ttf", "image"]}
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[[bin]]
+name = "retro"
+path = "src/retro.rs"
 
 [features]
 default = []
