@@ -1,5 +1,5 @@
 use runtime::{Runtime, m};
-use hotline::{ObjectHandle, Value};
+use hotline::ObjectHandle;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -42,6 +42,9 @@ fn main() -> Result<(), String> {
 
     let mut rects: Vec<ObjectHandle> = Vec::new();
     let mut drag_start = None;
+    let mut selected: Option<ObjectHandle> = None;
+    let mut dragging = false;
+    let mut drag_offset = (0.0, 0.0);
 
     'running: loop {
         canvas.set_draw_color(Color::RGB(0, 0, 0));
@@ -60,7 +63,19 @@ fn main() -> Result<(), String> {
                     y,
                     ..
                 } => {
-                    drag_start = Some((x, y));
+                    // Check if clicking on existing rect
+                    selected = runtime.hit_test(x as f64, y as f64);
+                    if let Some(handle) = selected {
+                        // Start dragging the rect
+                        dragging = true;
+                        // Calculate offset from rect origin to click point
+                        if let Some(bounds) = runtime.get_bounds(handle) {
+                            drag_offset = (x as f64 - bounds.x, y as f64 - bounds.y);
+                        }
+                    } else {
+                        // Start creating new rect
+                        drag_start = Some((x, y));
+                    }
                 }
                 Event::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
@@ -68,7 +83,11 @@ fn main() -> Result<(), String> {
                     y,
                     ..
                 } => {
-                    if let Some((start_x, start_y)) = drag_start {
+                    if dragging {
+                        // Stop dragging
+                        dragging = false;
+                    } else if let Some((start_x, start_y)) = drag_start {
+                        // Create new rect
                         let box_x = start_x.min(x) as f64;
                         let box_y = start_y.min(y) as f64;
                         let box_w = (start_x - x).abs() as f64;
@@ -82,6 +101,20 @@ fn main() -> Result<(), String> {
                             }
                         }
                         drag_start = None;
+                    }
+                }
+                Event::MouseMotion { x, y, .. } => {
+                    if dragging {
+                        if let Some(handle) = selected {
+                            // Update rect position
+                            let new_x = x as f64 - drag_offset.0;
+                            let new_y = y as f64 - drag_offset.1;
+                            if let Some(bounds) = runtime.get_bounds(handle) {
+                                let dx = new_x - bounds.x;
+                                let dy = new_y - bounds.y;
+                                m![runtime, handle, moveBy:dx y:dy];
+                            }
+                        }
                     }
                 }
                 // Hot reload on R key
@@ -112,6 +145,53 @@ fn main() -> Result<(), String> {
             // Render rects to buffer
             for rect_handle in &rects {
                 runtime.render_object(*rect_handle, buffer, 800, 600, pitch as i64);
+            }
+            
+            // Highlight selected rect with a border
+            if let Some(sel_handle) = selected {
+                if let Some(bounds) = runtime.get_bounds(sel_handle) {
+                    // Draw selection border
+                    let x_start = (bounds.x as i32).max(0) as u32;
+                    let y_start = (bounds.y as i32).max(0) as u32;
+                    let x_end = ((bounds.x + bounds.width) as i32).min(800) as u32;
+                    let y_end = ((bounds.y + bounds.height) as i32).min(600) as u32;
+                    
+                    // Top and bottom borders
+                    for x in x_start..x_end {
+                        let top_offset = (y_start * (pitch as u32) + x * 4) as usize;
+                        let bottom_offset = (((y_end - 1) * (pitch as u32)) + x * 4) as usize;
+                        if top_offset + 3 < buffer.len() {
+                            buffer[top_offset] = 0; // B
+                            buffer[top_offset + 1] = 255; // G
+                            buffer[top_offset + 2] = 0; // R
+                            buffer[top_offset + 3] = 255; // A
+                        }
+                        if bottom_offset + 3 < buffer.len() {
+                            buffer[bottom_offset] = 0; // B
+                            buffer[bottom_offset + 1] = 255; // G
+                            buffer[bottom_offset + 2] = 0; // R
+                            buffer[bottom_offset + 3] = 255; // A
+                        }
+                    }
+                    
+                    // Left and right borders
+                    for y in y_start..y_end {
+                        let left_offset = (y * (pitch as u32) + x_start * 4) as usize;
+                        let right_offset = (y * (pitch as u32) + (x_end - 1) * 4) as usize;
+                        if left_offset + 3 < buffer.len() {
+                            buffer[left_offset] = 0; // B
+                            buffer[left_offset + 1] = 255; // G
+                            buffer[left_offset + 2] = 0; // R
+                            buffer[left_offset + 3] = 255; // A
+                        }
+                        if right_offset + 3 < buffer.len() {
+                            buffer[right_offset] = 0; // B
+                            buffer[right_offset + 1] = 255; // G
+                            buffer[right_offset + 2] = 0; // R
+                            buffer[right_offset + 3] = 255; // A
+                        }
+                    }
+                }
             }
         })?;
         

@@ -1,4 +1,4 @@
-use hotline::{Message, Object, ObjectHandle, Value};
+use hotline::{Message, Object, ObjectHandle, Value, Bounds, Deserialize};
 use libloading::Library;
 use std::collections::HashMap;
 
@@ -122,6 +122,31 @@ impl Runtime {
                 }
             }
         }
+    }
+    
+    pub fn get_bounds(&mut self, handle: ObjectHandle) -> Option<Bounds> {
+        // First try bounds as a method with dummy arg
+        let bounds_value = self.send1(handle, "bounds:", Value::Int(0));
+        if let Some(bounds) = Bounds::deserialize(&bounds_value) {
+            return Some(bounds);
+        }
+        
+        // Fallback to getter (for objects that expose bounds as a property)
+        let bounds_value = self.send0(handle, "bounds");
+        Bounds::deserialize(&bounds_value)
+    }
+    
+    pub fn hit_test(&mut self, x: f64, y: f64) -> Option<ObjectHandle> {
+        // Check objects in reverse order (top to bottom)
+        let handles: Vec<_> = self.objects.keys().cloned().collect();
+        for handle in handles.into_iter().rev() {
+            if let Some(bounds) = self.get_bounds(handle) {
+                if bounds.contains(x, y) {
+                    return Some(handle);
+                }
+            }
+        }
+        None
     }
 }
 

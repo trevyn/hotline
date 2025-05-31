@@ -216,6 +216,64 @@ impl Serialize for *mut u8 {
     }
 }
 
+// Bounds protocol for renderables
+#[derive(Debug, Clone, Copy)]
+pub struct Bounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Bounds {
+    pub fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
+        Self { x, y, width, height }
+    }
+    
+    pub fn contains(&self, x: f64, y: f64) -> bool {
+        x >= self.x && x <= self.x + self.width &&
+        y >= self.y && y <= self.y + self.height
+    }
+    
+    pub fn intersects(&self, other: &Bounds) -> bool {
+        self.x < other.x + other.width &&
+        self.x + self.width > other.x &&
+        self.y < other.y + other.height &&
+        self.y + self.height > other.y
+    }
+}
+
+impl Serialize for Bounds {
+    fn serialize(&self) -> Value {
+        dict! {
+            "x" => Value::Float(self.x),
+            "y" => Value::Float(self.y),
+            "width" => Value::Float(self.width),
+            "height" => Value::Float(self.height)
+        }
+    }
+}
+
+impl Deserialize for Bounds {
+    fn deserialize(value: &Value) -> Option<Self> {
+        if let Value::Dict(props) = value {
+            Some(Bounds {
+                x: props.get("x").and_then(f64::deserialize)?,
+                y: props.get("y").and_then(f64::deserialize)?,
+                width: props.get("width").and_then(f64::deserialize)?,
+                height: props.get("height").and_then(f64::deserialize)?,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+// Trait for objects that can be rendered
+pub trait Renderable: Object {
+    fn bounds(&self) -> Bounds;
+}
+
 // Helper macro for creating dict Values
 #[macro_export]
 macro_rules! dict {

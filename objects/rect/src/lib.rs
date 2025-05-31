@@ -1,4 +1,4 @@
-use hotline::{Value, object};
+use hotline::{Serialize, Value, object};
 
 object! {
     Rect {
@@ -12,6 +12,12 @@ object! {
         slf.x += x;
         slf.y += y;
         Value::Nil
+    }
+
+    method bounds dummy: i64 |slf| {
+        // ignore the dummy arg, just needed for macro syntax
+        let bounds = hotline::Bounds::new(slf.x, slf.y, slf.width, slf.height);
+        <hotline::Bounds as Serialize>::serialize(&bounds)
     }
 
 }
@@ -40,8 +46,8 @@ pub fn render_rect(
         for x in x_start..x_end {
             let offset = (y * (pitch as u32) + x * 4) as usize;
             if offset + 3 < buffer.len() {
-                buffer[offset] = 255; // B
-                buffer[offset + 1] = 255; // G
+                buffer[offset] = 120; // B
+                buffer[offset + 1] = 0; // G
                 buffer[offset + 2] = 0; // R
                 buffer[offset + 3] = 255; // A
             }
