@@ -21,3 +21,8 @@ path = "src/main.rs"
 [features]
 default = []
 reload = []
+monolith = ["hotline/monolith", "rect"]
+
+[dependencies.rect]
+path = "../objects/rect"
+optional = true

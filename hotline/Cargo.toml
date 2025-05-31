@@ -3,6 +3,9 @@ edition = "2024"
 name = "hotline"
 version = "0.1.0"
 
+[features]
+monolith = []
+
 [dependencies]
 # do not add dependencies here
 

@@ -2,6 +2,9 @@ use hotline::{TypedObject, TypedMessage, TypedValue, ObjectHandle};
 use std::collections::HashMap;
 use libloading::{Library, Symbol};
 
+#[cfg(feature = "monolith")]
+use rect::Rect;
+
 pub struct TypedRuntime {
     objects: HashMap<ObjectHandle, Box<dyn TypedObject>>,
     next_handle: u64,
@@ -22,6 +25,11 @@ impl TypedRuntime {
         self.next_handle += 1;
         self.objects.insert(handle, obj);
         handle
+    }
+    
+    #[cfg(feature = "monolith")]
+    pub fn register_rect(&mut self, rect: Rect) -> ObjectHandle {
+        self.register(Box::new(rect))
     }
     
     pub fn send(&mut self, target: ObjectHandle, msg: TypedMessage) -> Result<TypedValue, String> {

@@ -8,7 +8,8 @@
       "Bash(rg:*)",
       "Bash(cargo expand:*)",
       "Bash(cargo clean:*)",
-      "Bash(rustc:*)"
+      "Bash(rustc:*)",
+      "Bash(realpath:*)"
     ],
     "deny": [
       "Bash(cargo run:*)",
