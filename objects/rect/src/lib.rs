@@ -19,7 +19,7 @@ object! {
         let bounds = hotline::Bounds::new(slf.x, slf.y, slf.width, slf.height);
         <hotline::Bounds as Serialize>::serialize(&bounds)
     }
-    
+
     method properties dummy: i64 |slf| {
         hotline::dict! {
             "x" => Value::Float(slf.x),

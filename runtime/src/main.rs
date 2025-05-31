@@ -1,5 +1,5 @@
-use runtime::{Runtime, m};
 use hotline::{ObjectHandle, Value};
+use runtime::{Runtime, m};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -21,7 +21,7 @@ fn main() -> Result<(), String> {
     let mut event_pump = sdl_context.event_pump()?;
 
     let mut runtime = Runtime::new();
-    
+
     // Load rect object dynamically
     #[cfg(target_os = "macos")]
     let lib_path = "target/release/librect.dylib";
@@ -29,10 +29,9 @@ fn main() -> Result<(), String> {
     let lib_path = "target/release/librect.so";
     #[cfg(target_os = "windows")]
     let lib_path = "target/release/rect.dll";
-    
-    runtime.hot_reload(lib_path)
-        .expect("Failed to load rect library");
-    
+
+    runtime.hot_reload(lib_path).expect("Failed to load rect library");
+
     // Or use static linking
     #[cfg(not(feature = "reload"))]
     {
@@ -53,17 +52,10 @@ fn main() -> Result<(), String> {
 
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'running,
-                Event::MouseButtonDown {
-                    mouse_btn: MouseButton::Left,
-                    x,
-                    y,
-                    ..
-                } => {
+                Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                    break 'running;
+                }
+                Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
                     // Check if clicking on existing rect
                     selected = runtime.hit_test(x as f64, y as f64);
                     if let Some(handle) = selected {
@@ -78,12 +70,7 @@ fn main() -> Result<(), String> {
                         drag_start = Some((x, y));
                     }
                 }
-                Event::MouseButtonUp {
-                    mouse_btn: MouseButton::Left,
-                    x,
-                    y,
-                    ..
-                } => {
+                Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
                     if dragging {
                         // Stop dragging
                         dragging = false;
@@ -119,10 +106,7 @@ fn main() -> Result<(), String> {
                     }
                 }
                 // Hot reload on R key
-                Event::KeyDown {
-                    keycode: Some(Keycode::R),
-                    ..
-                } => {
+                Event::KeyDown { keycode: Some(Keycode::R), .. } => {
                     println!("Reloading rect library...");
                     if let Err(e) = runtime.hot_reload(lib_path) {
                         eprintln!("Failed to reload: {}", e);
@@ -136,18 +120,18 @@ fn main() -> Result<(), String> {
         let mut texture = texture_creator
             .create_texture_streaming(PixelFormatEnum::ARGB8888, 800, 600)
             .map_err(|e| e.to_string())?;
-            
+
         texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
             // Clear buffer
             for byte in buffer.iter_mut() {
                 *byte = 0;
             }
-            
+
             // Render rects to buffer
             for rect_handle in &rects {
                 runtime.render_object(*rect_handle, buffer, 800, 600, pitch as i64);
             }
-            
+
             // Highlight selected rect with a border
             if let Some(sel_handle) = selected {
                 if let Some(bounds) = runtime.get_bounds(sel_handle) {
@@ -156,7 +140,7 @@ fn main() -> Result<(), String> {
                     let y_start = (bounds.y as i32).max(0) as u32;
                     let x_end = ((bounds.x + bounds.width) as i32).min(800) as u32;
                     let y_end = ((bounds.y + bounds.height) as i32).min(600) as u32;
-                    
+
                     // Top and bottom borders
                     for x in x_start..x_end {
                         let top_offset = (y_start * (pitch as u32) + x * 4) as usize;
@@ -174,7 +158,7 @@ fn main() -> Result<(), String> {
                             buffer[bottom_offset + 3] = 255; // A
                         }
                     }
-                    
+
                     // Left and right borders
                     for y in y_start..y_end {
                         let left_offset = (y * (pitch as u32) + x_start * 4) as usize;
@@ -195,10 +179,10 @@ fn main() -> Result<(), String> {
                 }
             }
         })?;
-        
+
         // Copy texture to canvas
         canvas.copy(&texture, None, None)?;
-        
+
         // Update hover text for selected object
         if let Some(handle) = selected {
             let props = m![runtime, handle, properties:0];
@@ -213,7 +197,7 @@ fn main() -> Result<(), String> {
                     }
                 }
             }
-            
+
             // For now just print to console - in a real app you'd render this as overlay text
             if !hover_text.is_empty() {
                 println!("{}", hover_text);
