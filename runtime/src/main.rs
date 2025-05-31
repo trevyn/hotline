@@ -111,16 +111,11 @@ fn main() -> Result<(), String> {
             
             // Render rects to buffer
             for rect in &rects {
-                runtime.send(
-                    *rect, 
-                    "renderToBuffer:width:height:pitch:", 
-                    vec![
-                        Value::ByteSlicePtr(buffer.as_mut_ptr(), buffer.len()),
-                        Value::Int(800),
-                        Value::Int(600),
-                        Value::Int(pitch as i64),
-                    ]
-                );
+                runtime.with_object(*rect, |obj| {
+                    if let Some(renderable) = obj.as_renderable() {
+                        renderable.render_to_buffer(buffer, 800, 600, pitch as i64);
+                    }
+                });
             }
         })?;
         

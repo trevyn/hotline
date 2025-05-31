@@ -17,7 +17,6 @@ pub enum Value {
     Object(ObjectHandle),
     Array(Vec<Value>),
     Dict(HashMap<String, Value>),
-    ByteSlicePtr(*mut u8, usize),
 }
 
 #[repr(C)]
@@ -48,6 +47,11 @@ pub trait VTableObject: Send + Sync {
 }
 
 
+// Trait for objects that can render
+pub trait Renderable: Object {
+    fn render_to_buffer(&self, buffer: &mut [u8], width: i64, height: i64, pitch: i64);
+}
+
 // Legacy trait for compatibility
 pub trait Object: Send + Sync {
     fn receive(&mut self, msg: &Message) -> Value;
@@ -61,6 +65,11 @@ pub trait Object: Send + Sync {
         // Default implementation does nothing
     }
     
+    // Dynamic cast support
+    fn as_any(&self) -> &dyn std::any::Any;
+    fn as_renderable(&self) -> Option<&dyn Renderable> {
+        None
+    }
 }
 
 // Conversion helpers
@@ -229,19 +238,6 @@ macro_rules! dict {
 // Function type for object registration - using opaque pointer for FFI safety
 pub type RegisterFn = unsafe extern "C" fn(*mut std::ffi::c_void);
 
-// Marker type for &mut [u8] in method signatures
-pub type ByteSliceMut = *mut [u8];
-
-impl Deserialize for ByteSliceMut {
-    fn deserialize(value: &Value) -> Option<Self> {
-        match value {
-            Value::ByteSlicePtr(ptr, len) => {
-                Some(std::ptr::slice_from_raw_parts_mut(*ptr, *len))
-            }
-            _ => None,
-        }
-    }
-}
 
 // Macro for defining objects with automatic boilerplate
 #[macro_export]
@@ -442,6 +438,10 @@ macro_rules! object {
                     let vtable = <$name as $crate::VTableObject>::get_vtable();
                     (vtable.deserialize)(<$name as $crate::VTableObject>::as_ptr(self), state as *const $crate::Value)
                 }
+            }
+            
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
             }
         }
 

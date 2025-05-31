@@ -1,4 +1,4 @@
-use hotline::{Value, object};
+use hotline::{Renderable, Value, object};
 
 object! {
     Rect {
@@ -13,19 +13,19 @@ object! {
         slf.y += y;
         Value::Nil
     }
+}
 
-    method renderToBuffer buffer: hotline::ByteSliceMut, width: w i64, height: h i64, pitch: p i64 |slf| {
-        let buffer = unsafe { &mut *buffer };
-
+impl Renderable for Rect {
+    fn render_to_buffer(&self, buffer: &mut [u8], width: i64, height: i64, pitch: i64) {
         // Draw rectangle by setting pixels
-        let x_start = (slf.x as i32).max(0) as u32;
-        let y_start = (slf.y as i32).max(0) as u32;
-        let x_end = ((slf.x + slf.width) as i32).min(w as i32) as u32;
-        let y_end = ((slf.y + slf.height) as i32).min(h as i32) as u32;
+        let x_start = (self.x as i32).max(0) as u32;
+        let y_start = (self.y as i32).max(0) as u32;
+        let x_end = ((self.x + self.width) as i32).min(width as i32) as u32;
+        let y_end = ((self.y + self.height) as i32).min(height as i32) as u32;
 
         for y in y_start..y_end {
             for x in x_start..x_end {
-                let offset = (y * (p as u32) + x * 4) as usize;
+                let offset = (y * (pitch as u32) + x * 4) as usize;
                 if offset + 3 < buffer.len() {
                     buffer[offset] = 255; // B
                     buffer[offset + 1] = 0; // G
@@ -34,6 +34,5 @@ object! {
                 }
             }
         }
-        Value::Nil
     }
 }

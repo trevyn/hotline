@@ -96,6 +96,13 @@ impl Runtime {
     pub fn register_static(&mut self, name: &str, factory: Box<dyn Fn() -> Box<dyn Object>>) {
         self.classes.insert(name.to_string(), factory);
     }
+    
+    pub fn with_object<F, R>(&self, handle: ObjectHandle, f: F) -> Option<R>
+    where
+        F: FnOnce(&dyn Object) -> R,
+    {
+        self.objects.get(&handle).map(|(_, obj)| f(obj.as_ref()))
+    }
 }
 
 // Message macro - assumes 'runtime' is in scope
