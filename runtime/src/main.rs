@@ -115,7 +115,7 @@ fn main() -> Result<(), String> {
                     *rect, 
                     "renderToBuffer:width:height:pitch:", 
                     vec![
-                        Value::Int(buffer.as_mut_ptr() as i64),
+                        Value::ByteSlicePtr(buffer.as_mut_ptr(), buffer.len()),
                         Value::Int(800),
                         Value::Int(600),
                         Value::Int(pitch as i64),

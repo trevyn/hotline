@@ -17,6 +17,7 @@ pub enum Value {
     Object(ObjectHandle),
     Array(Vec<Value>),
     Dict(HashMap<String, Value>),
+    ByteSlicePtr(*mut u8, usize),
 }
 
 #[repr(C)]
@@ -46,6 +47,7 @@ pub trait VTableObject: Send + Sync {
     fn as_const_ptr(&self) -> *const c_void;
 }
 
+
 // Legacy trait for compatibility
 pub trait Object: Send + Sync {
     fn receive(&mut self, msg: &Message) -> Value;
@@ -58,6 +60,7 @@ pub trait Object: Send + Sync {
     fn deserialize(&mut self, _state: &Value) {
         // Default implementation does nothing
     }
+    
 }
 
 // Conversion helpers
@@ -102,6 +105,7 @@ impl From<bool> for Value {
         Value::Bool(v)
     }
 }
+
 
 impl From<ObjectHandle> for Value {
     fn from(v: ObjectHandle) -> Self {
@@ -202,6 +206,7 @@ impl Deserialize for *mut u8 {
     }
 }
 
+
 // Additional implementations for Any trait
 impl Serialize for *mut u8 {
     fn serialize(&self) -> Value {
@@ -223,6 +228,20 @@ macro_rules! dict {
 
 // Function type for object registration - using opaque pointer for FFI safety
 pub type RegisterFn = unsafe extern "C" fn(*mut std::ffi::c_void);
+
+// Marker type for &mut [u8] in method signatures
+pub type ByteSliceMut = *mut [u8];
+
+impl Deserialize for ByteSliceMut {
+    fn deserialize(value: &Value) -> Option<Self> {
+        match value {
+            Value::ByteSlicePtr(ptr, len) => {
+                Some(std::ptr::slice_from_raw_parts_mut(*ptr, *len))
+            }
+            _ => None,
+        }
+    }
+}
 
 // Macro for defining objects with automatic boilerplate
 #[macro_export]
