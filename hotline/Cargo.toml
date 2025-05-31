@@ -4,5 +4,5 @@ name = "hotline"
 version = "0.1.0"
 
 [dependencies]
-paste = "1.0"
+paste = { path = "../paste" }
 # do not add additional dependencies here
