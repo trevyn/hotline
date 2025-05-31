@@ -1,16 +1,24 @@
+#[cfg(not(feature = "monolith"))]
 use hotline::{TypedObject, TypedMessage, TypedValue, ObjectHandle};
+#[cfg(feature = "monolith")]
+use hotline::ObjectHandle;
+
+#[cfg(not(feature = "monolith"))]
 use std::collections::HashMap;
+#[cfg(not(feature = "monolith"))]
 use libloading::{Library, Symbol};
 
 #[cfg(feature = "monolith")]
-use rect::Rect;
+pub use hotline::monolith::{StaticRuntime as TypedRuntime, AllObjects, rect};
 
+#[cfg(not(feature = "monolith"))]
 pub struct TypedRuntime {
     objects: HashMap<ObjectHandle, Box<dyn TypedObject>>,
     next_handle: u64,
     loaded_libs: HashMap<String, Library>,
 }
 
+#[cfg(not(feature = "monolith"))]
 impl TypedRuntime {
     pub fn new() -> Self {
         Self {
@@ -25,11 +33,6 @@ impl TypedRuntime {
         self.next_handle += 1;
         self.objects.insert(handle, obj);
         handle
-    }
-    
-    #[cfg(feature = "monolith")]
-    pub fn register_rect(&mut self, rect: Rect) -> ObjectHandle {
-        self.register(Box::new(rect))
     }
     
     pub fn send(&mut self, target: ObjectHandle, msg: TypedMessage) -> Result<TypedValue, String> {
@@ -107,6 +110,11 @@ impl TypedRuntime {
             Some(self.register(obj))
         }
     }
+}
+
+#[cfg(feature = "monolith")]
+pub fn register_rect(runtime: &mut TypedRuntime, rect: rect::Rect) -> ObjectHandle {
+    runtime.register(AllObjects::Rect(rect))
 }
 
 /// macro for ergonomic message sends

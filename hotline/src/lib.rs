@@ -155,25 +155,7 @@ macro_rules! typed_methods {
 pub struct ObjectHandle(pub u64);
 
 #[cfg(feature = "monolith")]
-pub mod monolith {
-    use super::*;
-    use std::marker::PhantomData;
-    
-    // typed handle that knows its concrete type at compile time
-    pub struct TypedHandle<T> {
-        pub handle: ObjectHandle,
-        _phantom: PhantomData<T>,
-    }
-    
-    impl<T> TypedHandle<T> {
-        pub fn new(handle: ObjectHandle) -> Self {
-            Self {
-                handle,
-                _phantom: PhantomData,
-            }
-        }
-    }
-}
+pub mod monolith;
 
 // helper to convert type to consistent handle
 pub trait TypeToHandle {

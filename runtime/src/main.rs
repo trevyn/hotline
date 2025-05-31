@@ -7,6 +7,30 @@ use sdl2::pixels::{Color, PixelFormatEnum};
 use std::time::Duration;
 use std::any::Any;
 
+#[cfg(feature = "monolith")]
+use runtime::{rect, AllObjects, register_rect};
+
+#[cfg(feature = "monolith")]
+fn render_rect_static(rect: &rect::Rect, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: usize) {
+    // Draw rectangle by setting pixels
+    let x_start = (rect.x as i32).max(0) as u32;
+    let y_start = (rect.y as i32).max(0) as u32;
+    let x_end = ((rect.x + rect.width) as i32).min(buffer_width as i32) as u32;
+    let y_end = ((rect.y + rect.height) as i32).min(buffer_height as i32) as u32;
+
+    for y in y_start..y_end {
+        for x in x_start..x_end {
+            let offset = (y * (pitch as u32) + x * 4) as usize;
+            if offset + 3 < buffer.len() {
+                buffer[offset] = 120; // B
+                buffer[offset + 1] = 0; // G
+                buffer[offset + 2] = 0; // R
+                buffer[offset + 3] = 255; // A
+            }
+        }
+    }
+}
+
 fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
@@ -23,25 +47,29 @@ fn main() -> Result<(), String> {
 
     let mut runtime = TypedRuntime::new();
 
-    // Load rect library
-    #[cfg(target_os = "macos")]
-    let lib_path = "target/release/librect.dylib";
-    #[cfg(target_os = "linux")]
-    let lib_path = "target/release/librect.so";
-    #[cfg(target_os = "windows")]
-    let lib_path = "target/release/rect.dll";
+    #[cfg(not(feature = "monolith"))]
+    {
+        // Load rect library
+        #[cfg(target_os = "macos")]
+        let lib_path = "target/release/librect.dylib";
+        #[cfg(target_os = "linux")]
+        let lib_path = "target/release/librect.so";
+        #[cfg(target_os = "windows")]
+        let lib_path = "target/release/rect.dll";
+        
+        // First build the rect library
+        println!("Building rect library...");
+        std::process::Command::new("cargo")
+            .args(&["build", "--release", "-p", "rect"])
+            .status()
+            .expect("Failed to build rect");
+        
+        runtime.hot_reload(lib_path).expect("Failed to load rect library");
+    }
     
-    // First build the rect library
-    println!("Building rect library...");
-    std::process::Command::new("cargo")
-        .args(&["build", "--release", "-p", "rect"])
-        .status()
-        .expect("Failed to build rect");
-    
-    runtime.hot_reload(lib_path).expect("Failed to load rect library");
-    
-    // Store the library handle separately so we can reload render function
+    #[cfg(not(feature = "monolith"))]
     let mut render_lib = unsafe { libloading::Library::new(lib_path) }.expect("Failed to load lib");
+    #[cfg(not(feature = "monolith"))]
     let mut render_rect: libloading::Symbol<unsafe extern "Rust" fn(&dyn Any, &mut [u8], i64, i64, i64)> = 
         unsafe { render_lib.get(b"render_rect") }.expect("Failed to find render_rect");
 
@@ -104,12 +132,29 @@ fn main() -> Result<(), String> {
                         let box_h = (start_y - y).abs() as f64;
 
                         if box_w > 0.0 && box_h > 0.0 {
-                            if let Some(handle) = runtime.create_from_lib("librect", "create_rect") {
-                                // Set initial properties
-                                typed_send!(runtime, handle, set_x(box_x)).ok();
-                                typed_send!(runtime, handle, set_y(box_y)).ok();
-                                typed_send!(runtime, handle, set_width(box_w)).ok();
-                                typed_send!(runtime, handle, set_height(box_h)).ok();
+                            #[cfg(not(feature = "monolith"))]
+                            let handle = runtime.create_from_lib("librect", "create_rect");
+                            
+                            #[cfg(feature = "monolith")]
+                            let handle = {
+                                let r = rect::Rect {
+                                    x: box_x,
+                                    y: box_y,
+                                    width: box_w,
+                                    height: box_h,
+                                };
+                                Some(register_rect(&mut runtime, r))
+                            };
+                            
+                            if let Some(handle) = handle {
+                                #[cfg(not(feature = "monolith"))]
+                                {
+                                    // Set initial properties for dynamic version
+                                    typed_send!(runtime, handle, set_x(box_x)).ok();
+                                    typed_send!(runtime, handle, set_y(box_y)).ok();
+                                    typed_send!(runtime, handle, set_width(box_w)).ok();
+                                    typed_send!(runtime, handle, set_height(box_h)).ok();
+                                }
                                 rects.push(handle);
                             }
                         }
@@ -139,33 +184,44 @@ fn main() -> Result<(), String> {
                 }
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {
-                    println!("Reloading rect library...");
-                    
-                    // First rebuild the library
-                    println!("Rebuilding rect library...");
-                    std::process::Command::new("cargo")
-                        .args(&["build", "--release", "-p", "rect"])
-                        .status()
-                        .expect("Failed to build rect");
-                    
-                    // Reload the runtime's copy
-                    if let Err(e) = runtime.hot_reload(lib_path) {
-                        eprintln!("Failed to reload runtime lib: {}", e);
+                    #[cfg(not(feature = "monolith"))]
+                    {
+                        println!("Reloading rect library...");
+                        
+                        // First rebuild the library
+                        println!("Rebuilding rect library...");
+                        std::process::Command::new("cargo")
+                            .args(&["build", "--release", "-p", "rect"])
+                            .status()
+                            .expect("Failed to build rect");
+                        
+                        // Reload the runtime's copy
+                        if let Err(e) = runtime.hot_reload(lib_path) {
+                            eprintln!("Failed to reload runtime lib: {}", e);
+                        }
                     }
                     
-                    // Reload our render function
-                    drop(render_rect);
-                    drop(render_lib);
+                    #[cfg(feature = "monolith")]
+                    {
+                        println!("Hot reload not available in monolith mode");
+                    }
                     
-                    // Small delay to ensure file is ready
-                    std::thread::sleep(Duration::from_millis(100));
-                    
-                    render_lib = unsafe { libloading::Library::new(lib_path) }
-                        .expect("Failed to reload render lib");
-                    render_rect = unsafe { render_lib.get(b"render_rect") }
-                        .expect("Failed to reload render_rect");
-                    
-                    println!("Reload complete!");
+                    #[cfg(not(feature = "monolith"))]
+                    {
+                        // Reload our render function
+                        drop(render_rect);
+                        drop(render_lib);
+                        
+                        // Small delay to ensure file is ready
+                        std::thread::sleep(Duration::from_millis(100));
+                        
+                        render_lib = unsafe { libloading::Library::new(lib_path) }
+                            .expect("Failed to reload render lib");
+                        render_rect = unsafe { render_lib.get(b"render_rect") }
+                            .expect("Failed to reload render_rect");
+                        
+                        println!("Reload complete!");
+                    }
                 }
                 _ => {}
             }
@@ -184,15 +240,25 @@ fn main() -> Result<(), String> {
 
             // Render rects to buffer
             for &rect_handle in &rects {
-                if let Some(rect_obj) = runtime.get_object(rect_handle) {
-                    unsafe {
-                        render_rect(
-                            rect_obj.as_any(),
-                            buffer,
-                            800,
-                            600,
-                            pitch as i64,
-                        );
+                #[cfg(not(feature = "monolith"))]
+                {
+                    if let Some(rect_obj) = runtime.get_object(rect_handle) {
+                        unsafe {
+                            render_rect(
+                                rect_obj.as_any(),
+                                buffer,
+                                800,
+                                600,
+                                pitch as i64,
+                            );
+                        }
+                    }
+                }
+                
+                #[cfg(feature = "monolith")]
+                {
+                    if let Some(rect_obj) = runtime.get_rect(rect_handle) {
+                        render_rect_static(rect_obj, buffer, 800, 600, pitch);
                     }
                 }
             }
