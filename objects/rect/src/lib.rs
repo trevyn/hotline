@@ -1,14 +1,14 @@
 use hotline::{MethodSignature, TypedMessage, TypedObject, TypedValue, object, typed_methods};
 
 object! {
-    #[derive(Clone)]
+    #[derive(Default, Clone)]
     pub struct Rect {
         pub x: f64,
         pub y: f64,
         pub width: f64,
         pub height: f64,
     }
-    
+
     methods {
         fn move_by(&mut self, dx: f64, dy: f64) {
             self.x += dx;
@@ -20,7 +20,7 @@ object! {
 // Constructor for hot-reloading - uses Rust ABI to preserve trait object
 #[unsafe(no_mangle)]
 pub extern "Rust" fn create_rect() -> Box<dyn TypedObject> {
-    Box::new(Rect { x: 100.0, y: 100.0, width: 200.0, height: 150.0 })
+    Box::new(Rect::default())
 }
 
 // Simple standalone render function with Rust signature
@@ -48,7 +48,7 @@ pub extern "Rust" fn render_rect(
             let offset = (y * (pitch as u32) + x * 4) as usize;
             if offset + 3 < buffer.len() {
                 buffer[offset] = 120; // B
-                buffer[offset + 1] = 0; // G
+                buffer[offset + 1] = 120; // G
                 buffer[offset + 2] = 0; // R
                 buffer[offset + 3] = 255; // A
             }

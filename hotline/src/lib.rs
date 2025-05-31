@@ -1,5 +1,8 @@
 use std::any::{Any, TypeId};
 
+// Re-export paste for use by downstream crates
+pub use paste;
+
 /// typed value that knows what it contains
 #[derive(Debug)]
 pub enum TypedValue {
@@ -89,6 +92,42 @@ pub trait TypedObject: Any + Send + Sync {
 /// helper macro to define typed objects with struct and methods
 #[macro_export]
 macro_rules! object {
+    // version with auto accessors
+    (
+        $(#[$attr:meta])*
+        pub struct $name:ident {
+            $(pub $field:ident: $field_ty:ty),* $(,)?
+        }
+        
+        accessors: [$($accessor_field:ident),* $(,)?]
+        
+        methods {
+            $(
+                fn $method:ident(&mut $self:ident $(, $arg:ident: $arg_ty:ty)*) $(-> $ret:ty)? $body:block
+            )*
+        }
+    ) => {
+        object! {
+            $(#[$attr])*
+            pub struct $name {
+                $(pub $field: $field_ty),*
+            }
+            
+            methods {
+                // getters using field names
+                $(
+                    fn $accessor_field(&mut self) -> _ { self.$accessor_field }
+                )*
+                
+                // user methods
+                $(
+                    fn $method(&mut $self $(, $arg: $arg_ty)*) $(-> $ret)? $body
+                )*
+            }
+        }
+    };
+    
+    // base version without accessors
     (
         $(#[$attr:meta])*
         pub struct $name:ident {
@@ -106,32 +145,24 @@ macro_rules! object {
             $(pub $field: $field_ty),*
         }
         
-        object! {
-            @impl $name {
-                // auto-generate getters for all fields
-                $(
-                    fn $field(&mut self) -> $field_ty { self.$field }
-                )*
-                
-                // user-defined methods
-                $(
-                    fn $method(&mut $self $(, $arg: $arg_ty)*) $(-> $ret)? $body
-                )*
-            }
-        }
-    };
-    
-    // internal impl variant
-    (@impl $obj:ty {
-        $(
-            fn $method:ident(&mut $self:ident $(, $arg:ident: $arg_ty:ty)*) $(-> $ret:ty)? $body:block
-        )*
-    }) => {
-        $crate::typed_methods! {
-            $obj {
-                $(
-                    fn $method(&mut $self $(, $arg: $arg_ty)*) $(-> $ret)? $body
-                )*
+        $crate::paste::paste! {
+            $crate::typed_methods! {
+                $name {
+                    // auto-generated getters (field name as method)
+                    $(
+                        fn $field(&mut self) -> $field_ty { self.$field }
+                    )*
+                    
+                    // auto-generated setters with set_ prefix
+                    $(
+                        fn [<set_ $field>](&mut self, value: $field_ty) { self.$field = value; }
+                    )*
+                    
+                    // user-defined methods
+                    $(
+                        fn $method(&mut $self $(, $arg: $arg_ty)*) $(-> $ret)? $body
+                    )*
+                }
             }
         }
     };
