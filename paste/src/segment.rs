@@ -31,7 +31,36 @@ pub(crate) fn parse(tokens: &mut Peekable<token_stream::IntoIter>) -> Result<Vec
                 if fragment.starts_with("r#") {
                     fragment = fragment.split_off(2);
                 }
-                if fragment == "env"
+                if fragment == "stringify"
+                    && match tokens.peek() {
+                        Some(TokenTree::Punct(punct)) => punct.as_char() == '!',
+                        _ => false,
+                    }
+                {
+                    let bang = tokens.next().unwrap(); // `!`
+                    let expect_group = tokens.next();
+                    let parenthesized = match &expect_group {
+                        Some(TokenTree::Group(group))
+                            if group.delimiter() == Delimiter::Parenthesis =>
+                        {
+                            group
+                        }
+                        Some(wrong) => return Err(Error::new(wrong.span(), "expected `(`")),
+                        None => {
+                            return Err(Error::new2(
+                                ident.span(),
+                                bang.span(),
+                                "expected `(` after `stringify!`",
+                            ));
+                        }
+                    };
+                    // For stringify!, convert the tokens inside to a string
+                    let stringified = parenthesized.stream().to_string();
+                    segments.push(Segment::String(LitStr {
+                        value: stringified,
+                        span: ident.span(),
+                    }));
+                } else if fragment == "env"
                     && match tokens.peek() {
                         Some(TokenTree::Punct(punct)) => punct.as_char() == '!',
                         _ => false,
@@ -212,6 +241,22 @@ pub(crate) fn paste(segments: &[Segment]) -> Result<String> {
                             prev = ch;
                         }
                         evaluated.push(acc);
+                    }
+                    "type" => {
+                        // Convert Rust type syntax to valid identifier
+                        let sanitized = last
+                            .replace("&", "ref_")
+                            .replace("mut ", "mut_")
+                            .replace(" ", "_")
+                            .replace("[", "slice_")
+                            .replace("]", "_endslice")
+                            .replace("(", "paren_")
+                            .replace(")", "_endparen")
+                            .replace(",", "_comma_")
+                            .replace("<", "lt_")
+                            .replace(">", "_gt")
+                            .replace("::", "_");
+                        evaluated.push(sanitized);
                     }
                     _ => {
                         return Err(Error::new2(

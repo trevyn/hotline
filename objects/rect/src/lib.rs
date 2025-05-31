@@ -1,4 +1,6 @@
-hotline::object! {
+use hotline::object;
+
+object! {
     #[derive(Default, Clone)]
     pub struct Rect {
         pub x: f64,
