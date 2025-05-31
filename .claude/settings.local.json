@@ -5,7 +5,10 @@
       "Bash(mv:*)",
       "Bash(cargo build:*)",
       "Bash(ls:*)",
-      "Bash(rg:*)"
+      "Bash(rg:*)",
+      "Bash(cargo expand:*)",
+      "Bash(rustc --version)",
+      "Bash(cargo clean:*)"
     ],
     "deny": [
       "Bash(cargo run:*)",
