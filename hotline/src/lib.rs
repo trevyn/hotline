@@ -153,6 +153,12 @@ macro_rules! object {
         
         // Generate no_mangle extern functions
         $crate::paste::paste! {
+            // Constructor if Default is implemented
+            #[unsafe(no_mangle)]
+            pub extern "Rust" fn [<$name _default>]() -> Box<dyn ::std::any::Any> {
+                Box::new(<$name as Default>::default())
+            }
+            
             // Getters
             $(
                 #[unsafe(no_mangle)]
@@ -188,15 +194,15 @@ macro_rules! object {
         }
         
         // Still implement TypedObject for backwards compatibility
-        impl TypedObject for $name {
-            fn signatures(&self) -> &[MethodSignature] {
+        impl $crate::TypedObject for $name {
+            fn signatures(&self) -> &[$crate::MethodSignature] {
                 use std::any::TypeId;
                 use std::sync::OnceLock;
-                static SIGS: OnceLock<Vec<MethodSignature>> = OnceLock::new();
+                static SIGS: OnceLock<Vec<$crate::MethodSignature>> = OnceLock::new();
                 SIGS.get_or_init(|| vec![
                     // Field getters
                     $(
-                        MethodSignature {
+                        $crate::MethodSignature {
                             selector: stringify!($field).to_string(),
                             arg_types: vec![],
                             return_type: TypeId::of::<$field_ty>(),
@@ -204,7 +210,7 @@ macro_rules! object {
                     )*
                     // Field setters
                     $(
-                        MethodSignature {
+                        $crate::MethodSignature {
                             selector: concat!("set_", stringify!($field)).to_string(),
                             arg_types: vec![TypeId::of::<$field_ty>()],
                             return_type: TypeId::of::<()>(),
@@ -212,7 +218,7 @@ macro_rules! object {
                     )*
                     // User methods
                     $(
-                        MethodSignature {
+                        $crate::MethodSignature {
                             selector: stringify!($method).to_string(),
                             arg_types: vec![$(TypeId::of::<$arg_ty>()),*],
                             return_type: TypeId::of::<object!(@ret_type $($ret)?)>(),
@@ -221,12 +227,12 @@ macro_rules! object {
                 ])
             }
 
-            fn receive_typed(&mut self, msg: &TypedMessage) -> Result<TypedValue, String> {
+            fn receive_typed(&mut self, msg: &$crate::TypedMessage) -> Result<$crate::TypedValue, String> {
                 match msg.selector.as_str() {
                     // Field getters
                     $(
                         stringify!($field) => {
-                            Ok(TypedValue::new(self.$field.clone()))
+                            Ok($crate::TypedValue::new(self.$field.clone()))
                         }
                     )*
                     // Field setters
@@ -237,7 +243,7 @@ macro_rules! object {
                                 .get::<$field_ty>()
                                 .ok_or("value type mismatch")?;
                             self.$field = value.clone();
-                            Ok(TypedValue::new(()))
+                            Ok($crate::TypedValue::new(()))
                         }
                     )*
                     // User methods
@@ -252,7 +258,7 @@ macro_rules! object {
                                 _arg_idx += 1;
                             )*
                             let result = self.$method($($arg.clone()),*);
-                            Ok(TypedValue::new(result))
+                            Ok($crate::TypedValue::new(result))
                         }
                     )*
                     _ => Err(format!("unknown selector: {}", msg.selector)),

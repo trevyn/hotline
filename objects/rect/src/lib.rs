@@ -1,6 +1,4 @@
-use hotline::{MethodSignature, TypedMessage, TypedObject, TypedValue, object, typed_methods};
-
-object! {
+hotline::object! {
     #[derive(Default, Clone)]
     pub struct Rect {
         pub x: f64,
@@ -15,12 +13,6 @@ object! {
             self.y += dy;
         }
     }
-}
-
-// Constructor for hot-reloading - uses Rust ABI to preserve trait object
-#[unsafe(no_mangle)]
-pub extern "Rust" fn create_rect() -> Box<dyn TypedObject> {
-    Box::new(Rect::default())
 }
 
 // Simple standalone render function with Rust signature
