@@ -207,7 +207,9 @@ macro_rules! object {
                     let Some(instance) = obj.downcast_mut::<$name>() else {
                         panic!(concat!("Type mismatch: expected ", stringify!($name)));
                     };
+                    println!(concat!(stringify!($name), "_set_", stringify!($field), " called with value: {:?}"), value);
                     instance.$field = value;
+                    println!(concat!("After set: ", stringify!($field), " = {:?}"), instance.$field);
                 }
             )*
             

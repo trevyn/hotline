@@ -9,8 +9,10 @@ hotline::object! {
 
     methods {
         fn move_by(&mut self, dx: f64, dy: f64) {
+            println!("move_by called with dx={}, dy={}", dx, dy);
             self.x += dx;
             self.y += dy;
+            println!("After move: x={}, y={}", self.x, self.y);
         }
     }
 }
@@ -26,8 +28,11 @@ pub extern "Rust" fn render_rect(
 ) {
     // Downcast to Rect
     let Some(rect) = obj.downcast_ref::<Rect>() else {
+        eprintln!("render_rect: Failed to downcast to Rect");
         return;
     };
+    
+    println!("render_rect: Drawing rect at ({}, {}) size {}x{}", rect.x, rect.y, rect.width, rect.height);
 
     // Draw rectangle by setting pixels
     let x_start = (rect.x as i32).max(0) as u32;

@@ -117,10 +117,10 @@ fn main() -> Result<(), String> {
                                 .expect("Failed to create rect");
 
                             // Set initial properties
-                            direct_call!(runtime, handle, Rect, x(box_x)).ok();
-                            direct_call!(runtime, handle, Rect, y(box_y)).ok();
-                            direct_call!(runtime, handle, Rect, width(box_w)).ok();
-                            direct_call!(runtime, handle, Rect, height(box_h)).ok();
+                            direct_call!(runtime, handle, Rect, set_x(box_x)).ok();
+                            direct_call!(runtime, handle, Rect, set_y(box_y)).ok();
+                            direct_call!(runtime, handle, Rect, set_width(box_w)).ok();
+                            direct_call!(runtime, handle, Rect, set_height(box_h)).ok();
 
                             println!(
                                 "Created rect with bounds: ({}, {}, {}, {})",

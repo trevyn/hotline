@@ -67,7 +67,9 @@ impl DirectRuntime {
         };
         
         let obj = unsafe { constructor() };
-        Ok(self.register(obj))
+        let handle = self.register(obj);
+        println!("Created object with handle: {:?}", handle);
+        Ok(handle)
     }
 
     // Direct method calls
@@ -87,30 +89,35 @@ impl DirectRuntime {
             lib.get(symbol_name.as_bytes())? 
         };
         
-        Ok(unsafe { getter(obj) })
+        let result = unsafe { getter(obj) };
+        Ok(result)
     }
 
     pub fn call_setter<T>(&mut self, handle: ObjectHandle, type_name: &str, lib_name: &str, method: &str, value: T) -> Result<(), Box<dyn std::error::Error>> 
     where 
-        T: 'static
+        T: 'static + std::fmt::Debug
     {
         // Get symbol first to avoid borrow issues
-        let symbol_name = format!("{}_set_{}", type_name, method);
+        let symbol_name = format!("{}_{}", type_name, method);
+        println!("Looking for setter symbol: {} in library: {}", symbol_name, lib_name);
         type SetterFn<T> = unsafe extern "Rust" fn(&mut dyn Any, T);
         
         let setter_fn = {
             let lib = self.loaded_libs.get(lib_name)
                 .ok_or("library not loaded")?;
-            let setter: Symbol<SetterFn<T>> = unsafe { 
-                lib.get(symbol_name.as_bytes())? 
-            };
-            // Copy the function pointer out
-            *setter
+            match unsafe { lib.get::<SetterFn<T>>(symbol_name.as_bytes()) } {
+                Ok(setter) => *setter,
+                Err(e) => {
+                    eprintln!("Failed to find symbol {}: {:?}", symbol_name, e);
+                    return Err(format!("Symbol not found: {}", symbol_name).into());
+                }
+            }
         };
         
         let obj = self.get_object_mut(handle)
             .ok_or("object not found")?;
         
+        println!("Calling setter {}::{} with value {:?}", type_name, method, value);
         unsafe { setter_fn(obj, value) };
         Ok(())
     }
@@ -149,17 +156,17 @@ impl DirectRuntime {
 macro_rules! direct_call {
     // Getter
     ($runtime:expr, $handle:expr, $type:ident, $method:ident()) => {{
-        $runtime.call_getter::<_>($handle, stringify!($type), concat!("lib", stringify!($type)), stringify!($method))
+        $runtime.call_getter::<_>($handle, stringify!($type), "librect", stringify!($method))
     }};
     
     // Setter
     ($runtime:expr, $handle:expr, $type:ident, $method:ident($value:expr)) => {{
-        $runtime.call_setter($handle, stringify!($type), concat!("lib", stringify!($type)), stringify!($method), $value)
+        $runtime.call_setter($handle, stringify!($type), "librect", stringify!($method), $value)
     }};
     
     // Method with args
     ($runtime:expr, $handle:expr, $type:ident, $method:ident($($arg:expr),*)) => {{
         let args: Vec<Box<dyn std::any::Any>> = vec![$(Box::new($arg)),*];
-        $runtime.call_method($handle, stringify!($type), concat!("lib", stringify!($type)), stringify!($method), args)
+        $runtime.call_method($handle, stringify!($type), "librect", stringify!($method), args)
     }};
 }
