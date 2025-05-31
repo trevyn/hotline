@@ -3,7 +3,8 @@
     "allow": [
       "Bash(mkdir:*)",
       "Bash(mv:*)",
-      "Bash(cargo build:*)"
+      "Bash(cargo build:*)",
+      "Bash(ls:*)"
     ]
   },
   "enableAllProjectMcpServers": false

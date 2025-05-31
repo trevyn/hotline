@@ -1,0 +1,10 @@
+[package]
+edition = "2024"
+name = "rect"
+version = "0.1.0"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+hotline = { path = "../../hotline" }
