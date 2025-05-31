@@ -236,23 +236,3 @@ macro_rules! typed_methods {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ObjectHandle(pub u64);
-
-#[cfg(feature = "monolith")]
-pub mod monolith;
-
-// helper to convert type to consistent handle
-pub trait TypeToHandle {
-    fn type_handle() -> ObjectHandle;
-}
-
-impl<T: 'static> TypeToHandle for T {
-    fn type_handle() -> ObjectHandle {
-        // use type hash as handle for monolith builds
-        use std::hash::{Hash, Hasher};
-        use std::collections::hash_map::DefaultHasher;
-        
-        let mut hasher = DefaultHasher::new();
-        std::any::TypeId::of::<T>().hash(&mut hasher);
-        ObjectHandle(hasher.finish())
-    }
-}

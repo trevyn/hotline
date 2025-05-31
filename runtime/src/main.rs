@@ -1,34 +1,23 @@
-use hotline::{TypedMessage, TypedValue, ObjectHandle};
+use hotline::{ObjectHandle, TypedMessage, TypedValue};
 use runtime::{TypedRuntime, typed_send};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
 use sdl2::pixels::{Color, PixelFormatEnum};
-use std::time::Duration;
 use std::any::Any;
+use std::time::Duration;
 
-#[cfg(feature = "monolith")]
-use runtime::{rect, AllObjects, register_rect};
-
-#[cfg(feature = "monolith")]
-fn render_rect_static(rect: &rect::Rect, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: usize) {
-    // Draw rectangle by setting pixels
-    let x_start = (rect.x as i32).max(0) as u32;
-    let y_start = (rect.y as i32).max(0) as u32;
-    let x_end = ((rect.x + rect.width) as i32).min(buffer_width as i32) as u32;
-    let y_end = ((rect.y + rect.height) as i32).min(buffer_height as i32) as u32;
-
-    for y in y_start..y_end {
-        for x in x_start..x_end {
-            let offset = (y * (pitch as u32) + x * 4) as usize;
-            if offset + 3 < buffer.len() {
-                buffer[offset] = 120; // B
-                buffer[offset + 1] = 0; // G
-                buffer[offset + 2] = 0; // R
-                buffer[offset + 3] = 255; // A
+// Helper macro that logs errors from typed_send
+macro_rules! typed_send_or_log {
+    ($runtime:expr, $target:expr, $method:ident($($arg:expr),*)) => {{
+        match typed_send!($runtime, $target, $method($($arg),*)) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                eprintln!("Error calling {}: {}", stringify!($method), e);
+                Err(e)
             }
         }
-    }
+    }};
 }
 
 fn main() -> Result<(), String> {
@@ -47,7 +36,6 @@ fn main() -> Result<(), String> {
 
     let mut runtime = TypedRuntime::new();
 
-    #[cfg(not(feature = "monolith"))]
     let lib_path = {
         #[cfg(target_os = "macos")]
         let path = "target/release/librect.dylib";
@@ -55,23 +43,22 @@ fn main() -> Result<(), String> {
         let path = "target/release/librect.so";
         #[cfg(target_os = "windows")]
         let path = "target/release/rect.dll";
-        
+
         // First build the rect library
         println!("Building rect library...");
         std::process::Command::new("cargo")
             .args(&["build", "--release", "-p", "rect"])
             .status()
             .expect("Failed to build rect");
-        
+
         runtime.hot_reload(path).expect("Failed to load rect library");
         path
     };
-    
-    #[cfg(not(feature = "monolith"))]
+
     let mut render_lib = unsafe { libloading::Library::new(lib_path) }.expect("Failed to load lib");
-    #[cfg(not(feature = "monolith"))]
-    let mut render_rect: libloading::Symbol<unsafe extern "Rust" fn(&dyn Any, &mut [u8], i64, i64, i64)> = 
-        unsafe { render_lib.get(b"render_rect") }.expect("Failed to find render_rect");
+    let mut render_rect: libloading::Symbol<
+        unsafe extern "Rust" fn(&dyn Any, &mut [u8], i64, i64, i64),
+    > = unsafe { render_lib.get(b"render_rect") }.expect("Failed to find render_rect");
 
     let mut rects: Vec<ObjectHandle> = Vec::new();
     let mut drag_start = None;
@@ -89,33 +76,51 @@ fn main() -> Result<(), String> {
                     break 'running;
                 }
                 Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
+                    println!("Click at ({}, {})", x, y);
                     // Check if clicking on existing rect
                     selected = None;
                     for &rect_handle in &rects {
                         // Get bounds using getter methods
-                        let rect_x = typed_send!(runtime, rect_handle, get_x()).ok()
+                        let rect_x = match typed_send_or_log!(runtime, rect_handle, x()) {
+                            Ok(v) => {
+                                println!("  x() returned TypedValue: {:?}", v);
+                                v.get::<f64>().copied().unwrap_or(0.0)
+                            }
+                            Err(_) => 0.0,
+                        };
+                        let rect_y = typed_send_or_log!(runtime, rect_handle, y())
+                            .ok()
                             .and_then(|v| v.get::<f64>().copied())
                             .unwrap_or(0.0);
-                        let rect_y = typed_send!(runtime, rect_handle, get_y()).ok()
+                        let rect_width = typed_send_or_log!(runtime, rect_handle, width())
+                            .ok()
                             .and_then(|v| v.get::<f64>().copied())
                             .unwrap_or(0.0);
-                        let rect_width = typed_send!(runtime, rect_handle, get_width()).ok()
+                        let rect_height = typed_send_or_log!(runtime, rect_handle, height())
+                            .ok()
                             .and_then(|v| v.get::<f64>().copied())
                             .unwrap_or(0.0);
-                        let rect_height = typed_send!(runtime, rect_handle, get_height()).ok()
-                            .and_then(|v| v.get::<f64>().copied())
-                            .unwrap_or(0.0);
-                            
-                        if x as f64 >= rect_x && x as f64 <= rect_x + rect_width &&
-                           y as f64 >= rect_y && y as f64 <= rect_y + rect_height {
+
+                        println!(
+                            "  Checking rect: bounds=({}, {}, {}, {})",
+                            rect_x, rect_y, rect_width, rect_height
+                        );
+
+                        if x as f64 >= rect_x
+                            && x as f64 <= rect_x + rect_width
+                            && y as f64 >= rect_y
+                            && y as f64 <= rect_y + rect_height
+                        {
+                            println!("  HIT! Selected rect");
                             selected = Some(rect_handle);
                             dragging = true;
                             drag_offset = (x as f64 - rect_x, y as f64 - rect_y);
                             break;
                         }
                     }
-                    
+
                     if selected.is_none() {
+                        println!("  No hit, starting new rect creation");
                         // Start creating new rect
                         drag_start = Some((x, y));
                     }
@@ -132,29 +137,19 @@ fn main() -> Result<(), String> {
                         let box_h = (start_y - y).abs() as f64;
 
                         if box_w > 0.0 && box_h > 0.0 {
-                            #[cfg(not(feature = "monolith"))]
                             let handle = runtime.create_from_lib("librect", "create_rect");
-                            
-                            #[cfg(feature = "monolith")]
-                            let handle = {
-                                let r = rect::Rect {
-                                    x: box_x,
-                                    y: box_y,
-                                    width: box_w,
-                                    height: box_h,
-                                };
-                                Some(register_rect(&mut runtime, r))
-                            };
-                            
+
                             if let Some(handle) = handle {
-                                #[cfg(not(feature = "monolith"))]
-                                {
-                                    // Set initial properties for dynamic version
-                                    typed_send!(runtime, handle, set_x(box_x)).ok();
-                                    typed_send!(runtime, handle, set_y(box_y)).ok();
-                                    typed_send!(runtime, handle, set_width(box_w)).ok();
-                                    typed_send!(runtime, handle, set_height(box_h)).ok();
-                                }
+                                // Set initial properties for dynamic version
+                                typed_send_or_log!(runtime, handle, set_x(box_x)).ok();
+                                typed_send_or_log!(runtime, handle, set_y(box_y)).ok();
+                                typed_send_or_log!(runtime, handle, set_width(box_w)).ok();
+                                typed_send_or_log!(runtime, handle, set_height(box_h)).ok();
+
+                                println!(
+                                    "Created rect with bounds: ({}, {}, {}, {})",
+                                    box_x, box_y, box_w, box_h
+                                );
                                 rects.push(handle);
                             }
                         }
@@ -165,18 +160,20 @@ fn main() -> Result<(), String> {
                     if dragging {
                         if let Some(handle) = selected {
                             // Get current position to calculate delta
-                            let rect_x = typed_send!(runtime, handle, get_x()).ok()
+                            let rect_x = typed_send!(runtime, handle, x())
+                                .ok()
                                 .and_then(|v| v.get::<f64>().copied())
                                 .unwrap_or(0.0);
-                            let rect_y = typed_send!(runtime, handle, get_y()).ok()
+                            let rect_y = typed_send!(runtime, handle, y())
+                                .ok()
                                 .and_then(|v| v.get::<f64>().copied())
                                 .unwrap_or(0.0);
-                                
+
                             let new_x = x as f64 - drag_offset.0;
                             let new_y = y as f64 - drag_offset.1;
                             let dx = new_x - rect_x;
                             let dy = new_y - rect_y;
-                            
+
                             // Move the rect
                             typed_send!(runtime, handle, move_by(dx, dy)).ok();
                         }
@@ -184,44 +181,33 @@ fn main() -> Result<(), String> {
                 }
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {
-                    #[cfg(not(feature = "monolith"))]
-                    {
-                        println!("Reloading rect library...");
-                        
-                        // First rebuild the library
-                        println!("Rebuilding rect library...");
-                        std::process::Command::new("cargo")
-                            .args(&["build", "--release", "-p", "rect"])
-                            .status()
-                            .expect("Failed to build rect");
-                        
-                        // Reload the runtime's copy
-                        if let Err(e) = runtime.hot_reload(lib_path) {
-                            eprintln!("Failed to reload runtime lib: {}", e);
-                        }
+                    println!("Reloading rect library...");
+
+                    // First rebuild the library
+                    println!("Rebuilding rect library...");
+                    std::process::Command::new("cargo")
+                        .args(&["build", "--release", "-p", "rect"])
+                        .status()
+                        .expect("Failed to build rect");
+
+                    // Reload the runtime's copy
+                    if let Err(e) = runtime.hot_reload(lib_path) {
+                        eprintln!("Failed to reload runtime lib: {}", e);
                     }
-                    
-                    #[cfg(feature = "monolith")]
-                    {
-                        println!("Hot reload not available in monolith mode");
-                    }
-                    
-                    #[cfg(not(feature = "monolith"))]
-                    {
-                        // Reload our render function
-                        drop(render_rect);
-                        drop(render_lib);
-                        
-                        // Small delay to ensure file is ready
-                        std::thread::sleep(Duration::from_millis(100));
-                        
-                        render_lib = unsafe { libloading::Library::new(lib_path) }
-                            .expect("Failed to reload render lib");
-                        render_rect = unsafe { render_lib.get(b"render_rect") }
-                            .expect("Failed to reload render_rect");
-                        
-                        println!("Reload complete!");
-                    }
+
+                    // Reload our render function
+                    drop(render_rect);
+                    drop(render_lib);
+
+                    // Small delay to ensure file is ready
+                    std::thread::sleep(Duration::from_millis(100));
+
+                    render_lib = unsafe { libloading::Library::new(lib_path) }
+                        .expect("Failed to reload render lib");
+                    render_rect = unsafe { render_lib.get(b"render_rect") }
+                        .expect("Failed to reload render_rect");
+
+                    println!("Reload complete!");
                 }
                 _ => {}
             }
@@ -240,44 +226,32 @@ fn main() -> Result<(), String> {
 
             // Render rects to buffer
             for &rect_handle in &rects {
-                #[cfg(not(feature = "monolith"))]
-                {
-                    if let Some(rect_obj) = runtime.get_object(rect_handle) {
-                        unsafe {
-                            render_rect(
-                                rect_obj.as_any(),
-                                buffer,
-                                800,
-                                600,
-                                pitch as i64,
-                            );
-                        }
-                    }
-                }
-                
-                #[cfg(feature = "monolith")]
-                {
-                    if let Some(rect_obj) = runtime.get_rect(rect_handle) {
-                        render_rect_static(rect_obj, buffer, 800, 600, pitch);
+                if let Some(rect_obj) = runtime.get_object(rect_handle) {
+                    unsafe {
+                        render_rect(rect_obj.as_any(), buffer, 800, 600, pitch as i64);
                     }
                 }
             }
 
             // Highlight selected rect with a border
             if let Some(sel_handle) = selected {
-                let rect_x = typed_send!(runtime, sel_handle, get_x()).ok()
+                let rect_x = typed_send!(runtime, sel_handle, x())
+                    .ok()
                     .and_then(|v| v.get::<f64>().copied())
                     .unwrap_or(0.0);
-                let rect_y = typed_send!(runtime, sel_handle, get_y()).ok()
+                let rect_y = typed_send!(runtime, sel_handle, y())
+                    .ok()
                     .and_then(|v| v.get::<f64>().copied())
                     .unwrap_or(0.0);
-                let rect_width = typed_send!(runtime, sel_handle, get_width()).ok()
+                let rect_width = typed_send!(runtime, sel_handle, width())
+                    .ok()
                     .and_then(|v| v.get::<f64>().copied())
                     .unwrap_or(0.0);
-                let rect_height = typed_send!(runtime, sel_handle, get_height()).ok()
+                let rect_height = typed_send!(runtime, sel_handle, height())
+                    .ok()
                     .and_then(|v| v.get::<f64>().copied())
                     .unwrap_or(0.0);
-                    
+
                 // Draw selection border
                 let x_start = (rect_x as i32).max(0) as u32;
                 let y_start = (rect_y as i32).max(0) as u32;
@@ -324,24 +298,6 @@ fn main() -> Result<(), String> {
 
         // Copy texture to canvas
         canvas.copy(&texture, None, None)?;
-
-        // Show properties of selected object
-        if let Some(handle) = selected {
-            let x = typed_send!(runtime, handle, get_x()).ok()
-                .and_then(|v| v.get::<f64>().copied())
-                .unwrap_or(0.0);
-            let y = typed_send!(runtime, handle, get_y()).ok()
-                .and_then(|v| v.get::<f64>().copied())
-                .unwrap_or(0.0);
-            let width = typed_send!(runtime, handle, get_width()).ok()
-                .and_then(|v| v.get::<f64>().copied())
-                .unwrap_or(0.0);
-            let height = typed_send!(runtime, handle, get_height()).ok()
-                .and_then(|v| v.get::<f64>().copied())
-                .unwrap_or(0.0);
-                
-            println!("Selected rect: x={:.1}, y={:.1}, w={:.1}, h={:.1}", x, y, width, height);
-        }
 
         canvas.present();
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
