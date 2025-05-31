@@ -28,7 +28,7 @@ impl TypedValue {
             TypedValue::Object(Box::new(val))
         }
     }
-    
+
     pub fn get<T: Any + 'static>(&self) -> Option<&T> {
         match self {
             TypedValue::Unit if TypeId::of::<T>() == TypeId::of::<()>() => {
@@ -50,7 +50,7 @@ impl TypedValue {
             _ => None,
         }
     }
-    
+
     pub fn type_id(&self) -> TypeId {
         match self {
             TypedValue::Unit => TypeId::of::<()>(),
@@ -100,7 +100,7 @@ macro_rules! typed_methods {
                 fn $method(&mut $self $(, $arg: $arg_ty)*) $(-> $ret)? $body
             )*
         }
-        
+
         impl TypedObject for $obj {
             fn signatures(&self) -> &[MethodSignature] {
                 use std::any::TypeId;
@@ -116,7 +116,7 @@ macro_rules! typed_methods {
                     )*
                 ])
             }
-            
+
             fn receive_typed(&mut self, msg: &TypedMessage) -> Result<TypedValue, String> {
                 match msg.selector.as_str() {
                     $(
@@ -131,7 +131,7 @@ macro_rules! typed_methods {
     ;
                                 _arg_idx += 1;
                             )*
-                            
+
                             let result = self.$method($($arg.clone()),*);
                             Ok(TypedValue::new(result))
                         }
@@ -139,12 +139,12 @@ macro_rules! typed_methods {
                     _ => Err(format!("unknown selector: {}", msg.selector)),
                 }
             }
-            
+
             fn as_any(&self) -> &dyn std::any::Any { self }
             fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
         }
     };
-    
+
     // helper to get return type, defaults to ()
     (@ret_type) => { () };
     (@ret_type $ret:ty) => { $ret };
