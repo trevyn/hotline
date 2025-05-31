@@ -8,31 +8,32 @@ object! {
         height: f64,
     }
 
-    method moveBy x: f64, y: y f64 |slf| {
-        slf.x += x;
-        slf.y += y;
-        Value::Nil
-    }
+    impl Rect {
+        fn moveBy(&mut this, x: f64, y: f64) -> Value {
+            this.x += x;
+            this.y += y;
+            Value::Nil
+        }
 
-    method bounds |slf| {
-        let bounds = hotline::Bounds::new(slf.x, slf.y, slf.width, slf.height);
-        <hotline::Bounds as Serialize>::serialize(&bounds)
-    }
+        fn bounds(&this) -> Value {
+            let bounds = hotline::Bounds::new(this.x, this.y, this.width, this.height);
+            <hotline::Bounds as Serialize>::serialize(&bounds)
+        }
 
-    method properties |slf| {
-        hotline::dict! {
-            "x" => Value::Float(slf.x),
-            "y" => Value::Float(slf.y),
-            "width" => Value::Float(slf.width),
-            "height" => Value::Float(slf.height)
+        fn properties(&this) -> Value {
+            hotline::dict! {
+                "x" => Value::Float(this.x),
+                "y" => Value::Float(this.y),
+                "width" => Value::Float(this.width),
+                "height" => Value::Float(this.height)
+            }
         }
     }
-
 }
 
 // Simple standalone render function with Rust signature
 #[unsafe(no_mangle)]
-pub extern "C" fn render_rect(
+pub extern "Rust" fn render_rect(
     obj: &dyn std::any::Any,
     buffer: &mut [u8],
     buffer_width: i64,

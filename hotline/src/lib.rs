@@ -302,7 +302,7 @@ macro_rules! object {
         }
 
         $(
-            method $method:ident $first_arg:ident : $first_type:ty $(, $part:ident : $arg:ident $arg_type:ty)* |$self_:ident| $body:block
+            method $method:ident $first_arg:ident : $first_type:ty $(, $part:ident : $arg:ident $arg_type:ty)* $body:block
         )*
     ) => {
         object!(@impl
@@ -315,8 +315,10 @@ macro_rules! object {
             [] // no-arg methods
             
             [$(
-                ($method $first_arg : $first_type $(, $part : $arg $arg_type)* |$self_| $body)
+                ($method $first_arg : $first_type $(, $part : $arg $arg_type)* $body)
             )*]
+            
+            [] // rust-style methods
         );
     };
     
@@ -329,7 +331,7 @@ macro_rules! object {
         }
 
         $(
-            method $method:ident |$self_:ident| $body:block
+            method $method:ident $body:block
         )*
     ) => {
         object!(@impl
@@ -340,10 +342,80 @@ macro_rules! object {
             }
             
             [$(
-                ($method |$self_| $body)
+                ($method $body)
             )*]
             
             [] // arg methods
+            
+            [] // rust-style methods
+        );
+    };
+    
+    // Support for impl block syntax
+    (
+        $name:ident {
+            $(
+                $field:ident: $type:ty
+            ),* $(,)?
+        }
+        
+        impl $impl_name:ident {
+            $(
+                $vis:vis fn $method:ident ( $($method_args:tt)* ) -> Value $body:block
+            )*
+        }
+    ) => {
+        object!(@impl_methods
+            $name {
+                $(
+                    $field: $type
+                ),*
+            }
+            
+            [] // collected methods
+            
+            $(
+                fn $method ( $($method_args)* ) -> Value $body
+            )*
+        );
+    };
+    
+    // Helper to parse impl methods
+    (@impl_methods
+        $name:ident { $($fields:tt)* }
+        [$($collected:tt)*]
+        fn $method:ident ( &mut $this:ident $(, $arg:ident : $arg_type:ty)* $(,)? ) -> Value $body:block
+        $($rest:tt)*
+    ) => {
+        object!(@impl_methods
+            $name { $($fields)* }
+            [$($collected)* ($method ( $this $(, $arg : $arg_type)* ) $body)]
+            $($rest)*
+        );
+    };
+    
+    (@impl_methods
+        $name:ident { $($fields:tt)* }
+        [$($collected:tt)*]
+        fn $method:ident ( &$this:ident $(, $arg:ident : $arg_type:ty)* $(,)? ) -> Value $body:block
+        $($rest:tt)*
+    ) => {
+        object!(@impl_methods
+            $name { $($fields)* }
+            [$($collected)* ($method ( $this $(, $arg : $arg_type)* ) $body)]
+            $($rest)*
+        );
+    };
+    
+    (@impl_methods
+        $name:ident { $($fields:tt)* }
+        [$($collected:tt)*]
+    ) => {
+        object!(@impl
+            $name { $($fields)* }
+            [] // no-arg methods
+            [] // arg methods
+            [$($collected)*]
         );
     };
     
@@ -374,12 +446,12 @@ macro_rules! object {
         $name:ident { $($fields:tt)* }
         [$($noarg_methods:tt)*]
         [$($arg_methods:tt)*]
-        method $method:ident |$self_:ident| $body:block
+        method $method:ident $body:block
         $($rest:tt)*
     ) => {
         object!(@parse
             $name { $($fields)* }
-            [$($noarg_methods)* ($method |$self_| $body)]
+            [$($noarg_methods)* ($method $body)]
             [$($arg_methods)*]
             $($rest)*
         );
@@ -390,13 +462,13 @@ macro_rules! object {
         $name:ident { $($fields:tt)* }
         [$($noarg_methods:tt)*]
         [$($arg_methods:tt)*]
-        method $method:ident $first_arg:ident : $first_type:ty $(, $part:ident : $arg:ident $arg_type:ty)* |$self_:ident| $body:block
+        method $method:ident $first_arg:ident : $first_type:ty $(, $part:ident : $arg:ident $arg_type:ty)* $body:block
         $($rest:tt)*
     ) => {
         object!(@parse
             $name { $($fields)* }
             [$($noarg_methods)*]
-            [$($arg_methods)* ($method $first_arg : $first_type $(, $part : $arg $arg_type)* |$self_| $body)]
+            [$($arg_methods)* ($method $first_arg : $first_type $(, $part : $arg $arg_type)* $body)]
             $($rest)*
         );
     };
@@ -411,6 +483,7 @@ macro_rules! object {
             $name { $($fields)* }
             [$($noarg_methods)*]
             [$($arg_methods)*]
+            [] // rust-style methods
         );
     };
     
@@ -423,11 +496,15 @@ macro_rules! object {
         }
         
         [$(
-            ($method_noargs:ident |$self_noargs:ident| $body_noargs:block)
+            ($method_noargs:ident $body_noargs:block)
         )*]
         
         [$(
-            ($method:ident $first_arg:ident : $first_type:ty $(, $part:ident : $arg:ident $arg_type:ty)* |$self_:ident| $body:block)
+            ($method:ident $first_arg:ident : $first_type:ty $(, $part:ident : $arg:ident $arg_type:ty)* $body:block)
+        )*]
+        
+        [$(
+            ($method_rust:ident ( $this:ident $(, $rust_arg:ident : $rust_arg_type:ty)* ) $body_rust:block)
         )*]
     ) => {
         #[derive(Default)]
@@ -551,15 +628,17 @@ macro_rules! object {
                     // Methods without arguments
                     $(
                         stringify!($method_noargs) => {
-                            let $self_noargs = self;
+                            #[allow(non_snake_case)]
+                            let $name = self;
                             $body_noargs
                         }
                     )*
                     // Methods with arguments
                     $(
                         concat!(stringify!($method), $(":", stringify!($part),)* ":") => {
-                            let $self_ = self;
-
+                            #[allow(non_snake_case)]
+                            let $name = self;
+                            
                             let mut arg_idx = 0;
                             let $first_arg = match msg.args.get(arg_idx) {
                                 Some(value) => match <$first_type as $crate::Deserialize>::deserialize(value) {
@@ -582,6 +661,26 @@ macro_rules! object {
                             )*
 
                             $body
+                        }
+                    )*
+                    // Rust-style methods
+                    $(
+                        concat!(stringify!($method_rust) $(, ":", stringify!($rust_arg))*) => {
+                            let $this = self;
+                            
+                            let mut arg_idx = 0;
+                            $(
+                                let $rust_arg = match msg.args.get(arg_idx) {
+                                    Some(value) => match <$rust_arg_type as $crate::Deserialize>::deserialize(value) {
+                                        Some(v) => v,
+                                        None => return $crate::Value::Nil,
+                                    },
+                                    None => return $crate::Value::Nil,
+                                };
+                                arg_idx += 1;
+                            )*
+                            
+                            $body_rust
                         }
                     )*
                     _ => {
