@@ -19,23 +19,8 @@ impl DirectRuntime {
     }
     
     fn type_name_for_symbol<T: 'static>() -> &'static str {
-        let type_id = TypeId::of::<T>();
-        if type_id == TypeId::of::<f64>() {
-            "f64"
-        } else if type_id == TypeId::of::<i64>() {
-            "i64"
-        } else if type_id == TypeId::of::<bool>() {
-            "bool"
-        } else if type_id == TypeId::of::<String>() {
-            "String"
-        } else if type_id == TypeId::of::<()>() {
-            "unit"
-        } else {
-            // for other types, need to handle qualified names
-            let full_name = std::any::type_name::<T>();
-            // extract just the type name without module path
-            full_name.rsplit("::").next().unwrap_or(full_name)
-        }
+        // Always use fully qualified type names for unambiguous type safety
+        std::any::type_name::<T>()
     }
 
     pub fn register(&mut self, obj: Box<dyn Any>) -> ObjectHandle {
