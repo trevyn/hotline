@@ -1,5 +1,5 @@
 use runtime::{Runtime, m};
-use hotline::ObjectHandle;
+use hotline::{ObjectHandle, Value};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -45,6 +45,7 @@ fn main() -> Result<(), String> {
     let mut selected: Option<ObjectHandle> = None;
     let mut dragging = false;
     let mut drag_offset = (0.0, 0.0);
+    let mut hover_text = String::new();
 
     'running: loop {
         canvas.set_draw_color(Color::RGB(0, 0, 0));
@@ -197,6 +198,27 @@ fn main() -> Result<(), String> {
         
         // Copy texture to canvas
         canvas.copy(&texture, None, None)?;
+        
+        // Update hover text for selected object
+        if let Some(handle) = selected {
+            let props = m![runtime, handle, properties:0];
+            hover_text.clear();
+            if let Value::Dict(dict) = props {
+                hover_text.push_str("Properties:\n");
+                for (key, value) in dict.iter() {
+                    match value {
+                        Value::Float(f) => hover_text.push_str(&format!("{}: {:.1}\n", key, f)),
+                        Value::Int(i) => hover_text.push_str(&format!("{}: {}\n", key, i)),
+                        _ => hover_text.push_str(&format!("{}: {:?}\n", key, value)),
+                    }
+                }
+            }
+            
+            // For now just print to console - in a real app you'd render this as overlay text
+            if !hover_text.is_empty() {
+                println!("{}", hover_text);
+            }
+        }
 
         canvas.present();
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
