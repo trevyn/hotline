@@ -103,6 +103,26 @@ impl Runtime {
     {
         self.objects.get(&handle).map(|(_, obj)| f(obj.as_ref()))
     }
+    
+    pub fn render_object(&self, handle: ObjectHandle, buffer: &mut [u8], width: i64, height: i64, pitch: i64) {
+        if let Some((class_name, obj)) = self.objects.get(&handle) {
+            // Look for the render function for this class
+            for lib in self.loaded_libs.values() {
+                let render_fn_name = format!("render_{}", class_name.to_lowercase());
+                unsafe {
+                    // The render function takes &dyn Any
+                    type RenderFn = fn(&dyn std::any::Any, &mut [u8], i64, i64, i64);
+                    if let Ok(symbol) = lib.get::<RenderFn>(render_fn_name.as_bytes()) {
+                        let render_fn = *symbol;
+                        // Get the object as &dyn Any
+                        let any_obj = obj.as_any();
+                        render_fn(any_obj, buffer, width, height, pitch);
+                        return;
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Message macro - assumes 'runtime' is in scope

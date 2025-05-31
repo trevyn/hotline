@@ -47,10 +47,6 @@ pub trait VTableObject: Send + Sync {
 }
 
 
-// Trait for objects that can render
-pub trait Renderable: Object {
-    fn render_to_buffer(&self, buffer: &mut [u8], width: i64, height: i64, pitch: i64);
-}
 
 // Legacy trait for compatibility
 pub trait Object: Send + Sync {
@@ -67,9 +63,6 @@ pub trait Object: Send + Sync {
     
     // Dynamic cast support
     fn as_any(&self) -> &dyn std::any::Any;
-    fn as_renderable(&self) -> Option<&dyn Renderable> {
-        None
-    }
 }
 
 // Conversion helpers
@@ -443,6 +436,7 @@ macro_rules! object {
             fn as_any(&self) -> &dyn std::any::Any {
                 self
             }
+            
         }
 
         // Auto-generate registration function

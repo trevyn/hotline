@@ -110,12 +110,8 @@ fn main() -> Result<(), String> {
             }
             
             // Render rects to buffer
-            for rect in &rects {
-                runtime.with_object(*rect, |obj| {
-                    if let Some(renderable) = obj.as_renderable() {
-                        renderable.render_to_buffer(buffer, 800, 600, pitch as i64);
-                    }
-                });
+            for rect_handle in &rects {
+                runtime.render_object(*rect_handle, buffer, 800, 600, pitch as i64);
             }
         })?;
         

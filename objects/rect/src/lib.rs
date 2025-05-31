@@ -1,4 +1,4 @@
-use hotline::{Renderable, Value, object};
+use hotline::{Value, object};
 
 object! {
     Rect {
@@ -13,25 +13,37 @@ object! {
         slf.y += y;
         Value::Nil
     }
+
 }
 
-impl Renderable for Rect {
-    fn render_to_buffer(&self, buffer: &mut [u8], width: i64, height: i64, pitch: i64) {
-        // Draw rectangle by setting pixels
-        let x_start = (self.x as i32).max(0) as u32;
-        let y_start = (self.y as i32).max(0) as u32;
-        let x_end = ((self.x + self.width) as i32).min(width as i32) as u32;
-        let y_end = ((self.y + self.height) as i32).min(height as i32) as u32;
+// Simple standalone render function with Rust signature
+#[unsafe(no_mangle)]
+pub fn render_rect(
+    obj: &dyn std::any::Any,
+    buffer: &mut [u8],
+    buffer_width: i64,
+    buffer_height: i64,
+    pitch: i64,
+) {
+    // Downcast to Rect
+    let Some(rect) = obj.downcast_ref::<Rect>() else {
+        return;
+    };
 
-        for y in y_start..y_end {
-            for x in x_start..x_end {
-                let offset = (y * (pitch as u32) + x * 4) as usize;
-                if offset + 3 < buffer.len() {
-                    buffer[offset] = 255; // B
-                    buffer[offset + 1] = 0; // G
-                    buffer[offset + 2] = 0; // R
-                    buffer[offset + 3] = 255; // A
-                }
+    // Draw rectangle by setting pixels
+    let x_start = (rect.x as i32).max(0) as u32;
+    let y_start = (rect.y as i32).max(0) as u32;
+    let x_end = ((rect.x + rect.width) as i32).min(buffer_width as i32) as u32;
+    let y_end = ((rect.y + rect.height) as i32).min(buffer_height as i32) as u32;
+
+    for y in y_start..y_end {
+        for x in x_start..x_end {
+            let offset = (y * (pitch as u32) + x * 4) as usize;
+            if offset + 3 < buffer.len() {
+                buffer[offset] = 255; // B
+                buffer[offset + 1] = 255; // G
+                buffer[offset + 2] = 0; // R
+                buffer[offset + 3] = 255; // A
             }
         }
     }
