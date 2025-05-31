@@ -1,50 +1,18 @@
-use hotline::{MethodSignature, TypedMessage, TypedObject, TypedValue, typed_methods};
+use hotline::{MethodSignature, TypedMessage, TypedObject, TypedValue, object, typed_methods};
 
-#[derive(Clone)]
-pub struct Rect {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-typed_methods! {
-    Rect {
+object! {
+    #[derive(Clone)]
+    pub struct Rect {
+        pub x: f64,
+        pub y: f64,
+        pub width: f64,
+        pub height: f64,
+    }
+    
+    methods {
         fn move_by(&mut self, dx: f64, dy: f64) {
             self.x += dx;
             self.y += dy;
-        }
-
-        fn get_x(&mut self) -> f64 {
-            self.x
-        }
-
-        fn get_y(&mut self) -> f64 {
-            self.y
-        }
-
-        fn get_width(&mut self) -> f64 {
-            self.width
-        }
-
-        fn get_height(&mut self) -> f64 {
-            self.height
-        }
-
-        fn set_x(&mut self, x: f64) {
-            self.x = x;
-        }
-
-        fn set_y(&mut self, y: f64) {
-            self.y = y;
-        }
-
-        fn set_width(&mut self, width: f64) {
-            self.width = width;
-        }
-
-        fn set_height(&mut self, height: f64) {
-            self.height = height;
         }
     }
 }

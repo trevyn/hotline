@@ -85,6 +85,58 @@ pub trait TypedObject: Any + Send + Sync {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
+
+/// helper macro to define typed objects with struct and methods
+#[macro_export]
+macro_rules! object {
+    (
+        $(#[$attr:meta])*
+        pub struct $name:ident {
+            $(pub $field:ident: $field_ty:ty),* $(,)?
+        }
+        
+        methods {
+            $(
+                fn $method:ident(&mut $self:ident $(, $arg:ident: $arg_ty:ty)*) $(-> $ret:ty)? $body:block
+            )*
+        }
+    ) => {
+        $(#[$attr])*
+        pub struct $name {
+            $(pub $field: $field_ty),*
+        }
+        
+        object! {
+            @impl $name {
+                // auto-generate getters for all fields
+                $(
+                    fn $field(&mut self) -> $field_ty { self.$field }
+                )*
+                
+                // user-defined methods
+                $(
+                    fn $method(&mut $self $(, $arg: $arg_ty)*) $(-> $ret)? $body
+                )*
+            }
+        }
+    };
+    
+    // internal impl variant
+    (@impl $obj:ty {
+        $(
+            fn $method:ident(&mut $self:ident $(, $arg:ident: $arg_ty:ty)*) $(-> $ret:ty)? $body:block
+        )*
+    }) => {
+        $crate::typed_methods! {
+            $obj {
+                $(
+                    fn $method(&mut $self $(, $arg: $arg_ty)*) $(-> $ret)? $body
+                )*
+            }
+        }
+    };
+}
+
 /// helper macro to define typed methods
 #[macro_export]
 macro_rules! typed_methods {
