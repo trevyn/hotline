@@ -14,31 +14,14 @@ hotline::object! {
             self.y += dy;
             println!("After move: x={}, y={}", self.x, self.y);
         }
-    }
-}
-
-// Simple standalone render function with Rust signature
-#[unsafe(no_mangle)]
-pub extern "Rust" fn render_rect(
-    obj: &dyn std::any::Any,
-    buffer: &mut [u8],
-    buffer_width: i64,
-    buffer_height: i64,
-    pitch: i64,
-) {
-    // Downcast to Rect
-    let Some(rect) = obj.downcast_ref::<Rect>() else {
-        eprintln!("render_rect: Failed to downcast to Rect");
-        return;
-    };
-    
-    println!("render_rect: Drawing rect at ({}, {}) size {}x{}", rect.x, rect.y, rect.width, rect.height);
+        fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
+                println!("render_rect: Drawing rect at ({}, {}) size {}x{}", self.x, self.y, self.width, self.height);
 
     // Draw rectangle by setting pixels
-    let x_start = (rect.x as i32).max(0) as u32;
-    let y_start = (rect.y as i32).max(0) as u32;
-    let x_end = ((rect.x + rect.width) as i32).min(buffer_width as i32) as u32;
-    let y_end = ((rect.y + rect.height) as i32).min(buffer_height as i32) as u32;
+    let x_start = (self.x as i32).max(0) as u32;
+    let y_start = (self.y as i32).max(0) as u32;
+    let x_end = ((self.x + self.width) as i32).min(buffer_width as i32) as u32;
+    let y_end = ((self.y + self.height) as i32).min(buffer_height as i32) as u32;
 
     for y in y_start..y_end {
         for x in x_start..x_end {
@@ -49,6 +32,9 @@ pub extern "Rust" fn render_rect(
                 buffer[offset + 2] = 0; // R
                 buffer[offset + 3] = 255; // A
             }
+        }
+    }
+
         }
     }
 }
