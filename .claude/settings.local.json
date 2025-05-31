@@ -5,6 +5,9 @@
       "Bash(mv:*)",
       "Bash(cargo build:*)",
       "Bash(ls:*)"
+    ],
+    "deny": [
+      "Bash(cargo run:*)"
     ]
   },
   "enableAllProjectMcpServers": false
