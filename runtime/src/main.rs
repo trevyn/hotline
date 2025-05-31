@@ -76,9 +76,13 @@ fn main() -> Result<(), String> {
 
                         if box_w > 0.0 && box_h > 0.0 {
                             if let Some(rect) = runtime.create("Rect") {
+                                println!("Created rect: {:?}", rect);
                                 // Use the macro
-                                m![runtime, rect, initWithX:box_x y:box_y width:box_w height:box_h];
+                                let result = m![runtime, rect, initWithX:box_x y:box_y width:box_w height:box_h];
+                                println!("Init result: {:?}", result);
                                 rects.push(rect);
+                            } else {
+                                println!("Failed to create Rect");
                             }
                         }
                         drag_start = None;
@@ -113,7 +117,7 @@ fn main() -> Result<(), String> {
             for rect in &rects {
                 runtime.send(
                     *rect, 
-                    "render", 
+                    "renderToBuffer:width:height:pitch:", 
                     vec![
                         Value::Int(buffer.as_mut_ptr() as i64),
                         Value::Int(800),
