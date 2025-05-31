@@ -9,6 +9,3 @@ monolith = []
 [dependencies]
 paste = "1.0"
 # do not add additional dependencies here
-
-[lib]
-crate-type = ["rlib", "dylib"]
