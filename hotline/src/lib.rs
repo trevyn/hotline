@@ -154,44 +154,20 @@ macro_rules! object {
             )*
         }
         
-        // Generate no_mangle extern functions
+        // Generate extern functions with signature-encoded names
         $crate::paste::paste! {
-            // ABI version - const hash of structure
-            #[unsafe(no_mangle)]
-            #[allow(non_upper_case_globals)]
-            pub static [<$name _abi_version>]: u64 = {
-                // Simple const hash using string concatenation
-                const fn const_hash(s: &str) -> u64 {
-                    let mut hash = 0xcbf29ce484222325u64; // FNV offset basis
-                    let bytes = s.as_bytes();
-                    let mut i = 0;
-                    while i < bytes.len() {
-                        hash ^= bytes[i] as u64;
-                        hash = hash.wrapping_mul(0x100000001b3u64); // FNV prime
-                        i += 1;
-                    }
-                    hash
-                }
-                
-                const_hash(concat!(
-                    stringify!($name), ";",
-                    $(stringify!($field), ":", stringify!($field_ty), ";",)*
-                    $(stringify!($method), "(", $(stringify!($arg_ty), ",",)* ")", stringify!($(-> $ret)?), ";",)*
-                ))
-            };
-            
             // Constructor if Default is implemented
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
-            pub extern "Rust" fn [<$name _default>]() -> Box<dyn ::std::any::Any> {
+            pub extern "Rust" fn [<$name __new____to__Box_dyn_Any>]() -> Box<dyn ::std::any::Any> {
                 Box::new(<$name as Default>::default())
             }
             
-            // Getters
+            // Getters - encode full signature in name
             $(
                 #[unsafe(no_mangle)]
                 #[allow(non_snake_case)]
-                pub extern "Rust" fn [<$name _ $field>](obj: &dyn ::std::any::Any) -> $field_ty {
+                pub extern "Rust" fn [<$name __get_ $field ____obj_ref_dyn_Any__to__ $field_ty>](obj: &dyn ::std::any::Any) -> $field_ty {
                     let Some(instance) = obj.downcast_ref::<$name>() else {
                         panic!(concat!("Type mismatch: expected ", stringify!($name)));
                     };
@@ -199,25 +175,23 @@ macro_rules! object {
                 }
             )*
             
-            // Setters
+            // Setters - encode full signature in name
             $(
                 #[unsafe(no_mangle)]
                 #[allow(non_snake_case)]
-                pub extern "Rust" fn [<$name _set_ $field>](obj: &mut dyn ::std::any::Any, value: $field_ty) {
+                pub extern "Rust" fn [<$name __set_ $field ____obj_mut_dyn_Any__ $field _ $field_ty __to__unit>](obj: &mut dyn ::std::any::Any, value: $field_ty) {
                     let Some(instance) = obj.downcast_mut::<$name>() else {
                         panic!(concat!("Type mismatch: expected ", stringify!($name)));
                     };
-                    println!(concat!(stringify!($name), "_set_", stringify!($field), " called with value: {:?}"), value);
                     instance.$field = value;
-                    println!(concat!("After set: ", stringify!($field), " = {:?}"), instance.$field);
                 }
             )*
             
-            // User methods
+            // User methods - encode full signature in name
             $(
                 #[unsafe(no_mangle)]
                 #[allow(non_snake_case)]
-                pub extern "Rust" fn [<$name _ $method>](obj: &mut dyn ::std::any::Any $(, $arg: $arg_ty)*) $(-> $ret)? {
+                pub extern "Rust" fn [<$name __ $method ____obj_mut_dyn_Any $(__$arg _ $arg_ty)* __to__ $($ret)? unit>](obj: &mut dyn ::std::any::Any $(, $arg: $arg_ty)*) $(-> $ret)? {
                     let Some(instance) = obj.downcast_mut::<$name>() else {
                         panic!(concat!("Type mismatch: expected ", stringify!($name)));
                     };
@@ -231,6 +205,70 @@ macro_rules! object {
     // helper to get return type, defaults to ()
     (@ret_type) => { () };
     (@ret_type $ret:ty) => { $ret };
+    
+    // helper to get return type name for symbol
+    (@ret_type_name) => { unit };
+    (@ret_type_name $ret:ty) => { $ret };
+    
+    // helper to generate method with return type
+    (@gen_method $name:ident, $method:ident, $self_name:ident, $(($arg:ident, $arg_ty:ty),)* $ret:ty) => {
+        $crate::paste::paste! {
+            #[unsafe(no_mangle)]
+            #[allow(non_snake_case)]
+            pub extern "Rust" fn [<hotline__ $name __ $method ____obj_mut_dyn_Any $(__$arg _ $arg_ty)* __to__ $ret>]($self_name: &mut dyn ::std::any::Any $(, $arg: $arg_ty)*) -> $ret {
+                let Some(instance) = $self_name.downcast_mut::<$name>() else {
+                    panic!(concat!("Type mismatch: expected ", stringify!($name)));
+                };
+                instance.$method($($arg),*)
+            }
+        }
+    };
+    
+    // helper to generate method without return type (returns unit)
+    (@gen_method $name:ident, $method:ident, $self_name:ident, $(($arg:ident, $arg_ty:ty),)*) => {
+        $crate::paste::paste! {
+            #[unsafe(no_mangle)]
+            #[allow(non_snake_case)]
+            pub extern "Rust" fn [<hotline__ $name __ $method ____obj_mut_dyn_Any $(__$arg _ $arg_ty)* __to__unit>]($self_name: &mut dyn ::std::any::Any $(, $arg: $arg_ty)*) {
+                let Some(instance) = $self_name.downcast_mut::<$name>() else {
+                    panic!(concat!("Type mismatch: expected ", stringify!($name)));
+                };
+                instance.$method($($arg),*)
+            }
+        }
+    };
+    
+    // helper to generate method with full signature encoding - no return type
+    (@gen_method_with_sig $name:ident, $method:ident, $self_name:ident, $(($arg:ident, $arg_ty:ty),)* ; ) => {
+        $crate::paste::paste! {
+            #[export_name = concat!(stringify!($name), "__", stringify!($method), "____obj_mut_dyn_Any", $(concat!("__", stringify!($arg), "_", stringify!($arg_ty))),*, "__to__unit")]
+            #[allow(non_snake_case)]
+            pub extern "Rust" fn [<$name __ $method>]($self_name: &mut dyn ::std::any::Any $(, $arg: $arg_ty)*) {
+                let Some(instance) = $self_name.downcast_mut::<$name>() else {
+                    panic!(concat!("Type mismatch: expected ", stringify!($name)));
+                };
+                instance.$method($($arg),*)
+            }
+        }
+    };
+    
+    // helper to generate method with full signature encoding - with return type
+    (@gen_method_with_sig $name:ident, $method:ident, $self_name:ident, $(($arg:ident, $arg_ty:ty),)* ; $ret:ty) => {
+        $crate::paste::paste! {
+            #[export_name = concat!(stringify!($name), "__", stringify!($method), "____obj_mut_dyn_Any", $(concat!("__", stringify!($arg), "_", stringify!($arg_ty))),*, "__to__", stringify!($ret))]
+            #[allow(non_snake_case)]
+            pub extern "Rust" fn [<$name __ $method>]($self_name: &mut dyn ::std::any::Any $(, $arg: $arg_ty)*) -> $ret {
+                let Some(instance) = $self_name.downcast_mut::<$name>() else {
+                    panic!(concat!("Type mismatch: expected ", stringify!($name)));
+                };
+                instance.$method($($arg),*)
+            }
+        }
+    };
+    
+    // helper to get return type as string
+    (@ret_str) => { "()" };
+    (@ret_str $ret:ty) => { stringify!($ret) };
 }
 
 

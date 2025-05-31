@@ -1,7 +1,7 @@
 use hotline::ObjectHandle;
 use libloading::{Library, Symbol};
 use std::collections::HashMap;
-use std::any::Any;
+use std::any::{Any, TypeId};
 
 pub struct DirectRuntime {
     objects: HashMap<ObjectHandle, Box<dyn Any>>,
@@ -15,6 +15,26 @@ impl DirectRuntime {
             objects: HashMap::new(), 
             next_handle: 1, 
             loaded_libs: HashMap::new() 
+        }
+    }
+    
+    fn type_name_for_symbol<T: 'static>() -> &'static str {
+        let type_id = TypeId::of::<T>();
+        if type_id == TypeId::of::<f64>() {
+            "f64"
+        } else if type_id == TypeId::of::<i64>() {
+            "i64"
+        } else if type_id == TypeId::of::<bool>() {
+            "bool"
+        } else if type_id == TypeId::of::<String>() {
+            "String"
+        } else if type_id == TypeId::of::<()>() {
+            "unit"
+        } else {
+            // for other types, need to handle qualified names
+            let full_name = std::any::type_name::<T>();
+            // extract just the type name without module path
+            full_name.rsplit("::").next().unwrap_or(full_name)
         }
     }
 
@@ -49,18 +69,8 @@ impl DirectRuntime {
         let lib = self.loaded_libs.get(lib_name)
             .ok_or("library not loaded")?;
 
-        // Check ABI version first
-        let version_symbol = format!("{}_abi_version", type_name);
-        let abi_version: Symbol<*const u64> = unsafe { 
-            lib.get(version_symbol.as_bytes())? 
-        };
-        let version = unsafe { **abi_version };
-        
-        // TODO: Check version against expected
-        println!("Loaded {} with ABI version: {:#x}", type_name, version);
-
-        // Call constructor
-        let constructor_symbol = format!("{}_default", type_name);
+        // Call constructor with signature-encoded name
+        let constructor_symbol = format!("{}__new____to__Box_dyn_Any", type_name);
         type ConstructorFn = unsafe extern "Rust" fn() -> Box<dyn Any>;
         let constructor: Symbol<ConstructorFn> = unsafe { 
             lib.get(constructor_symbol.as_bytes())? 
@@ -83,7 +93,9 @@ impl DirectRuntime {
         let lib = self.loaded_libs.get(lib_name)
             .ok_or("library not loaded")?;
 
-        let symbol_name = format!("{}_{}", type_name, method);
+        // Use signature-encoded symbol name
+        let return_type = Self::type_name_for_symbol::<T>();
+        let symbol_name = format!("{}__get_{}____obj_ref_dyn_Any__to__{}", type_name, method, return_type);
         type GetterFn<T> = unsafe extern "Rust" fn(&dyn Any) -> T;
         let getter: Symbol<GetterFn<T>> = unsafe { 
             lib.get(symbol_name.as_bytes())? 
@@ -98,7 +110,10 @@ impl DirectRuntime {
         T: 'static + std::fmt::Debug
     {
         // Get symbol first to avoid borrow issues
-        let symbol_name = format!("{}_{}", type_name, method);
+        // Extract field name from setter method (set_x -> x)
+        let field_name = method.strip_prefix("set_").unwrap_or(method);
+        let value_type = Self::type_name_for_symbol::<T>();
+        let symbol_name = format!("{}__set_{}____obj_mut_dyn_Any__{}_{}__{}", type_name, field_name, field_name, value_type, "to__unit");
         println!("Looking for setter symbol: {} in library: {}", symbol_name, lib_name);
         type SetterFn<T> = unsafe extern "Rust" fn(&mut dyn Any, T);
         
@@ -123,12 +138,13 @@ impl DirectRuntime {
     }
 
     pub fn call_method(&mut self, handle: ObjectHandle, type_name: &str, lib_name: &str, method: &str, args: Vec<Box<dyn Any>>) -> Result<Box<dyn Any>, Box<dyn std::error::Error>> {
-        let symbol_name = format!("{}_{}", type_name, method);
-        
         // For now, just handle the move_by case
         if method == "move_by" && args.len() == 2 {
             let dx = *args[0].downcast_ref::<f64>().ok_or("arg 0 not f64")?;
             let dy = *args[1].downcast_ref::<f64>().ok_or("arg 1 not f64")?;
+            
+            // Use signature-encoded symbol name
+            let symbol_name = format!("{}__{}____obj_mut_dyn_Any__dx_f64__dy_f64__to__unit", type_name, method);
             
             type MoveFn = unsafe extern "Rust" fn(&mut dyn Any, f64, f64);
             let mover_fn = {
