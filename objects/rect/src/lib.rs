@@ -1,6 +1,4 @@
-use hotline::{
-    Deserialize, Message, Object, Serialize, Value, dict, init_with, object,
-};
+use hotline::{Deserialize, Message, Object, Serialize, Value, dict, object};
 
 object! {
     Rect {
@@ -41,7 +39,7 @@ impl Rect {
                                 let offset = (y * (*pitch as u32) + x * 4) as usize;
                                 if offset + 3 < buffer.len() {
                                     buffer[offset] = 255; // B
-                                    buffer[offset + 1] = 0; // G
+                                    buffer[offset + 1] = 255; // G
                                     buffer[offset + 2] = 255; // R
                                     buffer[offset + 3] = 255; // A
                                 }
@@ -62,10 +60,7 @@ impl Rect {
                 Value::Nil
             }
 
-            "initWithX:y:width:height:" => init_with!(self, msg, x, y, width, height),
-
             _ => Value::Nil,
         }
     }
 }
-

@@ -196,6 +196,26 @@ macro_rules! object {
         
         impl $name {
             fn auto_receive(&mut self, msg: &Message) -> Option<Value> {
+                // Check for auto-generated initWith selector
+                if msg.selector.starts_with("initWith") && msg.selector.ends_with(":") {
+                    // Count colons to match field count
+                    let colon_count = msg.selector.matches(':').count();
+                    let field_count = [$( stringify!($field) ),*].len();
+                    
+                    if colon_count == field_count {
+                        let mut idx = 0;
+                        $(
+                            if let Some(value) = msg.args.get(idx) {
+                                if let Some(v) = <$type>::deserialize(value) {
+                                    self.$field = v;
+                                }
+                            }
+                            idx += 1;
+                        )*
+                        return Some(Value::Nil);
+                    }
+                }
+                
                 match msg.selector.as_str() {
                     // Auto-generate getters
                     $(
@@ -277,22 +297,6 @@ macro_rules! object {
     };
 }
 
-// Helper macro to generate initWith selector  
-#[macro_export]
-macro_rules! init_with {
-    ($self:ident, $msg:ident, $($field:ident),*) => {{
-        let mut idx = 0;
-        $(
-            if let Some(value) = $msg.args.get(idx) {
-                if let Some(v) = Deserialize::deserialize(value) {
-                    $self.$field = v;
-                }
-            }
-            idx += 1;
-        )*
-        Value::Nil
-    }};
-}
 
 
 
