@@ -8,3 +8,4 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 hotline = {path = "../../hotline"}
+# do not add dependencies here
