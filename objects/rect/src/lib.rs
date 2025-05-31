@@ -11,17 +11,10 @@ object!({
 
     impl Rect {
         fn move_by(&mut self, dx: f64, dy: f64) {
-            println!("move_by called with dx={}, dy={}", dx, dy);
             self.x += dx;
             self.y += dy;
-            println!("After move: x={}, y={}", self.x, self.y);
         }
         fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
-            println!(
-                "render_rect: Drawing rect at ({}, {}) size {}x{}",
-                self.x, self.y, self.width, self.height
-            );
-
             // Draw rectangle by setting pixels
             let x_start = (self.x as i32).max(0) as u32;
             let y_start = (self.y as i32).max(0) as u32;
