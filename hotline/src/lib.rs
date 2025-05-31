@@ -256,41 +256,47 @@ macro_rules! object {
         impl $name {
             // Auto-generated initWith method
             unsafe extern "C" fn vtable_init_with(obj_ptr: *mut std::ffi::c_void, args: &[$crate::Value]) -> $crate::Value {
-                let obj = &mut *(obj_ptr as *mut $name);
-                let mut idx = 0;
-                $(
-                    if let Some(value) = args.get(idx) {
-                        if let Some(v) = <$type as $crate::Deserialize>::deserialize(value) {
-                            obj.$field = v;
+                unsafe {
+                    let obj = &mut *(obj_ptr as *mut $name);
+                    let mut idx = 0;
+                    $(
+                        if let Some(value) = args.get(idx) {
+                            if let Some(v) = <$type as $crate::Deserialize>::deserialize(value) {
+                                obj.$field = v;
+                            }
                         }
-                    }
-                    idx += 1;
-                )*
+                        idx += 1;
+                    )*
+                }
                 $crate::Value::Nil
             }
 
             // Serialize method for vtable
             unsafe extern "C" fn vtable_serialize(obj_ptr: *const std::ffi::c_void) -> $crate::Value {
-                let obj = &*(obj_ptr as *const $name);
-                let mut map = std::collections::HashMap::new();
-                $(
-                    map.insert(stringify!($field).to_string(), <$type as $crate::Serialize>::serialize(&obj.$field));
-                )*
-                $crate::Value::Dict(map)
+                unsafe {
+                    let obj = &*(obj_ptr as *const $name);
+                    let mut map = std::collections::HashMap::new();
+                    $(
+                        map.insert(stringify!($field).to_string(), <$type as $crate::Serialize>::serialize(&obj.$field));
+                    )*
+                    $crate::Value::Dict(map)
+                }
             }
 
             // Deserialize method for vtable
             unsafe extern "C" fn vtable_deserialize(obj_ptr: *mut std::ffi::c_void, state_ptr: *const $crate::Value) {
-                let obj = &mut *(obj_ptr as *mut $name);
-                let state = &*state_ptr;
-                if let $crate::Value::Dict(props) = state {
-                    $(
-                        if let Some(value) = props.get(stringify!($field)) {
-                            if let Some(v) = <$type as $crate::Deserialize>::deserialize(value) {
-                                obj.$field = v;
+                unsafe {
+                    let obj = &mut *(obj_ptr as *mut $name);
+                    let state = &*state_ptr;
+                    if let $crate::Value::Dict(props) = state {
+                        $(
+                            if let Some(value) = props.get(stringify!($field)) {
+                                if let Some(v) = <$type as $crate::Deserialize>::deserialize(value) {
+                                    obj.$field = v;
+                                }
                             }
-                        }
-                    )*
+                        )*
+                    }
                 }
             }
         }
