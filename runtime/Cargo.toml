@@ -17,6 +17,10 @@ serde_json = "1.0"
 name = "hotline"
 path = "src/main.rs"
 
+[[bin]]
+name = "gen_shims"
+path = "src/bin/gen_shims.rs"
+
 [features]
 default = []
 reload = []

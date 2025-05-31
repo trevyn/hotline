@@ -3,6 +3,8 @@ use libloading::{Library, Symbol};
 use std::any::Any;
 use std::collections::HashMap;
 
+pub mod shim_gen;
+
 pub struct DirectRuntime {
     objects: HashMap<ObjectHandle, Box<dyn Any>>,
     next_handle: u64,
