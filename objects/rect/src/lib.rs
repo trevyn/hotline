@@ -14,13 +14,12 @@ object! {
         Value::Nil
     }
 
-    method bounds dummy: i64 |slf| {
-        // ignore the dummy arg, just needed for macro syntax
+    method bounds |slf| {
         let bounds = hotline::Bounds::new(slf.x, slf.y, slf.width, slf.height);
         <hotline::Bounds as Serialize>::serialize(&bounds)
     }
 
-    method properties dummy: i64 |slf| {
+    method properties |slf| {
         hotline::dict! {
             "x" => Value::Float(slf.x),
             "y" => Value::Float(slf.y),
@@ -33,7 +32,7 @@ object! {
 
 // Simple standalone render function with Rust signature
 #[unsafe(no_mangle)]
-pub fn render_rect(
+pub extern "C" fn render_rect(
     obj: &dyn std::any::Any,
     buffer: &mut [u8],
     buffer_width: i64,

@@ -293,6 +293,7 @@ pub type RegisterFn = unsafe extern "C" fn(*mut std::ffi::c_void);
 // Macro for defining objects with automatic boilerplate
 #[macro_export]
 macro_rules! object {
+    // Support for methods with arguments only
     (
         $name:ident {
             $(
@@ -303,6 +304,131 @@ macro_rules! object {
         $(
             method $method:ident $first_arg:ident : $first_type:ty $(, $part:ident : $arg:ident $arg_type:ty)* |$self_:ident| $body:block
         )*
+    ) => {
+        object!(@impl
+            $name {
+                $(
+                    $field: $type
+                ),*
+            }
+            
+            [] // no-arg methods
+            
+            [$(
+                ($method $first_arg : $first_type $(, $part : $arg $arg_type)* |$self_| $body)
+            )*]
+        );
+    };
+    
+    // Support for methods without arguments only
+    (
+        $name:ident {
+            $(
+                $field:ident: $type:ty
+            ),* $(,)?
+        }
+
+        $(
+            method $method:ident |$self_:ident| $body:block
+        )*
+    ) => {
+        object!(@impl
+            $name {
+                $(
+                    $field: $type
+                ),*
+            }
+            
+            [$(
+                ($method |$self_| $body)
+            )*]
+            
+            [] // arg methods
+        );
+    };
+    
+    // Support for mix of both method types - using token tree matching
+    (
+        $name:ident {
+            $(
+                $field:ident: $type:ty
+            ),* $(,)?
+        }
+        
+        $($method_tokens:tt)*
+    ) => {
+        object!(@parse
+            $name {
+                $(
+                    $field: $type
+                ),*
+            }
+            [] // no-arg methods
+            [] // arg methods
+            $($method_tokens)*
+        );
+    };
+    
+    // Parse method without arguments
+    (@parse
+        $name:ident { $($fields:tt)* }
+        [$($noarg_methods:tt)*]
+        [$($arg_methods:tt)*]
+        method $method:ident |$self_:ident| $body:block
+        $($rest:tt)*
+    ) => {
+        object!(@parse
+            $name { $($fields)* }
+            [$($noarg_methods)* ($method |$self_| $body)]
+            [$($arg_methods)*]
+            $($rest)*
+        );
+    };
+    
+    // Parse method with arguments
+    (@parse
+        $name:ident { $($fields:tt)* }
+        [$($noarg_methods:tt)*]
+        [$($arg_methods:tt)*]
+        method $method:ident $first_arg:ident : $first_type:ty $(, $part:ident : $arg:ident $arg_type:ty)* |$self_:ident| $body:block
+        $($rest:tt)*
+    ) => {
+        object!(@parse
+            $name { $($fields)* }
+            [$($noarg_methods)*]
+            [$($arg_methods)* ($method $first_arg : $first_type $(, $part : $arg $arg_type)* |$self_| $body)]
+            $($rest)*
+        );
+    };
+    
+    // Done parsing - call impl
+    (@parse
+        $name:ident { $($fields:tt)* }
+        [$($noarg_methods:tt)*]
+        [$($arg_methods:tt)*]
+    ) => {
+        object!(@impl
+            $name { $($fields)* }
+            [$($noarg_methods)*]
+            [$($arg_methods)*]
+        );
+    };
+    
+    // Implementation
+    (@impl
+        $name:ident {
+            $(
+                $field:ident: $type:ty
+            ),* $(,)?
+        }
+        
+        [$(
+            ($method_noargs:ident |$self_noargs:ident| $body_noargs:block)
+        )*]
+        
+        [$(
+            ($method:ident $first_arg:ident : $first_type:ty $(, $part:ident : $arg:ident $arg_type:ty)* |$self_:ident| $body:block)
+        )*]
     ) => {
         #[derive(Default)]
         pub struct $name {
@@ -422,6 +548,14 @@ macro_rules! object {
             fn receive(&mut self, msg: &$crate::Message) -> $crate::Value {
                 // Handle custom methods directly in receive
                 match msg.selector.as_str() {
+                    // Methods without arguments
+                    $(
+                        stringify!($method_noargs) => {
+                            let $self_noargs = self;
+                            $body_noargs
+                        }
+                    )*
+                    // Methods with arguments
                     $(
                         concat!(stringify!($method), $(":", stringify!($part),)* ":") => {
                             let $self_ = self;
