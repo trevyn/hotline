@@ -246,64 +246,6 @@ macro_rules! object {
         }
 
         impl $name {
-            // Generate custom methods
-            $(
-                paste::paste! {
-                    unsafe extern "C" fn [<vtable_ $method $(_ $part)*>](obj_ptr: *mut std::ffi::c_void, args: &[$crate::Value]) -> $crate::Value {
-                        let $self_ = &mut *(obj_ptr as *mut $name);
-
-                        let mut arg_idx = 0;
-                        let $first_arg = match args.get(arg_idx) {
-                            Some(value) => match <$first_type as $crate::Deserialize>::deserialize(value) {
-                                Some(v) => v,
-                                None => return $crate::Value::Nil,
-                            },
-                            None => return $crate::Value::Nil,
-                        };
-                        arg_idx += 1;
-
-                        $(
-                            let $arg = match args.get(arg_idx) {
-                                Some(value) => match <$arg_type as $crate::Deserialize>::deserialize(value) {
-                                    Some(v) => v,
-                                    None => return $crate::Value::Nil,
-                                },
-                                None => return $crate::Value::Nil,
-                            };
-                            arg_idx += 1;
-                        )*
-
-                        $body
-                    }
-                }
-            )*
-
-            // Auto-generated getter methods
-            $(
-                paste::paste! {
-                    unsafe extern "C" fn [<get_ $field>](obj_ptr: *mut std::ffi::c_void, _args: &[$crate::Value]) -> $crate::Value {
-                        let obj = &*(obj_ptr as *const $name);
-                        <$type as $crate::Serialize>::serialize(&obj.$field)
-                    }
-                }
-            )*
-
-            // Auto-generated setter methods
-            $(
-                paste::paste! {
-                    unsafe extern "C" fn [<set_ $field>](obj_ptr: *mut std::ffi::c_void, args: &[$crate::Value]) -> $crate::Value {
-                        let obj = &mut *(obj_ptr as *mut $name);
-
-                        if let Some(value) = args.get(0) {
-                            if let Some(v) = <$type as $crate::Deserialize>::deserialize(value) {
-                                obj.$field = v;
-                            }
-                        }
-                        $crate::Value::Nil
-                    }
-                }
-            )*
-
             // Auto-generated initWith method
             unsafe extern "C" fn vtable_init_with(obj_ptr: *mut std::ffi::c_void, args: &[$crate::Value]) -> $crate::Value {
                 let obj = &mut *(obj_ptr as *mut $name);
@@ -312,12 +254,7 @@ macro_rules! object {
                     if let Some(value) = args.get(idx) {
                         if let Some(v) = <$type as $crate::Deserialize>::deserialize(value) {
                             obj.$field = v;
-                            eprintln!("Set {} to {:?}", stringify!($field), v);
-                        } else {
-                            eprintln!("Failed to deserialize {} from {:?}", stringify!($field), value);
                         }
-                    } else {
-                        eprintln!("No arg at index {} for {}", idx, stringify!($field));
                     }
                     idx += 1;
                 )*
@@ -360,36 +297,13 @@ macro_rules! object {
                     VTABLE_INIT.call_once(|| {
                         let mut methods = std::collections::HashMap::new();
 
-                        // Register custom methods
-                        $(
-                            paste::paste! {
-                                let selector = concat!(stringify!($method), $(":", stringify!($part),)* ":");
-                                methods.insert(
-                                    selector.to_string(),
-                                    $name::[<vtable_ $method $(_ $part)*>] as $crate::VTableMethod
-                                );
-                            }
-                        )*
+                        // Since we can't generate unique function names without paste,
+                        // we'll use the legacy Object trait approach for methods
+                        // This maintains compatibility while removing the paste dependency
 
-                        // Register auto-generated getters
-                        $(
-                            paste::paste! {
-                                methods.insert(
-                                    stringify!($field).to_string(),
-                                    $name::[<get_ $field>] as $crate::VTableMethod
-                                );
-                            }
-                        )*
-
-                        // Register auto-generated setters
-                        $(
-                            paste::paste! {
-                                methods.insert(
-                                    concat!(stringify!($field), ":").to_string(),
-                                    $name::[<set_ $field>] as $crate::VTableMethod
-                                );
-                            }
-                        )*
+                        // Note: Since we can't generate unique function names without paste,
+                        // we don't register getters/setters in the vtable.
+                        // They're handled through the Object trait's receive method instead.
 
                         // Register initWith method
                         let field_names = vec![$(stringify!($field),)*];
@@ -409,7 +323,6 @@ macro_rules! object {
                                     init_selector.push(':');
                                 }
                             }
-                            eprintln!("Generated initWith selector: {}", init_selector);
                             methods.insert(init_selector, $name::vtable_init_with as $crate::VTableMethod);
                         }
 
@@ -435,18 +348,66 @@ macro_rules! object {
         // Legacy Object trait implementation for compatibility
         impl $crate::Object for $name {
             fn receive(&mut self, msg: &$crate::Message) -> $crate::Value {
-                // Dispatch through vtable
-                let vtable = <$name as $crate::VTableObject>::get_vtable();
-                eprintln!("{} receive: selector={}", stringify!($name), msg.selector);
-                if let Some(method) = vtable.methods.get(&msg.selector) {
-                    eprintln!("Found method for selector {}", msg.selector);
-                    unsafe {
-                        method(<$name as $crate::VTableObject>::as_ptr(self), &msg.args)
+                // Handle custom methods directly in receive
+                match msg.selector.as_str() {
+                    $(
+                        concat!(stringify!($method), $(":", stringify!($part),)* ":") => {
+                            let $self_ = self;
+
+                            let mut arg_idx = 0;
+                            let $first_arg = match msg.args.get(arg_idx) {
+                                Some(value) => match <$first_type as $crate::Deserialize>::deserialize(value) {
+                                    Some(v) => v,
+                                    None => return $crate::Value::Nil,
+                                },
+                                None => return $crate::Value::Nil,
+                            };
+                            arg_idx += 1;
+
+                            $(
+                                let $arg = match msg.args.get(arg_idx) {
+                                    Some(value) => match <$arg_type as $crate::Deserialize>::deserialize(value) {
+                                        Some(v) => v,
+                                        None => return $crate::Value::Nil,
+                                    },
+                                    None => return $crate::Value::Nil,
+                                };
+                                arg_idx += 1;
+                            )*
+
+                            $body
+                        }
+                    )*
+                    _ => {
+                        // Handle auto-generated getters
+                        $(
+                            if msg.selector == stringify!($field) {
+                                return <$type as $crate::Serialize>::serialize(&self.$field);
+                            }
+                        )*
+                        
+                        // Handle auto-generated setters
+                        $(
+                            if msg.selector == concat!(stringify!($field), ":") {
+                                if let Some(value) = msg.args.get(0) {
+                                    if let Some(v) = <$type as $crate::Deserialize>::deserialize(value) {
+                                        self.$field = v;
+                                    }
+                                }
+                                return $crate::Value::Nil;
+                            }
+                        )*
+                        
+                        // Dispatch through vtable for other auto-generated methods
+                        let vtable = <$name as $crate::VTableObject>::get_vtable();
+                        if let Some(method) = vtable.methods.get(&msg.selector) {
+                            unsafe {
+                                method(<$name as $crate::VTableObject>::as_ptr(self), &msg.args)
+                            }
+                        } else {
+                            $crate::Value::Nil
+                        }
                     }
-                } else {
-                    eprintln!("No method found for selector {}", msg.selector);
-                    eprintln!("Available methods: {:?}", vtable.methods.keys().collect::<Vec<_>>());
-                    $crate::Value::Nil
                 }
             }
 

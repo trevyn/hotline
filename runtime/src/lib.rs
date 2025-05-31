@@ -21,14 +21,10 @@ impl Runtime {
 
     pub fn send(&mut self, handle: ObjectHandle, selector: &str, args: Vec<Value>) -> Value {
         let msg = Message { selector: selector.to_string(), args };
-        eprintln!("Runtime.send: handle={:?}, selector={}", handle, selector);
 
         match self.objects.get_mut(&handle) {
             Some((_, obj)) => obj.receive(&msg),
-            None => {
-                eprintln!("No object found for handle {:?}", handle);
-                Value::Nil
-            }
+            None => Value::Nil,
         }
     }
 

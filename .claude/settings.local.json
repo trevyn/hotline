@@ -4,10 +4,13 @@
       "Bash(mkdir:*)",
       "Bash(mv:*)",
       "Bash(cargo build:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(rg:*)"
     ],
     "deny": [
-      "Bash(cargo run:*)"
+      "Bash(cargo run:*)",
+      "Bash(./target/release/runtime)",
+      "Bash(./target/release/hotline)"
     ]
   },
   "enableAllProjectMcpServers": false

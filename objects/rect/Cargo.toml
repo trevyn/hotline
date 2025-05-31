@@ -7,5 +7,4 @@ version = "0.1.0"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-hotline = { path = "../../hotline" }
-paste = "1.0"
+hotline = {path = "../../hotline"}

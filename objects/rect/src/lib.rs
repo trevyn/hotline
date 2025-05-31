@@ -15,7 +15,6 @@ object! {
     }
 
     method renderToBuffer buf_ptr: *mut u8, width: w i64, height: h i64, pitch: p i64 |slf| {
-        eprintln!("renderToBuffer called for rect at ({}, {}) size {}x{}", slf.x, slf.y, slf.width, slf.height);
         let buffer = unsafe {
             std::slice::from_raw_parts_mut(
                 buf_ptr,
@@ -29,7 +28,6 @@ object! {
         let x_end = ((slf.x + slf.width) as i32).min(w as i32) as u32;
         let y_end = ((slf.y + slf.height) as i32).min(h as i32) as u32;
 
-        eprintln!("Drawing from ({}, {}) to ({}, {})", x_start, y_start, x_end, y_end);
 
         for y in y_start..y_end {
             for x in x_start..x_end {
@@ -37,7 +35,7 @@ object! {
                 if offset + 3 < buffer.len() {
                     buffer[offset] = 255; // B
                     buffer[offset + 1] = 0; // G
-                    buffer[offset + 2] = 255; // R
+                    buffer[offset + 2] = 0; // R
                     buffer[offset + 3] = 255; // A
                 }
             }

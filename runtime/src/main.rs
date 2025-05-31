@@ -76,13 +76,9 @@ fn main() -> Result<(), String> {
 
                         if box_w > 0.0 && box_h > 0.0 {
                             if let Some(rect) = runtime.create("Rect") {
-                                println!("Created rect: {:?}", rect);
                                 // Use the macro
-                                let result = m![runtime, rect, initWithX:box_x y:box_y width:box_w height:box_h];
-                                println!("Init result: {:?}", result);
+                                m![runtime, rect, initWithX:box_x y:box_y width:box_w height:box_h];
                                 rects.push(rect);
-                            } else {
-                                println!("Failed to create Rect");
                             }
                         }
                         drag_start = None;

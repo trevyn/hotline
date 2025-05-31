@@ -4,7 +4,6 @@ name = "hotline"
 version = "0.1.0"
 
 [dependencies]
-paste = "1.0"
 
 [lib]
 crate-type = ["rlib", "dylib"]
