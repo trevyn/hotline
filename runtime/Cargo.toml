@@ -8,7 +8,7 @@ base64 = "0.22"
 hotline = {path = "../hotline"}
 libloading = "0.8"
 rand = "0.9"
-rect = { path = "../objects/rect", optional = true }
+# rect = { path = "../objects/rect", optional = true } # not a compile-time dep!
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 sdl2 = {version = "0.37.0", features = ["ttf", "image"]}
 serde = { version = "1.0", features = ["derive"] }
