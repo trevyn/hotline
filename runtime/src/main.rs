@@ -48,14 +48,13 @@ fn main() -> Result<(), String> {
     let mut runtime = TypedRuntime::new();
 
     #[cfg(not(feature = "monolith"))]
-    {
-        // Load rect library
+    let lib_path = {
         #[cfg(target_os = "macos")]
-        let lib_path = "target/release/librect.dylib";
+        let path = "target/release/librect.dylib";
         #[cfg(target_os = "linux")]
-        let lib_path = "target/release/librect.so";
+        let path = "target/release/librect.so";
         #[cfg(target_os = "windows")]
-        let lib_path = "target/release/rect.dll";
+        let path = "target/release/rect.dll";
         
         // First build the rect library
         println!("Building rect library...");
@@ -64,8 +63,9 @@ fn main() -> Result<(), String> {
             .status()
             .expect("Failed to build rect");
         
-        runtime.hot_reload(lib_path).expect("Failed to load rect library");
-    }
+        runtime.hot_reload(path).expect("Failed to load rect library");
+        path
+    };
     
     #[cfg(not(feature = "monolith"))]
     let mut render_lib = unsafe { libloading::Library::new(lib_path) }.expect("Failed to load lib");
