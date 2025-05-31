@@ -10,7 +10,8 @@
       "Bash(cargo clean:*)",
       "Bash(rustc:*)",
       "Bash(realpath:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(nm:*)"
     ],
     "deny": [
       "Bash(cargo run:*)",

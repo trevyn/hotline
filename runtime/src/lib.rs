@@ -1,73 +1,35 @@
-use hotline::{ObjectHandle, TypedMessage, TypedObject, TypedValue};
-
+use hotline::ObjectHandle;
 use libloading::{Library, Symbol};
 use std::collections::HashMap;
+use std::any::Any;
 
-pub struct TypedRuntime {
-    objects: HashMap<ObjectHandle, Box<dyn TypedObject>>,
+pub struct DirectRuntime {
+    objects: HashMap<ObjectHandle, Box<dyn Any>>,
     next_handle: u64,
     loaded_libs: HashMap<String, Library>,
 }
 
-impl TypedRuntime {
+impl DirectRuntime {
     pub fn new() -> Self {
-        Self { objects: HashMap::new(), next_handle: 1, loaded_libs: HashMap::new() }
+        Self { 
+            objects: HashMap::new(), 
+            next_handle: 1, 
+            loaded_libs: HashMap::new() 
+        }
     }
 
-    pub fn register(&mut self, obj: Box<dyn TypedObject>) -> ObjectHandle {
+    pub fn register(&mut self, obj: Box<dyn Any>) -> ObjectHandle {
         let handle = ObjectHandle(self.next_handle);
         self.next_handle += 1;
         self.objects.insert(handle, obj);
         handle
     }
 
-    pub fn send(&mut self, target: ObjectHandle, msg: TypedMessage) -> Result<TypedValue, String> {
-        let obj = self
-            .objects
-            .get_mut(&target)
-            .ok_or_else(|| format!("no object with handle {:?}", target))?;
-
-        // validate message against signatures
-        let signatures = obj.signatures();
-        let sig = signatures
-            .iter()
-            .find(|s| s.selector == msg.selector)
-            .ok_or_else(|| format!("object does not respond to '{}'", msg.selector))?
-            .clone();
-
-        // check arg count
-        if msg.args.len() != sig.arg_types.len() {
-            return Err(format!(
-                "'{}' expects {} args, got {}",
-                msg.selector,
-                sig.arg_types.len(),
-                msg.args.len()
-            ));
-        }
-
-        // check arg types
-        for (i, (arg, expected_type)) in msg.args.iter().zip(&sig.arg_types).enumerate() {
-            if &arg.type_id() != expected_type {
-                return Err(format!("'{}' arg {} type mismatch", msg.selector, i));
-            }
-        }
-
-        // dispatch
-        let result = obj.receive_typed(&msg)?;
-
-        // validate return type
-        if result.type_id() != sig.return_type {
-            return Err(format!("'{}' return type mismatch", msg.selector));
-        }
-
-        Ok(result)
-    }
-
-    pub fn get_object(&self, handle: ObjectHandle) -> Option<&dyn TypedObject> {
+    pub fn get_object(&self, handle: ObjectHandle) -> Option<&dyn Any> {
         self.objects.get(&handle).map(|b| &**b)
     }
 
-    pub fn get_object_mut(&mut self, handle: ObjectHandle) -> Option<&mut dyn TypedObject> {
+    pub fn get_object_mut(&mut self, handle: ObjectHandle) -> Option<&mut dyn Any> {
         self.objects.get_mut(&handle).map(|b| &mut **b)
     }
 
@@ -83,77 +45,121 @@ impl TypedRuntime {
         Ok(())
     }
 
-    pub fn create_from_lib(&mut self, lib_name: &str, creator_fn: &str) -> Option<ObjectHandle> {
-        let lib = self.loaded_libs.get(lib_name)?;
+    pub fn create_from_lib(&mut self, lib_name: &str, type_name: &str) -> Result<ObjectHandle, Box<dyn std::error::Error>> {
+        let lib = self.loaded_libs.get(lib_name)
+            .ok_or("library not loaded")?;
 
-        unsafe {
-            // Use Rust ABI to preserve fat pointers for trait objects
-            type CreatorFn = unsafe extern "Rust" fn() -> Box<dyn TypedObject>;
-            let creator: Symbol<CreatorFn> = lib.get(creator_fn.as_bytes()).ok()?;
-            let obj = creator();
-            Some(self.register(obj))
+        // Check ABI version first
+        let version_symbol = format!("{}_abi_version", type_name);
+        let abi_version: Symbol<*const u64> = unsafe { 
+            lib.get(version_symbol.as_bytes())? 
+        };
+        let version = unsafe { **abi_version };
+        
+        // TODO: Check version against expected
+        println!("Loaded {} with ABI version: {:#x}", type_name, version);
+
+        // Call constructor
+        let constructor_symbol = format!("{}_default", type_name);
+        type ConstructorFn = unsafe extern "Rust" fn() -> Box<dyn Any>;
+        let constructor: Symbol<ConstructorFn> = unsafe { 
+            lib.get(constructor_symbol.as_bytes())? 
+        };
+        
+        let obj = unsafe { constructor() };
+        Ok(self.register(obj))
+    }
+
+    // Direct method calls
+    pub fn call_getter<T>(&self, handle: ObjectHandle, type_name: &str, lib_name: &str, method: &str) -> Result<T, Box<dyn std::error::Error>> 
+    where 
+        T: Clone + 'static
+    {
+        let obj = self.get_object(handle)
+            .ok_or("object not found")?;
+        
+        let lib = self.loaded_libs.get(lib_name)
+            .ok_or("library not loaded")?;
+
+        let symbol_name = format!("{}_{}", type_name, method);
+        type GetterFn<T> = unsafe extern "Rust" fn(&dyn Any) -> T;
+        let getter: Symbol<GetterFn<T>> = unsafe { 
+            lib.get(symbol_name.as_bytes())? 
+        };
+        
+        Ok(unsafe { getter(obj) })
+    }
+
+    pub fn call_setter<T>(&mut self, handle: ObjectHandle, type_name: &str, lib_name: &str, method: &str, value: T) -> Result<(), Box<dyn std::error::Error>> 
+    where 
+        T: 'static
+    {
+        // Get symbol first to avoid borrow issues
+        let symbol_name = format!("{}_set_{}", type_name, method);
+        type SetterFn<T> = unsafe extern "Rust" fn(&mut dyn Any, T);
+        
+        let setter_fn = {
+            let lib = self.loaded_libs.get(lib_name)
+                .ok_or("library not loaded")?;
+            let setter: Symbol<SetterFn<T>> = unsafe { 
+                lib.get(symbol_name.as_bytes())? 
+            };
+            // Copy the function pointer out
+            *setter
+        };
+        
+        let obj = self.get_object_mut(handle)
+            .ok_or("object not found")?;
+        
+        unsafe { setter_fn(obj, value) };
+        Ok(())
+    }
+
+    pub fn call_method(&mut self, handle: ObjectHandle, type_name: &str, lib_name: &str, method: &str, args: Vec<Box<dyn Any>>) -> Result<Box<dyn Any>, Box<dyn std::error::Error>> {
+        let symbol_name = format!("{}_{}", type_name, method);
+        
+        // For now, just handle the move_by case
+        if method == "move_by" && args.len() == 2 {
+            let dx = *args[0].downcast_ref::<f64>().ok_or("arg 0 not f64")?;
+            let dy = *args[1].downcast_ref::<f64>().ok_or("arg 1 not f64")?;
+            
+            type MoveFn = unsafe extern "Rust" fn(&mut dyn Any, f64, f64);
+            let mover_fn = {
+                let lib = self.loaded_libs.get(lib_name)
+                    .ok_or("library not loaded")?;
+                let mover: Symbol<MoveFn> = unsafe { 
+                    lib.get(symbol_name.as_bytes())? 
+                };
+                *mover
+            };
+            
+            let obj = self.get_object_mut(handle)
+                .ok_or("object not found")?;
+            
+            unsafe { mover_fn(obj, dx, dy) };
+            Ok(Box::new(()))
+        } else {
+            Err("unsupported method".into())
         }
     }
 }
 
-/// macro for ergonomic message sends
+/// Macro for ergonomic direct calls
 #[macro_export]
-macro_rules! typed_send {
-    ($runtime:expr, $target:expr, $selector:ident($($arg:expr),*)) => {{
-        let msg = TypedMessage {
-            selector: stringify!($selector).to_string(),
-            args: vec![$(TypedValue::new($arg)),*],
-        };
-        $runtime.send($target, msg)
+macro_rules! direct_call {
+    // Getter
+    ($runtime:expr, $handle:expr, $type:ident, $method:ident()) => {{
+        $runtime.call_getter::<_>($handle, stringify!($type), concat!("lib", stringify!($type)), stringify!($method))
     }};
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hotline::typed_methods;
-
-    #[derive(Clone)]
-    struct Counter {
-        value: i64,
-    }
-
-    typed_methods! {
-        Counter {
-            fn increment(&mut self) {
-                self.value += 1;
-            }
-
-            fn add(&mut self, n: i64) {
-                self.value += n;
-            }
-
-            fn get(&mut self) -> i64 {
-                self.value
-            }
-        }
-    }
-
-    #[test]
-    fn test_typed_dispatch() {
-        let mut runtime = TypedRuntime::new();
-        let handle = runtime.register(Box::new(Counter { value: 0 }));
-
-        // increment
-        typed_send!(runtime, handle, increment()).unwrap();
-
-        // add
-        typed_send!(runtime, handle, add(5i64)).unwrap();
-
-        // get
-        let result = typed_send!(runtime, handle, get()).unwrap();
-        assert_eq!(*result.get::<i64>().unwrap(), 6);
-
-        // type error
-        let msg = TypedMessage {
-            selector: "add".to_string(),
-            args: vec![TypedValue::new("not a number")],
-        };
-        assert!(runtime.send(handle, msg).is_err());
-    }
+    
+    // Setter
+    ($runtime:expr, $handle:expr, $type:ident, $method:ident($value:expr)) => {{
+        $runtime.call_setter($handle, stringify!($type), concat!("lib", stringify!($type)), stringify!($method), $value)
+    }};
+    
+    // Method with args
+    ($runtime:expr, $handle:expr, $type:ident, $method:ident($($arg:expr),*)) => {{
+        let args: Vec<Box<dyn std::any::Any>> = vec![$(Box::new($arg)),*];
+        $runtime.call_method($handle, stringify!($type), concat!("lib", stringify!($type)), stringify!($method), args)
+    }};
 }

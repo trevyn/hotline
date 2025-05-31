@@ -1,5 +1,5 @@
-use hotline::{ObjectHandle, TypedMessage, TypedValue};
-use runtime::{TypedRuntime, typed_send};
+use hotline::ObjectHandle;
+use runtime::{DirectRuntime, direct_call};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -7,25 +7,12 @@ use sdl2::pixels::{Color, PixelFormatEnum};
 use std::any::Any;
 use std::time::Duration;
 
-// Helper macro that logs errors from typed_send
-macro_rules! typed_send_or_log {
-    ($runtime:expr, $target:expr, $method:ident($($arg:expr),*)) => {{
-        match typed_send!($runtime, $target, $method($($arg),*)) {
-            Ok(v) => Ok(v),
-            Err(e) => {
-                eprintln!("Error calling {}: {}", stringify!($method), e);
-                Err(e)
-            }
-        }
-    }};
-}
-
 fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
 
     let window = video_subsystem
-        .window("hotline - typed", 800, 600)
+        .window("hotline - direct calls", 800, 600)
         .position_centered()
         .build()
         .map_err(|e| e.to_string())?;
@@ -34,7 +21,7 @@ fn main() -> Result<(), String> {
     let texture_creator = canvas.texture_creator();
     let mut event_pump = sdl_context.event_pump()?;
 
-    let mut runtime = TypedRuntime::new();
+    let mut runtime = DirectRuntime::new();
 
     let lib_path = {
         #[cfg(target_os = "macos")]
@@ -81,24 +68,13 @@ fn main() -> Result<(), String> {
                     selected = None;
                     for &rect_handle in &rects {
                         // Get bounds using getter methods
-                        let rect_x = match typed_send_or_log!(runtime, rect_handle, x()) {
-                            Ok(v) => {
-                                println!("  x() returned TypedValue: {:?}", v);
-                                v.get::<f64>().copied().unwrap_or(0.0)
-                            }
-                            Err(_) => 0.0,
-                        };
-                        let rect_y = typed_send_or_log!(runtime, rect_handle, y())
-                            .ok()
-                            .and_then(|v| v.get::<f64>().copied())
+                        let rect_x = direct_call!(runtime, rect_handle, Rect, x())
                             .unwrap_or(0.0);
-                        let rect_width = typed_send_or_log!(runtime, rect_handle, width())
-                            .ok()
-                            .and_then(|v| v.get::<f64>().copied())
+                        let rect_y = direct_call!(runtime, rect_handle, Rect, y())
                             .unwrap_or(0.0);
-                        let rect_height = typed_send_or_log!(runtime, rect_handle, height())
-                            .ok()
-                            .and_then(|v| v.get::<f64>().copied())
+                        let rect_width = direct_call!(runtime, rect_handle, Rect, width())
+                            .unwrap_or(0.0);
+                        let rect_height = direct_call!(runtime, rect_handle, Rect, height())
                             .unwrap_or(0.0);
 
                         println!(
@@ -137,21 +113,20 @@ fn main() -> Result<(), String> {
                         let box_h = (start_y - y).abs() as f64;
 
                         if box_w > 0.0 && box_h > 0.0 {
-                            let handle = runtime.create_from_lib("librect", "create_rect");
+                            let handle = runtime.create_from_lib("librect", "Rect")
+                                .expect("Failed to create rect");
 
-                            if let Some(handle) = handle {
-                                // Set initial properties for dynamic version
-                                typed_send_or_log!(runtime, handle, set_x(box_x)).ok();
-                                typed_send_or_log!(runtime, handle, set_y(box_y)).ok();
-                                typed_send_or_log!(runtime, handle, set_width(box_w)).ok();
-                                typed_send_or_log!(runtime, handle, set_height(box_h)).ok();
+                            // Set initial properties
+                            direct_call!(runtime, handle, Rect, x(box_x)).ok();
+                            direct_call!(runtime, handle, Rect, y(box_y)).ok();
+                            direct_call!(runtime, handle, Rect, width(box_w)).ok();
+                            direct_call!(runtime, handle, Rect, height(box_h)).ok();
 
-                                println!(
-                                    "Created rect with bounds: ({}, {}, {}, {})",
-                                    box_x, box_y, box_w, box_h
-                                );
-                                rects.push(handle);
-                            }
+                            println!(
+                                "Created rect with bounds: ({}, {}, {}, {})",
+                                box_x, box_y, box_w, box_h
+                            );
+                            rects.push(handle);
                         }
                         drag_start = None;
                     }
@@ -160,13 +135,9 @@ fn main() -> Result<(), String> {
                     if dragging {
                         if let Some(handle) = selected {
                             // Get current position to calculate delta
-                            let rect_x = typed_send!(runtime, handle, x())
-                                .ok()
-                                .and_then(|v| v.get::<f64>().copied())
+                            let rect_x = direct_call!(runtime, handle, Rect, x())
                                 .unwrap_or(0.0);
-                            let rect_y = typed_send!(runtime, handle, y())
-                                .ok()
-                                .and_then(|v| v.get::<f64>().copied())
+                            let rect_y = direct_call!(runtime, handle, Rect, y())
                                 .unwrap_or(0.0);
 
                             let new_x = x as f64 - drag_offset.0;
@@ -175,7 +146,7 @@ fn main() -> Result<(), String> {
                             let dy = new_y - rect_y;
 
                             // Move the rect
-                            typed_send!(runtime, handle, move_by(dx, dy)).ok();
+                            direct_call!(runtime, handle, Rect, move_by(dx, dy)).ok();
                         }
                     }
                 }
@@ -228,28 +199,20 @@ fn main() -> Result<(), String> {
             for &rect_handle in &rects {
                 if let Some(rect_obj) = runtime.get_object(rect_handle) {
                     unsafe {
-                        render_rect(rect_obj.as_any(), buffer, 800, 600, pitch as i64);
+                        render_rect(rect_obj, buffer, 800, 600, pitch as i64);
                     }
                 }
             }
 
             // Highlight selected rect with a border
             if let Some(sel_handle) = selected {
-                let rect_x = typed_send!(runtime, sel_handle, x())
-                    .ok()
-                    .and_then(|v| v.get::<f64>().copied())
+                let rect_x = direct_call!(runtime, sel_handle, Rect, x())
                     .unwrap_or(0.0);
-                let rect_y = typed_send!(runtime, sel_handle, y())
-                    .ok()
-                    .and_then(|v| v.get::<f64>().copied())
+                let rect_y = direct_call!(runtime, sel_handle, Rect, y())
                     .unwrap_or(0.0);
-                let rect_width = typed_send!(runtime, sel_handle, width())
-                    .ok()
-                    .and_then(|v| v.get::<f64>().copied())
+                let rect_width = direct_call!(runtime, sel_handle, Rect, width())
                     .unwrap_or(0.0);
-                let rect_height = typed_send!(runtime, sel_handle, height())
-                    .ok()
-                    .and_then(|v| v.get::<f64>().copied())
+                let rect_height = direct_call!(runtime, sel_handle, Rect, height())
                     .unwrap_or(0.0);
 
                 // Draw selection border

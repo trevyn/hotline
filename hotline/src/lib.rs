@@ -1,8 +1,10 @@
-use std::any::{Any, TypeId};
+// use std::any::{Any, TypeId};
 
 // Re-export paste for use by downstream crates
 pub use paste;
 
+// TypedObject trait and related types - commented out since we're using direct calls now
+/*
 /// typed value that knows what it contains
 #[derive(Debug)]
 pub enum TypedValue {
@@ -87,6 +89,7 @@ pub trait TypedObject: Any + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
+*/
 
 
 /// helper macro to define typed objects with struct and methods
@@ -153,8 +156,33 @@ macro_rules! object {
         
         // Generate no_mangle extern functions
         $crate::paste::paste! {
+            // ABI version - const hash of structure
+            #[unsafe(no_mangle)]
+            #[allow(non_upper_case_globals)]
+            pub static [<$name _abi_version>]: u64 = {
+                // Simple const hash using string concatenation
+                const fn const_hash(s: &str) -> u64 {
+                    let mut hash = 0xcbf29ce484222325u64; // FNV offset basis
+                    let bytes = s.as_bytes();
+                    let mut i = 0;
+                    while i < bytes.len() {
+                        hash ^= bytes[i] as u64;
+                        hash = hash.wrapping_mul(0x100000001b3u64); // FNV prime
+                        i += 1;
+                    }
+                    hash
+                }
+                
+                const_hash(concat!(
+                    stringify!($name), ";",
+                    $(stringify!($field), ":", stringify!($field_ty), ";",)*
+                    $(stringify!($method), "(", $(stringify!($arg_ty), ",",)* ")", stringify!($(-> $ret)?), ";",)*
+                ))
+            };
+            
             // Constructor if Default is implemented
             #[unsafe(no_mangle)]
+            #[allow(non_snake_case)]
             pub extern "Rust" fn [<$name _default>]() -> Box<dyn ::std::any::Any> {
                 Box::new(<$name as Default>::default())
             }
@@ -162,6 +190,7 @@ macro_rules! object {
             // Getters
             $(
                 #[unsafe(no_mangle)]
+                #[allow(non_snake_case)]
                 pub extern "Rust" fn [<$name _ $field>](obj: &dyn ::std::any::Any) -> $field_ty {
                     let Some(instance) = obj.downcast_ref::<$name>() else {
                         panic!(concat!("Type mismatch: expected ", stringify!($name)));
@@ -173,6 +202,7 @@ macro_rules! object {
             // Setters
             $(
                 #[unsafe(no_mangle)]
+                #[allow(non_snake_case)]
                 pub extern "Rust" fn [<$name _set_ $field>](obj: &mut dyn ::std::any::Any, value: $field_ty) {
                     let Some(instance) = obj.downcast_mut::<$name>() else {
                         panic!(concat!("Type mismatch: expected ", stringify!($name)));
@@ -184,6 +214,7 @@ macro_rules! object {
             // User methods
             $(
                 #[unsafe(no_mangle)]
+                #[allow(non_snake_case)]
                 pub extern "Rust" fn [<$name _ $method>](obj: &mut dyn ::std::any::Any $(, $arg: $arg_ty)*) $(-> $ret)? {
                     let Some(instance) = obj.downcast_mut::<$name>() else {
                         panic!(concat!("Type mismatch: expected ", stringify!($name)));
@@ -193,81 +224,6 @@ macro_rules! object {
             )*
         }
         
-        // Still implement TypedObject for backwards compatibility
-        impl $crate::TypedObject for $name {
-            fn signatures(&self) -> &[$crate::MethodSignature] {
-                use std::any::TypeId;
-                use std::sync::OnceLock;
-                static SIGS: OnceLock<Vec<$crate::MethodSignature>> = OnceLock::new();
-                SIGS.get_or_init(|| vec![
-                    // Field getters
-                    $(
-                        $crate::MethodSignature {
-                            selector: stringify!($field).to_string(),
-                            arg_types: vec![],
-                            return_type: TypeId::of::<$field_ty>(),
-                        },
-                    )*
-                    // Field setters
-                    $(
-                        $crate::MethodSignature {
-                            selector: concat!("set_", stringify!($field)).to_string(),
-                            arg_types: vec![TypeId::of::<$field_ty>()],
-                            return_type: TypeId::of::<()>(),
-                        },
-                    )*
-                    // User methods
-                    $(
-                        $crate::MethodSignature {
-                            selector: stringify!($method).to_string(),
-                            arg_types: vec![$(TypeId::of::<$arg_ty>()),*],
-                            return_type: TypeId::of::<object!(@ret_type $($ret)?)>(),
-                        },
-                    )*
-                ])
-            }
-
-            fn receive_typed(&mut self, msg: &$crate::TypedMessage) -> Result<$crate::TypedValue, String> {
-                match msg.selector.as_str() {
-                    // Field getters
-                    $(
-                        stringify!($field) => {
-                            Ok($crate::TypedValue::new(self.$field.clone()))
-                        }
-                    )*
-                    // Field setters
-                    $(
-                        concat!("set_", stringify!($field)) => {
-                            let value = msg.args.get(0)
-                                .ok_or("missing value arg")?
-                                .get::<$field_ty>()
-                                .ok_or("value type mismatch")?;
-                            self.$field = value.clone();
-                            Ok($crate::TypedValue::new(()))
-                        }
-                    )*
-                    // User methods
-                    $(
-                        stringify!($method) => {
-                            let mut _arg_idx = 0;
-                            $(
-                                let $arg = msg.args.get(_arg_idx)
-                                    .ok_or(format!("missing arg {}", _arg_idx))?
-                                    .get::<$arg_ty>()
-                                    .ok_or(format!("arg {} type mismatch", _arg_idx))?;
-                                _arg_idx += 1;
-                            )*
-                            let result = self.$method($($arg.clone()),*);
-                            Ok($crate::TypedValue::new(result))
-                        }
-                    )*
-                    _ => Err(format!("unknown selector: {}", msg.selector)),
-                }
-            }
-
-            fn as_any(&self) -> &dyn std::any::Any { self }
-            fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
-        }
     };
     
     // helper to get return type, defaults to ()
@@ -275,70 +231,6 @@ macro_rules! object {
     (@ret_type $ret:ty) => { $ret };
 }
 
-/// helper macro to define typed methods
-#[macro_export]
-macro_rules! typed_methods {
-    (
-        $obj:ty {
-            $(
-                fn $method:ident(&mut $self:ident $(, $arg:ident: $arg_ty:ty)*) $(-> $ret:ty)? $body:block
-            )*
-        }
-    ) => {
-        impl $obj {
-            $(
-                fn $method(&mut $self $(, $arg: $arg_ty)*) $(-> $ret)? $body
-            )*
-        }
-
-        impl TypedObject for $obj {
-            fn signatures(&self) -> &[MethodSignature] {
-                use std::any::TypeId;
-                use std::sync::OnceLock;
-                static SIGS: OnceLock<Vec<MethodSignature>> = OnceLock::new();
-                SIGS.get_or_init(|| vec![
-                    $(
-                        MethodSignature {
-                            selector: stringify!($method).to_string(),
-                            arg_types: vec![$(TypeId::of::<$arg_ty>()),*],
-                            return_type: TypeId::of::<typed_methods!(@ret_type $($ret)?)>(),
-                        },
-                    )*
-                ])
-            }
-
-            fn receive_typed(&mut self, msg: &TypedMessage) -> Result<TypedValue, String> {
-                match msg.selector.as_str() {
-                    $(
-                        stringify!($method) => {
-                            // extract args with type checking
-                            let mut _arg_idx = 0;
-                            $(
-                                let $arg = msg.args.get(_arg_idx)
-                                    .ok_or(format!("missing arg {}", _arg_idx))?
-                                    .get::<$arg_ty>()
-                                    .ok_or(format!("arg {} type mismatch", _arg_idx))?
-    ;
-                                _arg_idx += 1;
-                            )*
-
-                            let result = self.$method($($arg.clone()),*);
-                            Ok(TypedValue::new(result))
-                        }
-                    )*
-                    _ => Err(format!("unknown selector: {}", msg.selector)),
-                }
-            }
-
-            fn as_any(&self) -> &dyn std::any::Any { self }
-            fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
-        }
-    };
-
-    // helper to get return type, defaults to ()
-    (@ret_type) => { () };
-    (@ret_type $ret:ty) => { $ret };
-}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
