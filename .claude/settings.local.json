@@ -12,7 +12,8 @@
       "Bash(realpath:*)",
       "Bash(find:*)",
       "Bash(nm:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(cargo check:*)"
     ],
     "deny": [
       "Bash(cargo run:*)",
