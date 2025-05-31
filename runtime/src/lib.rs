@@ -55,7 +55,7 @@ impl DirectRuntime {
             .ok_or("library not loaded")?;
 
         // Call constructor with signature-encoded name
-        let constructor_symbol = format!("{}__new____to__Box_dyn_Any", type_name);
+        let constructor_symbol = format!("{}__new____to__Box_lt_dyn_Any_gt", type_name);
         type ConstructorFn = unsafe extern "Rust" fn() -> Box<dyn Any>;
         let constructor: Symbol<ConstructorFn> = unsafe { 
             lib.get(constructor_symbol.as_bytes())? 

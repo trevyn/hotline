@@ -44,8 +44,8 @@ fn main() -> Result<(), String> {
 
     let mut render_lib = unsafe { libloading::Library::new(lib_path) }.expect("Failed to load lib");
     let mut render_rect: libloading::Symbol<
-        unsafe extern "Rust" fn(&dyn Any, &mut [u8], i64, i64, i64),
-    > = unsafe { render_lib.get(b"render_rect") }.expect("Failed to find render_rect");
+        unsafe extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64),
+    > = unsafe { render_lib.get(b"Rect__render____obj_mut_dyn_Any__buffer_ref_mut_slice_u8_endslice__buffer_width_i64__buffer_height_i64__pitch_i64__to__unit") }.expect("Failed to find render function");
 
     let mut rects: Vec<ObjectHandle> = Vec::new();
     let mut drag_start = None;
@@ -175,8 +175,8 @@ fn main() -> Result<(), String> {
 
                     render_lib = unsafe { libloading::Library::new(lib_path) }
                         .expect("Failed to reload render lib");
-                    render_rect = unsafe { render_lib.get(b"render_rect") }
-                        .expect("Failed to reload render_rect");
+                    render_rect = unsafe { render_lib.get(b"Rect__render____obj_mut_dyn_Any__buffer_ref_mut_slice_u8_endslice__buffer_width_i64__buffer_height_i64__pitch_i64__to__unit") }
+                        .expect("Failed to reload render function");
 
                     println!("Reload complete!");
                 }
@@ -196,8 +196,9 @@ fn main() -> Result<(), String> {
             }
 
             // Render rects to buffer
-            for &rect_handle in &rects {
-                if let Some(rect_obj) = runtime.get_object(rect_handle) {
+            for i in 0..rects.len() {
+                let rect_handle = rects[i];
+                if let Some(rect_obj) = runtime.get_object_mut(rect_handle) {
                     unsafe {
                         render_rect(rect_obj, buffer, 800, 600, pitch as i64);
                     }
