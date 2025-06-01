@@ -28,14 +28,13 @@ macro_rules! object {
         }
 
         // Generate extern functions with signature-encoded names
+        // Constructor if Default is implemented
         $crate::paste::paste! {
-            // Constructor if Default is implemented
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
-            pub extern "Rust" fn [<$name __new____to__Box_lt_dyn_Any_gt>]() -> Box<dyn ::std::any::Any> {
+            pub extern "Rust" fn [<$name __new____to__Box_lt_dyn_Any_gt __ definer_env!("RUSTC_COMMIT_HASH")>]() -> Box<dyn ::std::any::Any> {
                 Box::new(<$name as Default>::default())
             }
-
         }
 
         // Generate getters and setters separately to work around paste limitations
@@ -60,7 +59,7 @@ macro_rules! object {
         $crate::paste::paste! {
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
-            pub extern "Rust" fn [<$name __get_ $field ____obj_ref_dyn_Any__to__f64>](obj: &dyn ::std::any::Any) -> f64 {
+            pub extern "Rust" fn [<$name __get_ $field ____obj_ref_dyn_Any__to__f64 __ definer_env!("RUSTC_COMMIT_HASH")>](obj: &dyn ::std::any::Any) -> f64 {
                 let Some(instance) = obj.downcast_ref::<$name>() else {
                     panic!(concat!("Type mismatch: expected ", stringify!($name)));
                 };
@@ -74,7 +73,7 @@ macro_rules! object {
         $crate::paste::paste! {
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
-            pub extern "Rust" fn [<$name __get_ $field ____obj_ref_dyn_Any__to__ $field_ty>](obj: &dyn ::std::any::Any) -> $field_ty {
+            pub extern "Rust" fn [<$name __get_ $field ____obj_ref_dyn_Any__to__ $field_ty __ definer_env!("RUSTC_COMMIT_HASH")>](obj: &dyn ::std::any::Any) -> $field_ty {
                 let Some(instance) = obj.downcast_ref::<$name>() else {
                     panic!(concat!("Type mismatch: expected ", stringify!($name)));
                 };
@@ -88,7 +87,7 @@ macro_rules! object {
         $crate::paste::paste! {
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
-            pub extern "Rust" fn [<$name __set_ $field ____obj_mut_dyn_Any__ $field _f64__to__unit>](obj: &mut dyn ::std::any::Any, value: f64) {
+            pub extern "Rust" fn [<$name __set_ $field ____obj_mut_dyn_Any__ $field _f64__to__unit __ definer_env!("RUSTC_COMMIT_HASH")>](obj: &mut dyn ::std::any::Any, value: f64) {
                 let Some(instance) = obj.downcast_mut::<$name>() else {
                     panic!(concat!("Type mismatch: expected ", stringify!($name)));
                 };
@@ -102,7 +101,7 @@ macro_rules! object {
         $crate::paste::paste! {
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
-            pub extern "Rust" fn [<$name __set_ $field ____obj_mut_dyn_Any__ $field _ $field_ty __to__unit>](obj: &mut dyn ::std::any::Any, value: $field_ty) {
+            pub extern "Rust" fn [<$name __set_ $field ____obj_mut_dyn_Any__ $field _ $field_ty __to__unit __ definer_env!("RUSTC_COMMIT_HASH")>](obj: &mut dyn ::std::any::Any, value: $field_ty) {
                 let Some(instance) = obj.downcast_mut::<$name>() else {
                     panic!(concat!("Type mismatch: expected ", stringify!($name)));
                 };
@@ -116,7 +115,7 @@ macro_rules! object {
         $crate::paste::paste! {
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
-            pub extern "Rust" fn [<$name __ $method ____obj_mut_dyn_Any $(__ $arg _ stringify!($arg_ty):type)* __to__unit>](
+            pub extern "Rust" fn [<$name __ $method ____obj_mut_dyn_Any $(__ $arg _ stringify!($arg_ty):type)* __to__unit __ definer_env!("RUSTC_COMMIT_HASH")>](
                 obj: &mut dyn ::std::any::Any $(, $arg: $arg_ty)*
             ) {
                 let Some(instance) = obj.downcast_mut::<$name>() else {
@@ -131,7 +130,7 @@ macro_rules! object {
         $crate::paste::paste! {
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
-            pub extern "Rust" fn [<$name __ $method ____obj_mut_dyn_Any $(__ $arg _ stringify!($arg_ty):type)* __to__ stringify!($ret):type>](
+            pub extern "Rust" fn [<$name __ $method ____obj_mut_dyn_Any $(__ $arg _ stringify!($arg_ty):type)* __to__ stringify!($ret):type __ definer_env!("RUSTC_COMMIT_HASH")>](
                 obj: &mut dyn ::std::any::Any $(, $arg: $arg_ty)*
             ) -> $ret {
                 let Some(instance) = obj.downcast_mut::<$name>() else {

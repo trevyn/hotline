@@ -7,6 +7,7 @@ pub(crate) enum Segment {
     Apostrophe(Span),
     Env(LitStr),
     Modifier(Colon, Ident),
+    DefinerEnv(LitStr),
 }
 
 pub(crate) struct LitStr {
@@ -60,6 +61,61 @@ pub(crate) fn parse(tokens: &mut Peekable<token_stream::IntoIter>) -> Result<Vec
                         value: stringified,
                         span: ident.span(),
                     }));
+                } else if fragment == "definer_env"
+                    && match tokens.peek() {
+                        Some(TokenTree::Punct(punct)) => punct.as_char() == '!',
+                        _ => false,
+                    }
+                {
+                    let bang = tokens.next().unwrap(); // `!`
+                    let expect_group = tokens.next();
+                    let parenthesized = match &expect_group {
+                        Some(TokenTree::Group(group))
+                            if group.delimiter() == Delimiter::Parenthesis =>
+                        {
+                            group
+                        }
+                        Some(wrong) => return Err(Error::new(wrong.span(), "expected `(`")),
+                        None => {
+                            return Err(Error::new2(
+                                ident.span(),
+                                bang.span(),
+                                "expected `(` after `definer_env!`",
+                            ));
+                        }
+                    };
+                    let mut inner = parenthesized.stream().into_iter();
+                    let lit = match inner.next() {
+                        Some(TokenTree::Literal(lit)) => lit,
+                        Some(wrong) => {
+                            return Err(Error::new(wrong.span(), "expected string literal"))
+                        }
+                        None => {
+                            return Err(Error::new2(
+                                ident.span(),
+                                parenthesized.span(),
+                                "expected string literal as argument to definer_env! macro",
+                            ))
+                        }
+                    };
+                    let lit_string = lit.to_string();
+                    if lit_string.starts_with('"')
+                        && lit_string.ends_with('"')
+                        && lit_string.len() >= 2
+                    {
+                        segments.push(Segment::DefinerEnv(LitStr {
+                            value: lit_string[1..lit_string.len() - 1].to_owned(),
+                            span: lit.span(),
+                        }));
+                    } else {
+                        return Err(Error::new(lit.span(), "expected string literal"));
+                    }
+                    if let Some(unexpected) = inner.next() {
+                        return Err(Error::new(
+                            unexpected.span(),
+                            "unexpected token in definer_env! macro",
+                        ));
+                    }
                 } else if fragment == "env"
                     && match tokens.peek() {
                         Some(TokenTree::Punct(punct)) => punct.as_char() == '!',
@@ -194,6 +250,21 @@ pub(crate) fn paste(segments: &[Segment]) -> Result<String> {
                 };
                 let resolved = resolved.replace('-', "_");
                 evaluated.push(resolved);
+            }
+            Segment::DefinerEnv(var) => {
+                // For definer_env!, we get the env var from the paste crate's build environment
+                // This is hardcoded for now - in a real implementation we'd need to pass this
+                // through from the paste proc macro's compilation
+                if var.value == "RUSTC_COMMIT_HASH" {
+                    // This will use the env var from when paste is compiled
+                    let resolved = env!("RUSTC_COMMIT_HASH");
+                    evaluated.push(resolved.to_string());
+                } else {
+                    return Err(Error::new(
+                        var.span,
+                        &format!("definer_env! only supports RUSTC_COMMIT_HASH, got: {:?}", var.value),
+                    ));
+                }
             }
             Segment::Modifier(colon, ident) => {
                 let last = match evaluated.pop() {

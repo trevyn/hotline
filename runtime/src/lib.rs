@@ -3,6 +3,8 @@ use libloading::{Library, Symbol};
 use std::any::Any;
 use std::collections::HashMap;
 
+pub const RUSTC_COMMIT: &str = env!("RUSTC_COMMIT_HASH");
+
 pub mod shim_gen;
 
 pub struct DirectRuntime {
@@ -56,7 +58,7 @@ impl DirectRuntime {
         let lib = self.loaded_libs.get(lib_name).ok_or("library not loaded")?;
 
         // Call constructor with signature-encoded name
-        let constructor_symbol = format!("{}__new____to__Box_lt_dyn_Any_gt", type_name);
+        let constructor_symbol = format!("{}__new____to__Box_lt_dyn_Any_gt__{}", type_name, RUSTC_COMMIT);
         type ConstructorFn = unsafe extern "Rust" fn() -> Box<dyn Any>;
         let constructor: Symbol<ConstructorFn> = unsafe { lib.get(constructor_symbol.as_bytes())? };
 
@@ -84,7 +86,7 @@ impl DirectRuntime {
         // Use signature-encoded symbol name
         let return_type = Self::type_name_for_symbol::<T>();
         let symbol_name =
-            format!("{}__get_{}____obj_ref_dyn_Any__to__{}", type_name, method, return_type);
+            format!("{}__get_{}____obj_ref_dyn_Any__to__{}__{}", type_name, method, return_type, RUSTC_COMMIT);
         type GetterFn<T> = unsafe extern "Rust" fn(&dyn Any) -> T;
         let getter: Symbol<GetterFn<T>> = unsafe { lib.get(symbol_name.as_bytes())? };
 
@@ -108,8 +110,8 @@ impl DirectRuntime {
         let field_name = method.strip_prefix("set_").unwrap_or(method);
         let value_type = Self::type_name_for_symbol::<T>();
         let symbol_name = format!(
-            "{}__set_{}____obj_mut_dyn_Any__{}_{}__{}",
-            type_name, field_name, field_name, value_type, "to__unit"
+            "{}__set_{}____obj_mut_dyn_Any__{}_{}__{}__{}", 
+            type_name, field_name, field_name, value_type, "to__unit", RUSTC_COMMIT
         );
         println!("Looking for setter symbol: {} in library: {}", symbol_name, lib_name);
         type SetterFn<T> = unsafe extern "Rust" fn(&mut dyn Any, T);
@@ -147,7 +149,7 @@ impl DirectRuntime {
 
             // Use signature-encoded symbol name
             let symbol_name =
-                format!("{}__{}____obj_mut_dyn_Any__dx_f64__dy_f64__to__unit", type_name, method);
+                format!("{}__{}____obj_mut_dyn_Any__dx_f64__dy_f64__to__unit__{}", type_name, method, RUSTC_COMMIT);
 
             type MoveFn = unsafe extern "Rust" fn(&mut dyn Any, f64, f64);
             let mover_fn = {

@@ -43,9 +43,10 @@ fn main() -> Result<(), String> {
     };
 
     let mut render_lib = unsafe { libloading::Library::new(lib_path) }.expect("Failed to load lib");
+    let render_symbol = format!("Rect__render____obj_mut_dyn_Any__buffer_ref_mut_slice_u8_endslice__buffer_width_i64__buffer_height_i64__pitch_i64__to__unit__{}", runtime::RUSTC_COMMIT);
     let mut render_rect: libloading::Symbol<
         unsafe extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64),
-    > = unsafe { render_lib.get(b"Rect__render____obj_mut_dyn_Any__buffer_ref_mut_slice_u8_endslice__buffer_width_i64__buffer_height_i64__pitch_i64__to__unit") }.expect("Failed to find render function");
+    > = unsafe { render_lib.get(render_symbol.as_bytes()) }.expect("Failed to find render function");
 
     let mut rects: Vec<ObjectHandle> = Vec::new();
     let mut drag_start = None;
@@ -68,14 +69,14 @@ fn main() -> Result<(), String> {
                     selected = None;
                     for &rect_handle in &rects {
                         // Get bounds using getter methods
-                        let rect_x = direct_call!(runtime, rect_handle, Rect, x())
-                            .unwrap_or(0.0);
-                        let rect_y = direct_call!(runtime, rect_handle, Rect, y())
-                            .unwrap_or(0.0);
-                        let rect_width = direct_call!(runtime, rect_handle, Rect, width())
-                            .unwrap_or(0.0);
-                        let rect_height = direct_call!(runtime, rect_handle, Rect, height())
-                            .unwrap_or(0.0);
+                        let rect_x: f64 = direct_call!(runtime, rect_handle, Rect, x())
+                            .expect("Failed to get x");
+                        let rect_y: f64 = direct_call!(runtime, rect_handle, Rect, y())
+                            .expect("Failed to get y");
+                        let rect_width: f64 = direct_call!(runtime, rect_handle, Rect, width())
+                            .expect("Failed to get width");
+                        let rect_height: f64 = direct_call!(runtime, rect_handle, Rect, height())
+                            .expect("Failed to get height");
 
                         println!(
                             "  Checking rect: bounds=({}, {}, {}, {})",
@@ -117,10 +118,10 @@ fn main() -> Result<(), String> {
                                 .expect("Failed to create rect");
 
                             // Set initial properties
-                            direct_call!(runtime, handle, Rect, set_x(box_x)).ok();
-                            direct_call!(runtime, handle, Rect, set_y(box_y)).ok();
-                            direct_call!(runtime, handle, Rect, set_width(box_w)).ok();
-                            direct_call!(runtime, handle, Rect, set_height(box_h)).ok();
+                            direct_call!(runtime, handle, Rect, set_x(box_x)).expect("Failed to set x");
+                            direct_call!(runtime, handle, Rect, set_y(box_y)).expect("Failed to set y");
+                            direct_call!(runtime, handle, Rect, set_width(box_w)).expect("Failed to set width");
+                            direct_call!(runtime, handle, Rect, set_height(box_h)).expect("Failed to set height");
 
                             println!(
                                 "Created rect with bounds: ({}, {}, {}, {})",
@@ -135,10 +136,10 @@ fn main() -> Result<(), String> {
                     if dragging {
                         if let Some(handle) = selected {
                             // Get current position to calculate delta
-                            let rect_x = direct_call!(runtime, handle, Rect, x())
-                                .unwrap_or(0.0);
-                            let rect_y = direct_call!(runtime, handle, Rect, y())
-                                .unwrap_or(0.0);
+                            let rect_x: f64 = direct_call!(runtime, handle, Rect, x())
+                                .expect("Failed to get x for dragging");
+                            let rect_y: f64 = direct_call!(runtime, handle, Rect, y())
+                                .expect("Failed to get y for dragging");
 
                             let new_x = x as f64 - drag_offset.0;
                             let new_y = y as f64 - drag_offset.1;
@@ -146,7 +147,7 @@ fn main() -> Result<(), String> {
                             let dy = new_y - rect_y;
 
                             // Move the rect
-                            direct_call!(runtime, handle, Rect, move_by(dx, dy)).ok();
+                            direct_call!(runtime, handle, Rect, move_by(dx, dy)).expect("Failed to move rect");
                         }
                     }
                 }
@@ -175,7 +176,7 @@ fn main() -> Result<(), String> {
 
                     render_lib = unsafe { libloading::Library::new(lib_path) }
                         .expect("Failed to reload render lib");
-                    render_rect = unsafe { render_lib.get(b"Rect__render____obj_mut_dyn_Any__buffer_ref_mut_slice_u8_endslice__buffer_width_i64__buffer_height_i64__pitch_i64__to__unit") }
+                    render_rect = unsafe { render_lib.get(render_symbol.as_bytes()) }
                         .expect("Failed to reload render function");
 
                     println!("Reload complete!");
