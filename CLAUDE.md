@@ -4,3 +4,4 @@
 - use alan kay's idea of inter-object messages as "intent tokens", not data passing
 - this is a real implementation, don't hard-code things that should be generic
 - do not use "get" prefix; e.g. "bounds" method instead of "get_bounds"
+- runtime/main should not call any specific objects other than WindowManager

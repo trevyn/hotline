@@ -1,4 +1,5 @@
 use hotline::{ObjectHandle, object};
+use std::sync::{Arc, Mutex};
 
 object!({
     #[derive(Default)]
@@ -55,6 +56,7 @@ object!({
         pub fn is_dragging(&mut self) -> bool {
             self.dragging
         }
+        
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
             println!("WindowManager::handle_mouse_down({}, {})", x, y);
@@ -65,7 +67,7 @@ object!({
             
             for (i, rect_handle) in self.rects.iter().enumerate().rev() {
                 // Check if this rect contains the point using dynamic dispatch
-                if let Some(contains) = hotline::with_library_registry(|registry| {
+                if let Some(contains) = with_library_registry(|registry| {
                     if let Ok(mut rect_guard) = rect_handle.lock() {
                         let rect_any = rect_guard.as_any_mut();
                         let symbol_name = format!("Rect__contains_point______obj_mut_dyn_Any____point_x__f64____point_y__f64____to__bool__{}", hotline::RUSTC_COMMIT);
@@ -85,7 +87,7 @@ object!({
                         // Get rect position for offset calculation
                         if let Ok(mut rect_guard) = rect_handle.lock() {
                             let rect_any = rect_guard.as_any_mut();
-                            if let Some((rx, ry)) = hotline::with_library_registry(|registry| {
+                            if let Some((rx, ry)) = with_library_registry(|registry| {
                                 let symbol_name = format!("Rect__position______obj_mut_dyn_Any____to__tuple_f64_comma_f64__{}", hotline::RUSTC_COMMIT);
                                 
                                 type PositionFn = unsafe extern "Rust" fn(&mut dyn std::any::Any) -> (f64, f64);
@@ -128,50 +130,60 @@ object!({
                 self.stop_dragging();
                 println!("Stopped dragging");
             } else if let Some((start_x, start_y)) = self.drag_start {
-                // Create a new rect
+                // Create a new rect directly
                 let width = (x - start_x).abs();
                 let height = (y - start_y).abs();
                 let rect_x = start_x.min(x);
                 let rect_y = start_y.min(y);
                 
-                // Create new Rect instance using the library registry
-                if let Some(rect_handle) = hotline::with_library_registry(|registry| {
-                    // First build the rect library if needed
-                    let rect_lib_path = if cfg!(target_os = "macos") {
-                        "target/release/librect.dylib"
-                    } else if cfg!(target_os = "linux") {
-                        "target/release/librect.so"
-                    } else {
-                        "target/release/rect.dll"
-                    };
-                    
-                    // Try to load rect library if not already loaded
-                    let _ = registry.load(rect_lib_path);
-                    
-                    // Create new Rect instance
+                // Create rect via registry
+                println!("About to call with_library_registry...");
+                let new_rect = with_library_registry(|registry| {
+                    println!("Inside with_library_registry callback");
+                    println!("Calling registry.call_constructor...");
                     if let Ok(rect_obj) = registry.call_constructor("librect", "Rect", hotline::RUSTC_COMMIT) {
-                        let rect_handle: ObjectHandle = std::sync::Arc::new(std::sync::Mutex::new(rect_obj));
-                        
+                        println!("Successfully created rect object");
+                        let rect_handle = Arc::new(Mutex::new(rect_obj));
                         // Initialize the rect with position and size
+                        println!("Attempting to lock rect_handle...");
                         if let Ok(mut rect_guard) = rect_handle.lock() {
+                            println!("Successfully locked rect_handle");
                             let rect_any = rect_guard.as_any_mut();
-                            let init_symbol = format!("Rect__initialize______obj_mut_dyn_Any____x__f64____y__f64____width__f64____height__f64____to__unit__{}", hotline::RUSTC_COMMIT);
                             
+                            // Initialize rect
+                            let init_symbol = format!("Rect__initialize______obj_mut_dyn_Any____x__f64____y__f64____width__f64____height__f64____to__unit__{}", hotline::RUSTC_COMMIT);
                             type InitFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, f64, f64, f64, f64);
-                            let _ = registry.with_symbol::<InitFn, _, _>("librect", &init_symbol, |init_fn| {
+                            println!("Looking up init symbol: {}", init_symbol);
+                            let result = registry.with_symbol::<InitFn, _, _>("librect", &init_symbol, |init_fn| {
+                                println!("Found init symbol, calling it...");
                                 unsafe { (**init_fn)(rect_any, rect_x, rect_y, width, height) };
+                                println!("Init symbol called successfully");
                             });
+                            if let Err(e) = result {
+                                println!("Failed to call init symbol: {:?}", e);
+                            }
+                        } else {
+                            println!("Failed to lock rect_handle");
                         }
-                        
-                        println!("Created new rect at ({}, {}) with size ({}, {})", rect_x, rect_y, width, height);
                         Some(rect_handle)
                     } else {
-                        println!("Failed to create Rect instance");
+                        println!("Failed to create rect object");
                         None
                     }
-                }).flatten() {
-                    self.add_rect(rect_handle);
-                    println!("Added rect, total count: {}", self.rects.len());
+                });
+                
+                if new_rect.is_none() {
+                    println!("WARNING: with_library_registry returned None - library registry not initialized!");
+                } else {
+                    println!("with_library_registry returned Some");
+                }
+                
+                let new_rect = new_rect.flatten();
+                
+                if let Some(rect_handle) = new_rect {
+                    // Add to our rects list
+                    self.rects.push(rect_handle);
+                    println!("Created rect at ({}, {}) with size ({}, {})", rect_x, rect_y, width, height);
                 }
                 
                 self.drag_start = None;
@@ -189,7 +201,7 @@ object!({
                         let rect_any = rect_guard.as_any_mut();
                         
                         // Get current position
-                        if let Some((current_x, current_y)) = hotline::with_library_registry(|registry| {
+                        if let Some((current_x, current_y)) = with_library_registry(|registry| {
                             let pos_symbol = format!("Rect__position______obj_mut_dyn_Any____to__tuple_f64_comma_f64__{}", hotline::RUSTC_COMMIT);
                             
                             type PositionFn = unsafe extern "Rust" fn(&mut dyn std::any::Any) -> (f64, f64);
@@ -202,7 +214,7 @@ object!({
                             let dy = new_y - current_y;
                             
                             // Move the rect
-                            hotline::with_library_registry(|registry| {
+                            with_library_registry(|registry| {
                                 let move_symbol = format!("Rect__move_by______obj_mut_dyn_Any____dx__f64____dy__f64____to__unit__{}", hotline::RUSTC_COMMIT);
                                 
                                 type MoveFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, f64, f64);
@@ -222,9 +234,9 @@ object!({
                 if let Ok(mut rect_guard) = rect_handle.lock() {
                     let rect_any = rect_guard.as_any_mut();
                     
-                    // Call render on the rect
-                    hotline::with_library_registry(|registry| {
-                        let render_symbol = format!("Rect__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8_____buffer_width__i64_____buffer_height__i64_____pitch__i64____to__unit__{}", hotline::RUSTC_COMMIT);
+                    // Call rect's render method
+                    with_library_registry(|registry| {
+                        let render_symbol = format!("Rect__render______obj_mut_dyn_Any____buffer__mut_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}", hotline::RUSTC_COMMIT);
                         
                         type RenderFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, &mut [u8], i64, i64, i64);
                         let _ = registry.with_symbol::<RenderFn, _, _>("librect", &render_symbol, |render_fn| {

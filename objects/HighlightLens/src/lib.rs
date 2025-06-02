@@ -37,7 +37,7 @@ object!({
                     
                     // Find and call the render function using global registry
                     let lib_name = format!("lib{}", type_name);
-                    if let Some(_render_result) = hotline::with_library_registry(|registry| {
+                    if let Some(_render_result) = with_library_registry(|registry| {
                         type RenderFn = unsafe extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64);
                         registry.with_symbol::<RenderFn, _, _>(&lib_name, &render_symbol, |render_ptr| {
                             let obj_any = target_guard.as_any_mut();
@@ -63,7 +63,7 @@ object!({
                     );
                     
                     let lib_name = format!("lib{}", type_name);
-                    hotline::with_library_registry(|registry| {
+                    with_library_registry(|registry| {
                         type BoundsFn = unsafe extern "Rust" fn(&mut dyn Any) -> (f64, f64, f64, f64);
                         registry.with_symbol::<BoundsFn, _, _>(&lib_name, &bounds_symbol, |bounds_ptr| {
                             let mut target_mut = target.lock().unwrap();

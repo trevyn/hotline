@@ -1,4 +1,5 @@
 use runtime::{DirectRuntime, direct_call};
+use hotline::ObjectHandle;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -30,10 +31,6 @@ fn main() -> Result<(), String> {
     let mut runtime = DirectRuntime::new();
     println!("DirectRuntime created");
     
-    // Set the global library registry so objects can access it
-    hotline::set_library_registry(runtime.library_registry().clone());
-    println!("Library registry set globally");
-    
     // Build and load Rect first (dependency of WindowManager)
     std::process::Command::new("cargo")
         .args(&["build", "--release", "-p", "rect"])
@@ -48,7 +45,7 @@ fn main() -> Result<(), String> {
     let rect_path = "target/release/rect.dll";
 
     println!("Loading rect from: {}", rect_path);
-    runtime.hot_reload(rect_path).expect("Failed to load rect library");
+    runtime.hot_reload(rect_path, "Rect").expect("Failed to load rect library");
     println!("rect library loaded");
 
     // Build and load WindowManager
@@ -65,7 +62,7 @@ fn main() -> Result<(), String> {
     let wm_path = "target/release/WindowManager.dll";
 
     println!("Loading WindowManager from: {}", wm_path);
-    runtime.hot_reload(wm_path).expect("Failed to load WindowManager library");
+    runtime.hot_reload(wm_path, "WindowManager").expect("Failed to load WindowManager library");
     println!("WindowManager library loaded");
 
     // Create window manager instance
@@ -73,6 +70,7 @@ fn main() -> Result<(), String> {
     let window_manager = runtime.create_from_lib("libWindowManager", "WindowManager")
         .expect("Failed to create WindowManager");
     println!("WindowManager instance created");
+    
     
     // Create texture once outside the loop
     println!("Creating streaming texture...");
@@ -124,10 +122,10 @@ fn main() -> Result<(), String> {
                         .expect("Failed to build WindowManager");
 
                     // Reload both libraries
-                    if let Err(e) = runtime.hot_reload(rect_path) {
+                    if let Err(e) = runtime.hot_reload(rect_path, "Rect") {
                         eprintln!("Failed to reload rect lib: {}", e);
                     }
-                    if let Err(e) = runtime.hot_reload(wm_path) {
+                    if let Err(e) = runtime.hot_reload(wm_path, "WindowManager") {
                         eprintln!("Failed to reload WindowManager lib: {}", e);
                     }
 
@@ -147,7 +145,7 @@ fn main() -> Result<(), String> {
                 pixel[3] = 255; // A
             }
 
-            // Call WindowManager render directly
+            // First render the WindowManager (which will try to render rects but fail due to registry access)
             if let Ok(mut wm_guard) = window_manager.lock() {
                 let wm_obj = &mut **wm_guard;
                 let render_symbol = format!("WindowManager__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}", runtime::RUSTC_COMMIT);
@@ -164,6 +162,7 @@ fn main() -> Result<(), String> {
                     }
                 }
             }
+            
         })?;
 
         // Copy texture to canvas

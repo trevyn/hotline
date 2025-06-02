@@ -36,8 +36,16 @@ impl DirectRuntime {
         handle.lock().ok()
     }
 
-    pub fn hot_reload(&mut self, lib_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        self.library_registry.load(lib_path)?;
+    pub fn hot_reload(&mut self, lib_path: &str, type_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let lib_name = self.library_registry.load(lib_path)?;
+        
+        // Explicitly initialize the library with the registry
+        let init_symbol = format!("{}__init__registry__{}", type_name, RUSTC_COMMIT);
+        self.library_registry.with_symbol::<unsafe extern "C" fn(*const LibraryRegistry), _, _>(&lib_name, &init_symbol, |symbol| {
+            println!("Initializing {} with library registry", type_name);
+            unsafe { (**symbol)(&self.library_registry as *const LibraryRegistry) };
+        })?;
+        
         Ok(())
     }
 
@@ -144,7 +152,7 @@ impl DirectRuntime {
                     let mut obj_guard = self.get_object_mut(handle).ok_or("object not found")?;
                     let obj = obj_guard.as_any_mut();
                     return self.library_registry.with_symbol::<GetCountFn, _, _>(lib_name, &symbol_name, |getter_fn| {
-                        let result = unsafe { (*getter_fn)(obj) };
+                        let result = unsafe { (**getter_fn)(obj) };
                         Box::new(result)
                     }).map(|b| Box::new(b) as Box<dyn Any>);
                 }

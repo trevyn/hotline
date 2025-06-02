@@ -235,6 +235,33 @@ pub fn object(input: TokenStream) -> TokenStream {
         }
     };
     
+    // Generate init function for setting library registry
+    let init_fn_name = quote::format_ident!(
+        "{}__init__registry__{}",
+        struct_name, rustc_commit
+    );
+    
+    let init_function = quote! {
+        static mut LIBRARY_REGISTRY: Option<*const ::hotline::LibraryRegistry> = None;
+        
+        #[unsafe(no_mangle)]
+        #[allow(non_snake_case)]
+        pub extern "C" fn #init_fn_name(registry: *const ::hotline::LibraryRegistry) {
+            unsafe {
+                LIBRARY_REGISTRY = Some(registry);
+            }
+        }
+        
+        pub fn with_library_registry<F, R>(f: F) -> Option<R>
+        where
+            F: FnOnce(&::hotline::LibraryRegistry) -> R,
+        {
+            unsafe {
+                LIBRARY_REGISTRY.and_then(|ptr| ptr.as_ref()).map(f)
+            }
+        }
+    };
+    
     // Generate output
     let output = quote! {
         #struct_item
@@ -250,6 +277,8 @@ pub fn object(input: TokenStream) -> TokenStream {
         #(#method_wrappers)*
         
         #type_name_fn
+        
+        #init_function
     };
     
     TokenStream::from(output)

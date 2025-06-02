@@ -8,14 +8,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut runtime = DirectRuntime::new();
     println!("Created runtime");
     
-    // Step 2: Clone library registry 
-    let registry = runtime.library_registry().clone();
-    println!("Cloned registry");
-    
-    // Step 3: Set it globally
-    hotline::set_library_registry(registry);
-    println!("Set registry globally");
-    
     // Step 4: Build WindowManager
     println!("Building WindowManager...");
     std::process::Command::new("cargo")
@@ -28,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wm_path = "target/release/libWindowManager.dylib";
     
     println!("Loading library from: {}", wm_path);
-    runtime.hot_reload(wm_path)?;
+    runtime.hot_reload(wm_path, "WindowManager")?;
     println!("Library loaded");
     
     // Step 6: Create instance

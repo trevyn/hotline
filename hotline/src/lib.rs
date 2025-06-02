@@ -2,7 +2,6 @@ pub use hotline_macros::object;
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};
-use std::cell::RefCell;
 
 // Re-export libloading for objects to use
 pub use libloading;
@@ -28,25 +27,7 @@ macro_rules! call_symbol {
     }};
 }
 
-// Global library registry that objects can access
-thread_local! {
-    static LIBRARY_REGISTRY: RefCell<Option<LibraryRegistry>> = RefCell::new(None);
-}
-
-pub fn set_library_registry(registry: LibraryRegistry) {
-    LIBRARY_REGISTRY.with(|r| {
-        *r.borrow_mut() = Some(registry);
-    });
-}
-
-pub fn with_library_registry<F, R>(f: F) -> Option<R>
-where
-    F: FnOnce(&LibraryRegistry) -> R,
-{
-    LIBRARY_REGISTRY.with(|r| {
-        r.borrow().as_ref().map(f)
-    })
-}
+// Removed thread_local approach - objects now get LibraryRegistry via init function
 
 pub trait HotlineObject: Any + Send + Sync {
     fn type_name(&self) -> &'static str;
