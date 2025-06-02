@@ -34,6 +34,23 @@ fn main() -> Result<(), String> {
     hotline::set_library_registry(runtime.library_registry().clone());
     println!("Library registry set globally");
     
+    // Build and load Rect first (dependency of WindowManager)
+    std::process::Command::new("cargo")
+        .args(&["build", "--release", "-p", "rect"])
+        .status()
+        .expect("Failed to build rect");
+
+    #[cfg(target_os = "macos")]
+    let rect_path = "target/release/librect.dylib";
+    #[cfg(target_os = "linux")]
+    let rect_path = "target/release/librect.so";
+    #[cfg(target_os = "windows")]
+    let rect_path = "target/release/rect.dll";
+
+    println!("Loading rect from: {}", rect_path);
+    runtime.hot_reload(rect_path).expect("Failed to load rect library");
+    println!("rect library loaded");
+
     // Build and load WindowManager
     std::process::Command::new("cargo")
         .args(&["build", "--release", "-p", "WindowManager"])
@@ -91,16 +108,25 @@ fn main() -> Result<(), String> {
                 }
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {
-                    println!("Reloading WindowManager library...");
+                    println!("Reloading libraries...");
 
-                    // First rebuild the library
+                    // First rebuild the libraries
+                    println!("Rebuilding rect library...");
+                    std::process::Command::new("cargo")
+                        .args(&["build", "--release", "-p", "rect"])
+                        .status()
+                        .expect("Failed to build rect");
+                        
                     println!("Rebuilding WindowManager library...");
                     std::process::Command::new("cargo")
                         .args(&["build", "--release", "-p", "WindowManager"])
                         .status()
                         .expect("Failed to build WindowManager");
 
-                    // Reload the runtime's copy
+                    // Reload both libraries
+                    if let Err(e) = runtime.hot_reload(rect_path) {
+                        eprintln!("Failed to reload rect lib: {}", e);
+                    }
                     if let Err(e) = runtime.hot_reload(wm_path) {
                         eprintln!("Failed to reload WindowManager lib: {}", e);
                     }
@@ -124,7 +150,7 @@ fn main() -> Result<(), String> {
             // Call WindowManager render directly
             if let Ok(mut wm_guard) = window_manager.lock() {
                 let wm_obj = &mut **wm_guard;
-                let render_symbol = format!("WindowManager__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8_____buffer_width__i64_____buffer_height__i64_____pitch__i64____to__unit__{}", runtime::RUSTC_COMMIT);
+                let render_symbol = format!("WindowManager__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}", runtime::RUSTC_COMMIT);
                 
                 // Generic dynamic call
                 type RenderFn = extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64);

@@ -7,6 +7,9 @@ use std::cell::RefCell;
 // Re-export libloading for objects to use
 pub use libloading;
 
+// Rustc commit hash for symbol generation
+pub const RUSTC_COMMIT: &str = env!("RUSTC_COMMIT_HASH");
+
 pub mod command;
 pub use command::{LibraryRegistry, CommandHandler, CommandRegistry};
 
