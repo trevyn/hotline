@@ -8,28 +8,20 @@ use std::any::Any;
 use std::time::Duration;
 
 fn main() -> Result<(), String> {
-    println!("Starting hotline runtime...");
     let sdl_context = sdl2::init()?;
-    println!("SDL2 initialized");
     let video_subsystem = sdl_context.video()?;
-    println!("Video subsystem initialized");
 
     let window = video_subsystem
         .window("hotline - direct calls", 800, 600)
         .position_centered()
         .build()
         .map_err(|e| e.to_string())?;
-    println!("Window created");
 
     let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
-    println!("Canvas created");
     let texture_creator = canvas.texture_creator();
-    println!("Texture creator initialized");
     let mut event_pump = sdl_context.event_pump()?;
-    println!("Event pump created");
 
     let mut runtime = DirectRuntime::new();
-    println!("DirectRuntime created");
     
     // Build and load Rect first (dependency of WindowManager)
     std::process::Command::new("cargo")
@@ -44,9 +36,22 @@ fn main() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let rect_path = "target/release/rect.dll";
 
-    println!("Loading rect from: {}", rect_path);
     runtime.hot_reload(rect_path, "Rect").expect("Failed to load rect library");
-    println!("rect library loaded");
+
+    // Build and load HighlightLens
+    std::process::Command::new("cargo")
+        .args(&["build", "--release", "-p", "HighlightLens"])
+        .status()
+        .expect("Failed to build HighlightLens");
+
+    #[cfg(target_os = "macos")]
+    let hl_path = "target/release/libHighlightLens.dylib";
+    #[cfg(target_os = "linux")]
+    let hl_path = "target/release/libHighlightLens.so";
+    #[cfg(target_os = "windows")]
+    let hl_path = "target/release/HighlightLens.dll";
+
+    runtime.hot_reload(hl_path, "HighlightLens").expect("Failed to load HighlightLens library");
 
     // Build and load WindowManager
     std::process::Command::new("cargo")
@@ -61,25 +66,17 @@ fn main() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let wm_path = "target/release/WindowManager.dll";
 
-    println!("Loading WindowManager from: {}", wm_path);
     runtime.hot_reload(wm_path, "WindowManager").expect("Failed to load WindowManager library");
-    println!("WindowManager library loaded");
 
     // Create window manager instance
-    println!("Creating WindowManager instance...");
     let window_manager = runtime.create_from_lib("libWindowManager", "WindowManager")
         .expect("Failed to create WindowManager");
-    println!("WindowManager instance created");
     
     
     // Create texture once outside the loop
-    println!("Creating streaming texture...");
     let mut texture = texture_creator
         .create_texture_streaming(PixelFormatEnum::ARGB8888, 800, 600)
         .map_err(|e| e.to_string())?;
-    println!("Texture created successfully");
-    
-    println!("Entering main loop...");
     'running: loop {
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
@@ -106,30 +103,32 @@ fn main() -> Result<(), String> {
                 }
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {
-                    println!("Reloading libraries...");
-
                     // First rebuild the libraries
-                    println!("Rebuilding rect library...");
                     std::process::Command::new("cargo")
                         .args(&["build", "--release", "-p", "rect"])
                         .status()
                         .expect("Failed to build rect");
                         
-                    println!("Rebuilding WindowManager library...");
+                    std::process::Command::new("cargo")
+                        .args(&["build", "--release", "-p", "HighlightLens"])
+                        .status()
+                        .expect("Failed to build HighlightLens");
+                        
                     std::process::Command::new("cargo")
                         .args(&["build", "--release", "-p", "WindowManager"])
                         .status()
                         .expect("Failed to build WindowManager");
 
-                    // Reload both libraries
+                    // Reload all libraries
                     if let Err(e) = runtime.hot_reload(rect_path, "Rect") {
                         eprintln!("Failed to reload rect lib: {}", e);
+                    }
+                    if let Err(e) = runtime.hot_reload(hl_path, "HighlightLens") {
+                        eprintln!("Failed to reload HighlightLens lib: {}", e);
                     }
                     if let Err(e) = runtime.hot_reload(wm_path, "WindowManager") {
                         eprintln!("Failed to reload WindowManager lib: {}", e);
                     }
-
-                    println!("Reload complete!");
                 }
                 _ => {}
             }
@@ -172,6 +171,5 @@ fn main() -> Result<(), String> {
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }
 
-    println!("Exiting normally");
     Ok(())
 }

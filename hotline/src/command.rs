@@ -26,10 +26,8 @@ impl LibraryRegistry {
             .ok_or("invalid lib path")?
             .to_string();
         
-        println!("LibraryRegistry::load - loading library from path: {} with name: {}", lib_path, lib_name);
         let mut libs = self.libs.lock().unwrap();
         libs.insert(lib_name.clone(), Arc::new(lib));
-        println!("LibraryRegistry::load - library loaded successfully");
         Ok(lib_name)
     }
     
@@ -38,22 +36,15 @@ impl LibraryRegistry {
         T: 'static,
         F: FnOnce(&Symbol<T>) -> R,
     {
-        println!("LibraryRegistry::with_symbol - attempting to lock libs mutex...");
-        
         // Get Arc<Library> while holding the lock, then release the lock
         let lib_arc = {
             let libs = self.libs.lock().unwrap();
-            println!("LibraryRegistry::with_symbol - mutex locked successfully");
-            println!("LibraryRegistry::with_symbol - mutex locked, looking for library: {}", lib_name);
-            println!("LibraryRegistry::with_symbol - available libraries: {:?}", libs.keys().collect::<Vec<_>>());
             libs.get(lib_name).ok_or_else(|| {
                 format!("library '{}' not loaded. Available: {:?}", lib_name, libs.keys().collect::<Vec<_>>())
             })?.clone()
         }; // mutex is dropped here
         
-        println!("LibraryRegistry::with_symbol - mutex released, looking for symbol: {}", symbol_name);
         let symbol: Symbol<T> = unsafe { lib_arc.get(symbol_name.as_bytes())? };
-        println!("LibraryRegistry::with_symbol - found symbol, calling function");
         
         Ok(f(&symbol))
     }
@@ -61,14 +52,10 @@ impl LibraryRegistry {
     
     pub fn call_constructor(&self, lib_name: &str, type_name: &str, rustc_commit: &str) -> Result<Box<dyn HotlineObject>, Box<dyn std::error::Error>> {
         let constructor_symbol = format!("{}__new____to__Box_lt_dyn_HotlineObject_gt__{}", type_name, rustc_commit);
-        println!("LibraryRegistry::call_constructor - looking for symbol: {} in library: {}", constructor_symbol, lib_name);
         type ConstructorFn = fn() -> Box<dyn HotlineObject>;
         
         self.with_symbol::<ConstructorFn, _, _>(lib_name, &constructor_symbol, |symbol| {
-            println!("LibraryRegistry::call_constructor - found symbol, calling constructor...");
-            let result = symbol();
-            println!("LibraryRegistry::call_constructor - constructor returned");
-            result
+            symbol()
         })
     }
 }

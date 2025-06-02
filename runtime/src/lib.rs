@@ -42,7 +42,6 @@ impl DirectRuntime {
         // Explicitly initialize the library with the registry
         let init_symbol = format!("{}__init__registry__{}", type_name, RUSTC_COMMIT);
         self.library_registry.with_symbol::<unsafe extern "C" fn(*const LibraryRegistry), _, _>(&lib_name, &init_symbol, |symbol| {
-            println!("Initializing {} with library registry", type_name);
             unsafe { (**symbol)(&self.library_registry as *const LibraryRegistry) };
         })?;
         

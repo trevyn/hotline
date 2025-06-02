@@ -20,54 +20,24 @@ object!({
         
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             if let Some(ref target) = self.target {
-                // First, let the target render itself
-                if let Ok(mut target_guard) = target.lock() {
-                    let _target_obj = &mut **target_guard;
-                    
-                    // Get the type name from the object
-                    let type_name = target_guard.type_name();
-                    
-                    // Construct the render symbol name
-                    let rustc_commit = std::env::var("RUSTC_COMMIT_HASH").unwrap_or_else(|_| "unknown".to_string());
-                    let render_symbol = format!(
-                        "{}__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8_____buffer_width__i64_____buffer_height__i64_____pitch__i64____to__unit__{}",
-                        type_name,
-                        rustc_commit
-                    );
-                    
-                    // Find and call the render function using global registry
-                    let lib_name = format!("lib{}", type_name);
-                    if let Some(_render_result) = with_library_registry(|registry| {
-                        type RenderFn = unsafe extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64);
-                        registry.with_symbol::<RenderFn, _, _>(&lib_name, &render_symbol, |render_ptr| {
-                            let obj_any = target_guard.as_any_mut();
-                            unsafe { (**render_ptr)(obj_any, buffer, buffer_width, buffer_height, pitch) };
-                            true
-                        }).unwrap_or(false)
-                    }) {
-                        // Render succeeded
-                    }
-                }
-                
-                // Then draw highlight border on top
+                // Only draw highlight border (rect is already rendered by WindowManager)
                 // Get bounds dynamically
-                let (x, y, width, height) = if let Ok(target_guard) = target.lock() {
+                let (x, y, width, height) = if let Ok(mut target_guard) = target.lock() {
                     let type_name = target_guard.type_name();
                     
                     // Try to call bounds method
-                    let rustc_commit = std::env::var("RUSTC_COMMIT_HASH").unwrap_or_else(|_| "unknown".to_string());
                     let bounds_symbol = format!(
                         "{}__bounds______obj_mut_dyn_Any____to__tuple_f64_comma_f64_comma_f64_comma_f64__{}",
                         type_name,
-                        rustc_commit
+                        hotline::RUSTC_COMMIT
                     );
                     
-                    let lib_name = format!("lib{}", type_name);
+                    let lib_name = format!("lib{}", type_name.to_lowercase());
+                    let obj_any = target_guard.as_any_mut();
+                    
                     with_library_registry(|registry| {
                         type BoundsFn = unsafe extern "Rust" fn(&mut dyn Any) -> (f64, f64, f64, f64);
                         registry.with_symbol::<BoundsFn, _, _>(&lib_name, &bounds_symbol, |bounds_ptr| {
-                            let mut target_mut = target.lock().unwrap();
-                            let obj_any = target_mut.as_any_mut();
                             unsafe { (**bounds_ptr)(obj_any) }
                         }).unwrap_or((0.0, 0.0, 0.0, 0.0))
                     }).unwrap_or((0.0, 0.0, 0.0, 0.0))
