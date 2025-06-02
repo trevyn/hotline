@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro_error2::proc_macro_error;
 use quote::{quote, ToTokens};
 use syn::{parse::{Parse, ParseStream}, ItemStruct, ItemImpl, Fields, Type, PathArguments, GenericArgument, FnArg, ReturnType, ImplItem, Pat, braced};
+use std::process::Command;
 
 struct ObjectInput {
     struct_item: ItemStruct,
@@ -34,9 +35,8 @@ pub fn object(input: TokenStream) -> TokenStream {
     let struct_attrs = &struct_item.attrs;
     let struct_fields = &struct_item.fields;
     
-    // Get RUSTC_COMMIT_HASH
-    let rustc_commit = std::env::var("RUSTC_COMMIT_HASH")
-        .expect("RUSTC_COMMIT_HASH environment variable not set");
+    // Get rustc commit hash at macro expansion time
+    let rustc_commit = get_rustc_commit_hash();
     
     // Generate field accessors
     let mut field_accessors = Vec::new();
@@ -229,4 +229,28 @@ fn type_to_string(ty: &Type) -> String {
         }
         _ => "unknown".to_string(),
     }
+}
+
+fn get_rustc_commit_hash() -> String {
+    // Try to get from env var first (for when we're building hotline-macros itself)
+    if let Ok(hash) = std::env::var("RUSTC_COMMIT_HASH") {
+        return hash;
+    }
+    
+    // Otherwise, get it directly from rustc
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let output = Command::new(rustc)
+        .arg("-vV")
+        .output()
+        .expect("Failed to execute rustc");
+    
+    let version_info = String::from_utf8(output.stdout).expect("Invalid UTF-8");
+    
+    // Extract commit hash (first 9 chars)
+    version_info
+        .lines()
+        .find(|line| line.starts_with("commit-hash: "))
+        .and_then(|line| line.strip_prefix("commit-hash: "))
+        .map(|hash| hash[..9].to_string())
+        .expect("Failed to find rustc commit hash")
 }

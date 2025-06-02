@@ -1,1 +1,2 @@
 - do not silently hide errors
+- crates in the `objects` directory must not have `build.rs` files
