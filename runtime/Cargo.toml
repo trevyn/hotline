@@ -21,6 +21,10 @@ path = "src/main.rs"
 name = "gen_shims"
 path = "src/bin/gen_shims.rs"
 
+[[bin]]
+name = "test-hotline"
+path = "src/test_main.rs"
+
 [features]
 default = []
 reload = []

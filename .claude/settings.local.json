@@ -15,10 +15,10 @@
       "Bash(grep:*)",
       "Bash(cargo check:*)",
       "Bash(cargo tree:*)",
-      "Bash(touch:*)"
+      "Bash(touch:*)",
+      "Bash(sed:*)"
     ],
     "deny": [
-      "Bash(cargo run:*)",
       "Bash(./target/release/runtime)",
       "Bash(./target/release/hotline)"
     ]

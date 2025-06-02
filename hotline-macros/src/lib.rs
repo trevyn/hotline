@@ -3,6 +3,8 @@ use proc_macro_error2::proc_macro_error;
 use quote::{quote, ToTokens};
 use syn::{parse::{Parse, ParseStream}, ItemStruct, ItemImpl, Fields, Type, PathArguments, GenericArgument, FnArg, ReturnType, ImplItem, Pat, braced};
 use std::process::Command;
+use std::fs;
+use std::path::Path;
 
 struct ObjectInput {
     struct_item: ItemStruct,
@@ -43,6 +45,12 @@ pub fn object(input: TokenStream) -> TokenStream {
     
     if let Fields::Named(fields) = struct_fields {
         for field in &fields.named {
+            // Only generate accessors for public fields
+            let is_public = matches!(field.vis, syn::Visibility::Public(_));
+            if !is_public {
+                continue;
+            }
+            
             let field_name = field.ident.as_ref().unwrap();
             let field_type = &field.ty;
             
@@ -93,25 +101,32 @@ pub fn object(input: TokenStream) -> TokenStream {
     
     let constructor = if has_default {
         let ctor_fn_name = quote::format_ident!(
-            "{}__new____to__Box_lt_dyn_Any_gt__{}",
+            "{}__new____to__Box_lt_dyn_HotlineObject_gt__{}",
             struct_name, rustc_commit
         );
         quote! {
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
-            pub extern "Rust" fn #ctor_fn_name() -> Box<dyn ::std::any::Any> {
-                Box::new(<#struct_name as Default>::default())
+            pub extern "Rust" fn #ctor_fn_name() -> Box<dyn ::hotline::HotlineObject> {
+                Box::new(<#struct_name as Default>::default()) as Box<dyn ::hotline::HotlineObject>
             }
         }
     } else {
         quote! {}
     };
     
-    // Generate method wrappers
+    // Generate method wrappers and collect signatures
     let mut method_wrappers = Vec::new();
+    let mut method_signatures = Vec::new();
     
     for item in &impl_item.items {
         if let ImplItem::Fn(method) = item {
+            // Only generate extern functions for pub methods
+            let is_public = matches!(method.vis, syn::Visibility::Public(_));
+            if !is_public {
+                continue;
+            }
+            
             let method_name = &method.sig.ident;
             let method_output = &method.sig.output;
             
@@ -163,8 +178,62 @@ pub fn object(input: TokenStream) -> TokenStream {
             };
             
             method_wrappers.push(wrapper);
+            
+            // Collect signature for this method
+            let param_types: Vec<String> = arg_types.iter()
+                .map(|ty| type_to_string(ty))
+                .collect();
+            let return_type = match method_output {
+                ReturnType::Default => "()".to_string(),
+                ReturnType::Type(_, ty) => ty.to_token_stream().to_string(),
+            };
+            
+            method_signatures.push(format!(
+                "{}:{}:{}",
+                method_name,
+                param_types.join(","),
+                return_type
+            ));
         }
     }
+    
+    // Write signatures to file
+    write_signatures(&struct_name.to_string(), &method_signatures);
+    
+    // Generate a type name getter
+    let type_name_fn = {
+        let type_name_fn_name = quote::format_ident!(
+            "{}__get_type_name____obj_ref_dyn_Any__to__str__{}",
+            struct_name, rustc_commit
+        );
+        quote! {
+            #[unsafe(no_mangle)]
+            #[allow(non_snake_case)]
+            pub extern "Rust" fn #type_name_fn_name(obj: &dyn ::std::any::Any) -> &'static str {
+                // Verify it's the right type
+                obj.downcast_ref::<#struct_name>()
+                    .expect(concat!("Type mismatch: expected ", stringify!(#struct_name)));
+                stringify!(#struct_name)
+            }
+        }
+    };
+    
+    // Generate HotlineObject trait implementation
+    let trait_impl = quote! {
+        impl ::hotline::HotlineObject for #struct_name {
+            fn type_name(&self) -> &'static str {
+                stringify!(#struct_name)
+            }
+            
+            fn as_any(&self) -> &dyn ::std::any::Any {
+                self
+            }
+            
+            fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any {
+                self
+            }
+        }
+    };
     
     // Generate output
     let output = quote! {
@@ -172,11 +241,15 @@ pub fn object(input: TokenStream) -> TokenStream {
         
         #impl_item
         
+        #trait_impl
+        
         #constructor
         
         #(#field_accessors)*
         
         #(#method_wrappers)*
+        
+        #type_name_fn
     };
     
     TokenStream::from(output)
@@ -227,8 +300,68 @@ fn type_to_string(ty: &Type) -> String {
                 result
             }
         }
-        _ => "unknown".to_string(),
+        Type::Reference(type_ref) => {
+            let mut result = String::new();
+            if type_ref.mutability.is_some() {
+                result.push_str("mut_");
+            }
+            result.push_str("ref_");
+            result.push_str(&type_to_string(&type_ref.elem));
+            result
+        }
+        Type::Slice(type_slice) => {
+            format!("slice_{}", type_to_string(&type_slice.elem))
+        }
+        Type::Array(type_array) => {
+            format!("array_{}", type_to_string(&type_array.elem))
+        }
+        Type::Tuple(type_tuple) => {
+            if type_tuple.elems.is_empty() {
+                "unit".to_string()
+            } else {
+                let mut result = String::from("tuple_");
+                for (i, elem) in type_tuple.elems.iter().enumerate() {
+                    if i > 0 {
+                        result.push_str("_comma_");
+                    }
+                    result.push_str(&type_to_string(elem));
+                }
+                result
+            }
+        }
+        _ => panic!("Unsupported type in hotline macro: {:?}", ty),
     }
+}
+
+fn write_signatures(struct_name: &str, signatures: &[String]) {
+    // Get the workspace root by looking for Cargo.toml
+    let mut current_dir = std::env::current_dir().unwrap();
+    loop {
+        if current_dir.join("Cargo.toml").exists() && 
+           current_dir.join("signatures").exists() {
+            break;
+        }
+        if !current_dir.pop() {
+            // Fallback: try to create signatures next to target dir
+            current_dir = std::env::current_dir().unwrap();
+            if let Ok(out_dir) = std::env::var("OUT_DIR") {
+                let out_path = Path::new(&out_dir);
+                if let Some(target_dir) = out_path.ancestors().find(|p| p.ends_with("target")) {
+                    if let Some(workspace) = target_dir.parent() {
+                        current_dir = workspace.to_path_buf();
+                    }
+                }
+            }
+            break;
+        }
+    }
+    
+    let signatures_dir = current_dir.join("signatures");
+    fs::create_dir_all(&signatures_dir).ok();
+    
+    let sig_file = signatures_dir.join(format!("{}.sig", struct_name));
+    let content = signatures.join("\n");
+    fs::write(&sig_file, content).ok();
 }
 
 fn get_rustc_commit_hash() -> String {
