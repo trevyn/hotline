@@ -14,7 +14,8 @@
       "Bash(nm:*)",
       "Bash(grep:*)",
       "Bash(cargo check:*)",
-      "Bash(cargo tree:*)"
+      "Bash(cargo tree:*)",
+      "Bash(touch:*)"
     ],
     "deny": [
       "Bash(cargo run:*)",
