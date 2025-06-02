@@ -50,6 +50,7 @@ impl DirectRuntime {
         Ok(())
     }
 
+    // Create object from loaded library
     pub fn create_from_lib(
         &mut self,
         lib_name: &str,
@@ -83,15 +84,16 @@ impl DirectRuntime {
 
         let lib = self.loaded_libs.get(lib_name).ok_or("library not loaded")?;
 
-        // Use signature-encoded symbol name
-        let return_type = Self::type_name_for_symbol::<T>();
-        let symbol_name =
-            format!("{}__get_{}____obj_ref_dyn_Any__to__{}__{}", type_name, method, return_type, RUSTC_COMMIT);
+        // TODO: Ideally we'd compute this once and cache
+        let type_str = Self::type_name_for_symbol::<T>();
+        let symbol_name = format!("{}__get_{}____obj_ref_dyn_Any__to__{}__{}", 
+            type_name, method, type_str, RUSTC_COMMIT);
+        
+        println!("Looking for getter symbol: {}", symbol_name);
         type GetterFn<T> = unsafe extern "Rust" fn(&dyn Any) -> T;
-        let getter: Symbol<GetterFn<T>> = unsafe { lib.get(symbol_name.as_bytes())? };
-
-        let result = unsafe { getter(obj) };
-        Ok(result)
+        let getter_fn: Symbol<GetterFn<T>> = unsafe { lib.get(symbol_name.as_bytes())? };
+        
+        Ok(unsafe { getter_fn(obj) })
     }
 
     pub fn call_setter<T>(
@@ -110,8 +112,8 @@ impl DirectRuntime {
         let field_name = method.strip_prefix("set_").unwrap_or(method);
         let value_type = Self::type_name_for_symbol::<T>();
         let symbol_name = format!(
-            "{}__set_{}____obj_mut_dyn_Any__{}_{}__{}__{}", 
-            type_name, field_name, field_name, value_type, "to__unit", RUSTC_COMMIT
+            "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}", 
+            type_name, field_name, field_name, value_type, RUSTC_COMMIT
         );
         println!("Looking for setter symbol: {} in library: {}", symbol_name, lib_name);
         type SetterFn<T> = unsafe extern "Rust" fn(&mut dyn Any, T);
@@ -142,14 +144,122 @@ impl DirectRuntime {
         method: &str,
         args: Vec<Box<dyn Any>>,
     ) -> Result<Box<dyn Any>, Box<dyn std::error::Error>> {
-        // For now, just handle the move_by case
+        // Handle WindowManager methods
+        if type_name == "WindowManager" {
+            match method {
+                "get_rects_count" if args.is_empty() => {
+                    let symbol_name = format!("WindowManager__get_rects_count______obj_mut_dyn_Any____to__i64__{}", RUSTC_COMMIT);
+                    type GetCountFn = unsafe extern "Rust" fn(&mut dyn Any) -> i64;
+                    let getter_fn = {
+                        let lib = self.loaded_libs.get(lib_name).ok_or("library not loaded")?;
+                        let getter: Symbol<GetCountFn> = unsafe { lib.get(symbol_name.as_bytes())? };
+                        *getter
+                    };
+                    let obj = self.get_object_mut(handle).ok_or("object not found")?;
+                    let result = unsafe { getter_fn(obj) };
+                    return Ok(Box::new(result));
+                }
+                "get_rect_at" if args.len() == 1 => {
+                    let index = *args[0].downcast_ref::<i64>().ok_or("arg 0 not i64")?;
+                    let symbol_name = format!("WindowManager__get_rect_at______obj_mut_dyn_Any____index__i64____to__i64__{}", RUSTC_COMMIT);
+                    type GetAtFn = unsafe extern "Rust" fn(&mut dyn Any, i64) -> i64;
+                    let getter_fn = {
+                        let lib = self.loaded_libs.get(lib_name).ok_or("library not loaded")?;
+                        let getter: Symbol<GetAtFn> = unsafe { lib.get(symbol_name.as_bytes())? };
+                        *getter
+                    };
+                    let obj = self.get_object_mut(handle).ok_or("object not found")?;
+                    let result = unsafe { getter_fn(obj, index) };
+                    return Ok(Box::new(result));
+                }
+                "is_dragging" if args.is_empty() => {
+                    let symbol_name = format!("WindowManager__is_dragging______obj_mut_dyn_Any____to__bool__{}", RUSTC_COMMIT);
+                    type IsDraggingFn = unsafe extern "Rust" fn(&mut dyn Any) -> bool;
+                    let getter_fn = {
+                        let lib = self.loaded_libs.get(lib_name).ok_or("library not loaded")?;
+                        let getter: Symbol<IsDraggingFn> = unsafe { lib.get(symbol_name.as_bytes())? };
+                        *getter
+                    };
+                    let obj = self.get_object_mut(handle).ok_or("object not found")?;
+                    let result = unsafe { getter_fn(obj) };
+                    return Ok(Box::new(result));
+                }
+                "get_selected_handle" if args.is_empty() => {
+                    let symbol_name = format!("WindowManager__get_selected_handle______obj_mut_dyn_Any____to__i64__{}", RUSTC_COMMIT);
+                    type GetSelectedFn = unsafe extern "Rust" fn(&mut dyn Any) -> i64;
+                    let getter_fn = {
+                        let lib = self.loaded_libs.get(lib_name).ok_or("library not loaded")?;
+                        let getter: Symbol<GetSelectedFn> = unsafe { lib.get(symbol_name.as_bytes())? };
+                        *getter
+                    };
+                    let obj = self.get_object_mut(handle).ok_or("object not found")?;
+                    let result = unsafe { getter_fn(obj) };
+                    return Ok(Box::new(result));
+                }
+                "add_rect" if args.len() == 1 => {
+                    let rect = *args[0].downcast_ref::<ObjectHandle>().ok_or("arg 0 not ObjectHandle")?;
+                    let symbol_name = format!("WindowManager__add_rect______obj_mut_dyn_Any____rect__ObjectHandle____to__unit__{}", RUSTC_COMMIT);
+                    type AddRectFn = unsafe extern "Rust" fn(&mut dyn Any, ObjectHandle);
+                    let add_fn = {
+                        let lib = self.loaded_libs.get(lib_name).ok_or("library not loaded")?;
+                        let adder: Symbol<AddRectFn> = unsafe { lib.get(symbol_name.as_bytes())? };
+                        *adder
+                    };
+                    let obj = self.get_object_mut(handle).ok_or("object not found")?;
+                    unsafe { add_fn(obj, rect) };
+                    return Ok(Box::new(()));
+                }
+                "start_dragging" if args.len() == 1 => {
+                    let rect = *args[0].downcast_ref::<ObjectHandle>().ok_or("arg 0 not ObjectHandle")?;
+                    let symbol_name = format!("WindowManager__start_dragging______obj_mut_dyn_Any____rect__ObjectHandle____to__unit__{}", RUSTC_COMMIT);
+                    type StartDragFn = unsafe extern "Rust" fn(&mut dyn Any, ObjectHandle);
+                    let start_fn = {
+                        let lib = self.loaded_libs.get(lib_name).ok_or("library not loaded")?;
+                        let starter: Symbol<StartDragFn> = unsafe { lib.get(symbol_name.as_bytes())? };
+                        *starter
+                    };
+                    let obj = self.get_object_mut(handle).ok_or("object not found")?;
+                    unsafe { start_fn(obj, rect) };
+                    return Ok(Box::new(()));
+                }
+                "set_drag_offset" if args.len() == 2 => {
+                    let x = *args[0].downcast_ref::<f64>().ok_or("arg 0 not f64")?;
+                    let y = *args[1].downcast_ref::<f64>().ok_or("arg 1 not f64")?;
+                    let symbol_name = format!("WindowManager__set_drag_offset______obj_mut_dyn_Any____x__f64____y__f64____to__unit__{}", RUSTC_COMMIT);
+                    type SetOffsetFn = unsafe extern "Rust" fn(&mut dyn Any, f64, f64);
+                    let set_fn = {
+                        let lib = self.loaded_libs.get(lib_name).ok_or("library not loaded")?;
+                        let setter: Symbol<SetOffsetFn> = unsafe { lib.get(symbol_name.as_bytes())? };
+                        *setter
+                    };
+                    let obj = self.get_object_mut(handle).ok_or("object not found")?;
+                    unsafe { set_fn(obj, x, y) };
+                    return Ok(Box::new(()));
+                }
+                "clear_selection" | "stop_dragging" if args.is_empty() => {
+                    let symbol_name = format!("WindowManager__{}______obj_mut_dyn_Any____to__unit__{}", method, RUSTC_COMMIT);
+                    type VoidFn = unsafe extern "Rust" fn(&mut dyn Any);
+                    let void_fn = {
+                        let lib = self.loaded_libs.get(lib_name).ok_or("library not loaded")?;
+                        let voider: Symbol<VoidFn> = unsafe { lib.get(symbol_name.as_bytes())? };
+                        *voider
+                    };
+                    let obj = self.get_object_mut(handle).ok_or("object not found")?;
+                    unsafe { void_fn(obj) };
+                    return Ok(Box::new(()));
+                }
+                _ => {}
+            }
+        }
+        
+        // For now, just handle the move_by case for Rect
         if method == "move_by" && args.len() == 2 {
             let dx = *args[0].downcast_ref::<f64>().ok_or("arg 0 not f64")?;
             let dy = *args[1].downcast_ref::<f64>().ok_or("arg 1 not f64")?;
 
             // Use signature-encoded symbol name
             let symbol_name =
-                format!("{}__{}____obj_mut_dyn_Any__dx_f64__dy_f64__to__unit__{}", type_name, method, RUSTC_COMMIT);
+                format!("{}__{}______obj_mut_dyn_Any____dx__f64____dy__f64____to__unit__{}", type_name, method, RUSTC_COMMIT);
 
             type MoveFn = unsafe extern "Rust" fn(&mut dyn Any, f64, f64);
             let mover_fn = {
@@ -171,19 +281,101 @@ impl DirectRuntime {
 /// Macro for ergonomic direct calls
 #[macro_export]
 macro_rules! direct_call {
-    // Getter
-    ($runtime:expr, $handle:expr, $type:ident, $method:ident()) => {{
-        $runtime.call_getter::<_>($handle, stringify!($type), "librect", stringify!($method))
+    // Rect field getters - return f64 directly
+    ($runtime:expr, $handle:expr, Rect, x()) => {{
+        $runtime.call_getter::<f64>($handle, "Rect", "librect", "x")
+    }};
+    ($runtime:expr, $handle:expr, Rect, y()) => {{
+        $runtime.call_getter::<f64>($handle, "Rect", "librect", "y")
+    }};
+    ($runtime:expr, $handle:expr, Rect, width()) => {{
+        $runtime.call_getter::<f64>($handle, "Rect", "librect", "width")
+    }};
+    ($runtime:expr, $handle:expr, Rect, height()) => {{
+        $runtime.call_getter::<f64>($handle, "Rect", "librect", "height")
+    }};
+    
+    // WindowManager field getters - return f64 directly
+    ($runtime:expr, $handle:expr, WindowManager, drag_offset_x()) => {{
+        $runtime.call_getter::<f64>($handle, "WindowManager", "libWindowManager", "drag_offset_x")
+    }};
+    ($runtime:expr, $handle:expr, WindowManager, drag_offset_y()) => {{
+        $runtime.call_getter::<f64>($handle, "WindowManager", "libWindowManager", "drag_offset_y")
+    }};
+    
+    // WindowManager methods that return i64
+    ($runtime:expr, $handle:expr, WindowManager, get_rects_count()) => {{
+        let args: Vec<Box<dyn std::any::Any>> = vec![];
+        $runtime.call_method($handle, "WindowManager", "libWindowManager", "get_rects_count", args)
+            .and_then(|r| r.downcast::<i64>()
+                .map(|b| *b)
+                .map_err(|_| "Failed to downcast get_rects_count result".into()))
+    }};
+    ($runtime:expr, $handle:expr, WindowManager, get_rect_at($index:expr)) => {{
+        let args: Vec<Box<dyn std::any::Any>> = vec![Box::new($index)];
+        $runtime.call_method($handle, "WindowManager", "libWindowManager", "get_rect_at", args)
+            .and_then(|r| r.downcast::<i64>()
+                .map(|b| *b)
+                .map_err(|_| "Failed to downcast get_rect_at result".into()))
+    }};
+    ($runtime:expr, $handle:expr, WindowManager, get_selected_handle()) => {{
+        let args: Vec<Box<dyn std::any::Any>> = vec![];
+        $runtime.call_method($handle, "WindowManager", "libWindowManager", "get_selected_handle", args)
+            .and_then(|r| r.downcast::<i64>()
+                .map(|b| *b)
+                .map_err(|_| "Failed to downcast get_selected_handle result".into()))
+    }};
+    
+    // WindowManager methods that return bool
+    ($runtime:expr, $handle:expr, WindowManager, is_dragging()) => {{
+        let args: Vec<Box<dyn std::any::Any>> = vec![];
+        $runtime.call_method($handle, "WindowManager", "libWindowManager", "is_dragging", args)
+            .and_then(|r| r.downcast::<bool>()
+                .map(|b| *b)
+                .map_err(|_| "Failed to downcast is_dragging result".into()))
+    }};
+    
+    // WindowManager void methods
+    ($runtime:expr, $handle:expr, WindowManager, clear_selection()) => {{
+        let args: Vec<Box<dyn std::any::Any>> = vec![];
+        $runtime.call_method($handle, "WindowManager", "libWindowManager", "clear_selection", args)
+    }};
+    ($runtime:expr, $handle:expr, WindowManager, stop_dragging()) => {{
+        let args: Vec<Box<dyn std::any::Any>> = vec![];
+        $runtime.call_method($handle, "WindowManager", "libWindowManager", "stop_dragging", args)
+    }};
+    
+    // WindowManager methods with arguments
+    ($runtime:expr, $handle:expr, WindowManager, add_rect($rect:expr)) => {{
+        let args: Vec<Box<dyn std::any::Any>> = vec![Box::new($rect)];
+        $runtime.call_method($handle, "WindowManager", "libWindowManager", "add_rect", args)
+    }};
+    ($runtime:expr, $handle:expr, WindowManager, start_dragging($rect:expr)) => {{
+        let args: Vec<Box<dyn std::any::Any>> = vec![Box::new($rect)];
+        $runtime.call_method($handle, "WindowManager", "libWindowManager", "start_dragging", args)
+    }};
+    ($runtime:expr, $handle:expr, WindowManager, set_drag_offset($x:expr, $y:expr)) => {{
+        let args: Vec<Box<dyn std::any::Any>> = vec![Box::new($x), Box::new($y)];
+        $runtime.call_method($handle, "WindowManager", "libWindowManager", "set_drag_offset", args)
     }};
 
-    // Setter
-    ($runtime:expr, $handle:expr, $type:ident, $method:ident($value:expr)) => {{
-        $runtime.call_setter($handle, stringify!($type), "librect", stringify!($method), $value)
+    // Rect setters
+    ($runtime:expr, $handle:expr, Rect, set_x($value:expr)) => {{
+        $runtime.call_setter($handle, "Rect", "librect", "set_x", $value)
     }};
-
-    // Method with args
-    ($runtime:expr, $handle:expr, $type:ident, $method:ident($($arg:expr),*)) => {{
-        let args: Vec<Box<dyn std::any::Any>> = vec![$(Box::new($arg)),*];
-        $runtime.call_method($handle, stringify!($type), "librect", stringify!($method), args)
+    ($runtime:expr, $handle:expr, Rect, set_y($value:expr)) => {{
+        $runtime.call_setter($handle, "Rect", "librect", "set_y", $value)
+    }};
+    ($runtime:expr, $handle:expr, Rect, set_width($value:expr)) => {{
+        $runtime.call_setter($handle, "Rect", "librect", "set_width", $value)
+    }};
+    ($runtime:expr, $handle:expr, Rect, set_height($value:expr)) => {{
+        $runtime.call_setter($handle, "Rect", "librect", "set_height", $value)
+    }};
+    
+    // Rect methods
+    ($runtime:expr, $handle:expr, Rect, move_by($dx:expr, $dy:expr)) => {{
+        let args: Vec<Box<dyn std::any::Any>> = vec![Box::new($dx), Box::new($dy)];
+        $runtime.call_method($handle, "Rect", "librect", "move_by", args)
     }};
 }

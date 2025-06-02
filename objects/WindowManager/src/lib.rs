@@ -1,37 +1,61 @@
-use hotline::object;
+use hotline::{object, ObjectHandle};
 
 object!({
-    #[derive(Default, Clone)]
-    pub struct Rect {
-        pub x: f64,
-        pub y: f64,
-        pub width: f64,
-        pub height: f64,
+    #[derive(Default)]
+    pub struct WindowManager {
+        pub rects: Vec<ObjectHandle>,
+        pub selected: Option<ObjectHandle>,
+        pub dragging: bool,
+        pub drag_offset_x: f64,
+        pub drag_offset_y: f64,
     }
 
-    impl Rect {
-        fn move_by(&mut self, dx: f64, dy: f64) {
-            self.x += dx;
-            self.y += dy;
+    impl WindowManager {
+        fn add_rect(&mut self, rect: ObjectHandle) {
+            self.rects.push(rect);
         }
-        fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
-            // Draw rectangle by setting pixels
-            let x_start = (self.x as i32).max(0) as u32;
-            let y_start = (self.y as i32).max(0) as u32;
-            let x_end = ((self.x + self.width) as i32).min(buffer_width as i32) as u32;
-            let y_end = ((self.y + self.height) as i32).min(buffer_height as i32) as u32;
 
-            for y in y_start..y_end {
-                for x in x_start..x_end {
-                    let offset = (y * (pitch as u32) + x * 4) as usize;
-                    if offset + 3 < buffer.len() {
-                        buffer[offset] = 120; // B
-                        buffer[offset + 1] = 120; // G
-                        buffer[offset + 2] = 0; // R
-                        buffer[offset + 3] = 255; // A
-                    }
-                }
+        fn clear_selection(&mut self) {
+            self.selected = None;
+            self.dragging = false;
+        }
+        
+        fn set_drag_offset(&mut self, x: f64, y: f64) {
+            self.drag_offset_x = x;
+            self.drag_offset_y = y;
+        }
+        
+        fn start_dragging(&mut self, rect: ObjectHandle) {
+            self.selected = Some(rect);
+            self.dragging = true;
+        }
+        
+        fn stop_dragging(&mut self) {
+            self.dragging = false;
+        }
+        
+        fn get_selected_handle(&mut self) -> i64 {
+            match self.selected {
+                Some(ObjectHandle(h)) => h as i64,
+                None => -1,
             }
+        }
+        
+        fn get_rects_count(&mut self) -> i64 {
+            self.rects.len() as i64
+        }
+        
+        fn get_rect_at(&mut self, index: i64) -> i64 {
+            if index >= 0 && (index as usize) < self.rects.len() {
+                let ObjectHandle(h) = self.rects[index as usize];
+                h as i64
+            } else {
+                -1
+            }
+        }
+        
+        fn is_dragging(&mut self) -> bool {
+            self.dragging
         }
     }
 });

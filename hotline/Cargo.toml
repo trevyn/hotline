@@ -4,5 +4,5 @@ name = "hotline"
 version = "0.1.0"
 
 [dependencies]
-paste = { path = "../paste" }
+hotline-macros = {path = "../hotline-macros"}
 # do not add additional dependencies here

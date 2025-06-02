@@ -23,6 +23,26 @@ fn main() -> Result<(), String> {
 
     let mut runtime = DirectRuntime::new();
 
+    // Build and load WindowManager
+    println!("Building WindowManager library...");
+    std::process::Command::new("cargo")
+        .args(&["build", "--release", "-p", "WindowManager"])
+        .status()
+        .expect("Failed to build WindowManager");
+
+    #[cfg(target_os = "macos")]
+    let wm_path = "target/release/libWindowManager.dylib";
+    #[cfg(target_os = "linux")]
+    let wm_path = "target/release/libWindowManager.so";
+    #[cfg(target_os = "windows")]
+    let wm_path = "target/release/WindowManager.dll";
+
+    runtime.hot_reload(wm_path).expect("Failed to load WindowManager library");
+
+    // Create window manager instance
+    let window_manager = runtime.create_from_lib("libWindowManager", "WindowManager")
+        .expect("Failed to create WindowManager");
+
     let lib_path = {
         #[cfg(target_os = "macos")]
         let path = "target/release/librect.dylib";
@@ -43,16 +63,12 @@ fn main() -> Result<(), String> {
     };
 
     let mut render_lib = unsafe { libloading::Library::new(lib_path) }.expect("Failed to load lib");
-    let render_symbol = format!("Rect__render____obj_mut_dyn_Any__buffer_ref_mut_slice_u8_endslice__buffer_width_i64__buffer_height_i64__pitch_i64__to__unit__{}", runtime::RUSTC_COMMIT);
+    let render_symbol = format!("Rect__render______obj_mut_dyn_Any____buffer__unknown____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}", runtime::RUSTC_COMMIT);
     let mut render_rect: libloading::Symbol<
         unsafe extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64),
     > = unsafe { render_lib.get(render_symbol.as_bytes()) }.expect("Failed to find render function");
 
-    let mut rects: Vec<ObjectHandle> = Vec::new();
     let mut drag_start = None;
-    let mut selected: Option<ObjectHandle> = None;
-    let mut dragging = false;
-    let mut drag_offset = (0.0, 0.0);
 
     'running: loop {
         canvas.set_draw_color(Color::RGB(0, 0, 0));
@@ -65,47 +81,60 @@ fn main() -> Result<(), String> {
                 }
                 Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
                     println!("Click at ({}, {})", x, y);
-                    // Check if clicking on existing rect
-                    selected = None;
-                    for &rect_handle in &rects {
-                        // Get bounds using getter methods
-                        let rect_x: f64 = direct_call!(runtime, rect_handle, Rect, x())
-                            .expect("Failed to get x");
-                        let rect_y: f64 = direct_call!(runtime, rect_handle, Rect, y())
-                            .expect("Failed to get y");
-                        let rect_width: f64 = direct_call!(runtime, rect_handle, Rect, width())
-                            .expect("Failed to get width");
-                        let rect_height: f64 = direct_call!(runtime, rect_handle, Rect, height())
-                            .expect("Failed to get height");
+                    
+                    // Check if clicking on existing rect through WindowManager
+                    let mut hit = false;
+                    let rects_count = direct_call!(runtime, window_manager, WindowManager, get_rects_count())
+                        .expect("Failed to get rects count") as usize;
+                    
+                    for i in (0..rects_count).rev() {
+                        let handle_id = direct_call!(runtime, window_manager, WindowManager, get_rect_at(i as i64))
+                            .expect("Failed to get rect at index");
+                        
+                        if handle_id >= 0 {
+                            let rect_handle = ObjectHandle(handle_id as u64);
+                            
+                            // Get bounds using getter methods
+                            let rect_x: f64 = direct_call!(runtime, rect_handle, Rect, x())
+                                .expect("Failed to get x");
+                            let rect_y: f64 = direct_call!(runtime, rect_handle, Rect, y())
+                                .expect("Failed to get y");
+                            let rect_width: f64 = direct_call!(runtime, rect_handle, Rect, width())
+                                .expect("Failed to get width");
+                            let rect_height: f64 = direct_call!(runtime, rect_handle, Rect, height())
+                                .expect("Failed to get height");
 
-                        println!(
-                            "  Checking rect: bounds=({}, {}, {}, {})",
-                            rect_x, rect_y, rect_width, rect_height
-                        );
-
-                        if x as f64 >= rect_x
-                            && x as f64 <= rect_x + rect_width
-                            && y as f64 >= rect_y
-                            && y as f64 <= rect_y + rect_height
-                        {
-                            println!("  HIT! Selected rect");
-                            selected = Some(rect_handle);
-                            dragging = true;
-                            drag_offset = (x as f64 - rect_x, y as f64 - rect_y);
-                            break;
+                            if x as f64 >= rect_x
+                                && x as f64 <= rect_x + rect_width
+                                && y as f64 >= rect_y
+                                && y as f64 <= rect_y + rect_height
+                            {
+                                println!("  HIT! Selected rect");
+                                direct_call!(runtime, window_manager, WindowManager, start_dragging(rect_handle))
+                                    .expect("Failed to start dragging");
+                                direct_call!(runtime, window_manager, WindowManager, set_drag_offset(x as f64 - rect_x, y as f64 - rect_y))
+                                    .expect("Failed to set drag offset");
+                                hit = true;
+                                break;
+                            }
                         }
                     }
 
-                    if selected.is_none() {
+                    if !hit {
                         println!("  No hit, starting new rect creation");
-                        // Start creating new rect
+                        direct_call!(runtime, window_manager, WindowManager, clear_selection())
+                            .expect("Failed to clear selection");
                         drag_start = Some((x, y));
                     }
                 }
                 Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
-                    if dragging {
+                    let is_dragging = direct_call!(runtime, window_manager, WindowManager, is_dragging())
+                        .expect("Failed to check dragging state");
+                        
+                    if is_dragging {
                         // Stop dragging
-                        dragging = false;
+                        direct_call!(runtime, window_manager, WindowManager, stop_dragging())
+                            .expect("Failed to stop dragging");
                     } else if let Some((start_x, start_y)) = drag_start {
                         // Create new rect
                         let box_x = start_x.min(x) as f64;
@@ -127,22 +156,39 @@ fn main() -> Result<(), String> {
                                 "Created rect with bounds: ({}, {}, {}, {})",
                                 box_x, box_y, box_w, box_h
                             );
-                            rects.push(handle);
+                            
+                            // Add to window manager
+                            direct_call!(runtime, window_manager, WindowManager, add_rect(handle))
+                                .expect("Failed to add rect to window manager");
                         }
                         drag_start = None;
                     }
                 }
                 Event::MouseMotion { x, y, .. } => {
-                    if dragging {
-                        if let Some(handle) = selected {
+                    let is_dragging = direct_call!(runtime, window_manager, WindowManager, is_dragging())
+                        .expect("Failed to check dragging state");
+                        
+                    if is_dragging {
+                        let selected_handle_id = direct_call!(runtime, window_manager, WindowManager, get_selected_handle())
+                            .expect("Failed to get selected handle");
+                            
+                        if selected_handle_id >= 0 {
+                            let handle = ObjectHandle(selected_handle_id as u64);
+                            
+                            // Get drag offset
+                            let drag_offset_x = direct_call!(runtime, window_manager, WindowManager, drag_offset_x())
+                                .expect("Failed to get drag offset x");
+                            let drag_offset_y = direct_call!(runtime, window_manager, WindowManager, drag_offset_y())
+                                .expect("Failed to get drag offset y");
+                            
                             // Get current position to calculate delta
                             let rect_x: f64 = direct_call!(runtime, handle, Rect, x())
                                 .expect("Failed to get x for dragging");
                             let rect_y: f64 = direct_call!(runtime, handle, Rect, y())
                                 .expect("Failed to get y for dragging");
 
-                            let new_x = x as f64 - drag_offset.0;
-                            let new_y = y as f64 - drag_offset.1;
+                            let new_x = x as f64 - drag_offset_x;
+                            let new_y = y as f64 - drag_offset_y;
                             let dx = new_x - rect_x;
                             let dy = new_y - rect_y;
 
@@ -197,17 +243,29 @@ fn main() -> Result<(), String> {
             }
 
             // Render rects to buffer
-            for i in 0..rects.len() {
-                let rect_handle = rects[i];
-                if let Some(rect_obj) = runtime.get_object_mut(rect_handle) {
-                    unsafe {
-                        render_rect(rect_obj, buffer, 800, 600, pitch as i64);
+            let rects_count = direct_call!(runtime, window_manager, WindowManager, get_rects_count())
+                .unwrap_or(0) as usize;
+                
+            for i in 0..rects_count {
+                let handle_id = direct_call!(runtime, window_manager, WindowManager, get_rect_at(i as i64))
+                    .unwrap_or(-1);
+                    
+                if handle_id >= 0 {
+                    let rect_handle = ObjectHandle(handle_id as u64);
+                    if let Some(rect_obj) = runtime.get_object_mut(rect_handle) {
+                        unsafe {
+                            render_rect(rect_obj, buffer, 800, 600, pitch as i64);
+                        }
                     }
                 }
             }
 
             // Highlight selected rect with a border
-            if let Some(sel_handle) = selected {
+            let selected_handle_id = direct_call!(runtime, window_manager, WindowManager, get_selected_handle())
+                .unwrap_or(-1);
+                
+            if selected_handle_id >= 0 {
+                let sel_handle = ObjectHandle(selected_handle_id as u64);
                 let rect_x = direct_call!(runtime, sel_handle, Rect, x())
                     .unwrap_or(0.0);
                 let rect_y = direct_call!(runtime, sel_handle, Rect, y())
