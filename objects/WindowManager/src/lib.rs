@@ -236,7 +236,7 @@ object!({
                     
                     // Call rect's render method
                     with_library_registry(|registry| {
-                        let render_symbol = format!("Rect__render______obj_mut_dyn_Any____buffer__mut_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}", hotline::RUSTC_COMMIT);
+                        let render_symbol = format!("Rect__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}", hotline::RUSTC_COMMIT);
                         
                         type RenderFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, &mut [u8], i64, i64, i64);
                         let _ = registry.with_symbol::<RenderFn, _, _>("librect", &render_symbol, |render_fn| {
