@@ -127,6 +127,15 @@ fn generate_typed_wrappers(types: &std::collections::HashSet<String>, rustc_comm
             pub struct #type_ident(::hotline::ObjectHandle);
 
             impl #type_ident {
+                pub fn new() -> Self {
+                    let obj = crate::with_library_registry(|registry| {
+                        registry.call_constructor(concat!("lib", #type_name), #type_name, ::hotline::RUSTC_COMMIT)
+                            .expect(&format!("failed to construct {}", #type_name))
+                    }).expect("library registry not initialized");
+                    
+                    Self::from_handle(::std::sync::Arc::new(::std::sync::Mutex::new(obj)))
+                }
+
                 pub fn from_handle(handle: ::hotline::ObjectHandle) -> Self {
                     Self(handle)
                 }

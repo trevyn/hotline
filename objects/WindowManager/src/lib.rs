@@ -1,4 +1,3 @@
-use std::sync::{Arc, Mutex};
 
 hotline::object!({
     #[derive(Default)]
@@ -87,18 +86,9 @@ hotline::object!({
                 self.dragging = true;
 
                 // Create HighlightLens for selected rect
-                if let Some(hl_obj) = crate::with_library_registry(|registry| {
-                    registry.call_constructor("libHighlightLens", "HighlightLens", hotline::RUSTC_COMMIT).ok()
-                })
-                .flatten()
-                {
-                    let mut hl_handle = HighlightLens::from_handle(Arc::new(Mutex::new(hl_obj)));
-
-                    // Set the target to the selected rect
-                    hl_handle.set_target(rect_handle.handle().clone());
-
-                    self.highlight_lens = Some(hl_handle);
-                }
+                let mut hl_handle = HighlightLens::new();
+                hl_handle.set_target(rect_handle.handle().clone());
+                self.highlight_lens = Some(hl_handle);
             } else {
                 // No hit - start rect creation
                 self.drag_start = Some((x, y));
@@ -115,25 +105,10 @@ hotline::object!({
                 let rect_x = start_x.min(x);
                 let rect_y = start_y.min(y);
 
-                // Create rect via registry
-                let new_rect = crate::with_library_registry(|registry| {
-                    if let Ok(rect_obj) = registry.call_constructor("libRect", "Rect", hotline::RUSTC_COMMIT) {
-                        let mut rect_handle = Rect::from_handle(Arc::new(Mutex::new(rect_obj)));
-
-                        // Initialize the rect with position and size
-                        rect_handle.initialize(rect_x, rect_y, width, height);
-
-                        Some(rect_handle)
-                    } else {
-                        None
-                    }
-                })
-                .flatten();
-
-                if let Some(rect_handle) = new_rect {
-                    // Add to our rects list
-                    self.rects.push(rect_handle);
-                }
+                // Create new rect
+                let mut rect_handle = Rect::new();
+                rect_handle.initialize(rect_x, rect_y, width, height);
+                self.rects.push(rect_handle);
 
                 self.drag_start = None;
             }

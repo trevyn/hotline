@@ -5,3 +5,5 @@
 - do not use "get" prefix; e.g. "bounds" method instead of "get_bounds"
 - runtime/main should not call any specific objects other than WindowManager
 - when working with macros, remember that you can use cargo-expand
+- use multiple task agents in parallel if it would help
+- adjust the `object` macro if it would help make things cleaner
