@@ -86,7 +86,7 @@ hotline::object!({
                 self.dragging = true;
 
                 // Create HighlightLens for selected rect
-                self.highlight_lens = Some(HighlightLens::new().with_target(Some(rect_handle.clone())));
+                self.highlight_lens = Some(HighlightLens::new().with_target(rect_handle));
             } else {
                 // No hit - start rect creation
                 self.drag_start = Some((x, y));

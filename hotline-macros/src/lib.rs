@@ -115,6 +115,21 @@ fn is_standard_type(name: &str) -> bool {
     )
 }
 
+fn extract_option_type(ty: &Type) -> Option<&Type> {
+    if let Type::Path(type_path) = ty {
+        if let Some(segment) = type_path.path.segments.last() {
+            if segment.ident == "Option" {
+                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                        return Some(inner_ty);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> proc_macro2::TokenStream {
     if types.is_empty() {
         return quote! {};
@@ -221,9 +236,36 @@ fn extract_object_methods_for_wrapper(
                             if has_setter {
                                 // Add builder method (with_fieldname)
                                 let builder_method_name = format!("with_{}", field_name);
+                                let return_type: Type = syn::parse_str(type_name).expect("Failed to parse type name");
+                                
+                                // Check if the field type is Option<T> where T is a clonable object type
+                                if let Some(inner_type) = extract_option_type(field_type) {
+                                    // Check if inner type looks like an object type (capitalized)
+                                    if let Type::Path(type_path) = inner_type {
+                                        if let Some(ident) = type_path.path.get_ident() {
+                                            let inner_type_name = ident.to_string();
+                                            if inner_type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
+                                                && !is_standard_type(&inner_type_name) {
+                                                // For Option<ObjectType>, the wrapper method should take &ObjectType
+                                                let param_names = vec![field_name.to_string()];
+                                                let param_types = vec![inner_type.clone()];
+                                                
+                                                methods.push((
+                                                    builder_method_name,
+                                                    param_names,
+                                                    param_types,
+                                                    return_type,
+                                                    ReceiverType::Value,
+                                                ));
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // Default: use the full field type
                                 let param_names = vec![field_name.to_string()];
                                 let param_types = vec![field_type.clone()];
-                                let return_type: Type = syn::parse_str(type_name).expect("Failed to parse type name");
                                 
                                 methods.push((
                                     builder_method_name,
@@ -372,13 +414,69 @@ fn generate_methods_for_type(
                     }
                 }
             } else {
-                // Fallback: just return self without modification
-                // This is for builder methods that don't have a corresponding setter
-                quote! {
-                    pub fn #method_ident(self #(, #param_idents: #param_types)*) -> Self {
-                        // Builder method without corresponding setter - returning self unchanged
-                        // The actual object implementation handles the state change internally
-                        self
+                // Check if this is a builder method for Option<T> where T is an object type
+                // In that case, we expect param_types to have a single type T (not Option<T>)
+                // and we need to wrap it in Some()
+                let needs_option_wrap = method_name.starts_with("with_") && 
+                    param_types.len() == 1 && 
+                    if let Type::Path(type_path) = &param_types[0] {
+                        if let Some(ident) = type_path.path.get_ident() {
+                            let type_name = ident.to_string();
+                            type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
+                                && !is_standard_type(&type_name)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                
+                if needs_option_wrap {
+                    // This is a builder method for Option<ObjectType>
+                    // Call the corresponding setter method via FFI
+                    let setter_method_name = format!("set_{}", &method_name[5..]); // with_X -> set_X
+                    quote! {
+                        pub fn #method_ident(mut self #(, #param_idents: &#param_types)*) -> Self {
+                            // Call the setter via FFI
+                            crate::with_library_registry(|registry| {
+                                if let Ok(mut guard) = self.0.lock() {
+                                    let type_name = guard.type_name();
+                                    
+                                    // Build the setter symbol name
+                                    let param_type_str = #(stringify!(#param_types)),*;
+                                    let symbol_name = format!(
+                                        "{}__{}______obj_mut_dyn_Any____value__ref_{}____to__unit__{}",
+                                        type_name,
+                                        #setter_method_name,
+                                        param_type_str,
+                                        #rustc_commit
+                                    );
+                                    let lib_name = format!("lib{}", type_name);
+                                    
+                                    let obj_any = guard.as_any_mut();
+                                    
+                                    type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any, &#(#param_types),*);
+                                    registry.with_symbol::<FnType, _, _>(
+                                        &lib_name,
+                                        &symbol_name,
+                                        |fn_ptr| unsafe { (**fn_ptr)(obj_any, #(#param_idents),*) }
+                                    ).unwrap_or_else(|e| {
+                                        // Setter doesn't exist, log but don't panic
+                                        eprintln!("Warning: setter {} not found: {}", #setter_method_name, e);
+                                    });
+                                }
+                            });
+                            self
+                        }
+                    }
+                } else {
+                    // Fallback: just return self without modification
+                    quote! {
+                        pub fn #method_ident(self #(, #param_idents: #param_types)*) -> Self {
+                            // Builder method without corresponding setter - returning self unchanged
+                            // The actual object implementation handles the state change internally
+                            self
+                        }
                     }
                 }
             };
@@ -663,6 +761,62 @@ pub fn object(input: TokenStream) -> TokenStream {
 
     // Generate method wrappers
     let mut method_wrappers = Vec::new();
+    
+    // First, generate FFI wrappers for setter methods
+    if let Fields::Named(fields) = &modified_struct.fields {
+        for field in &fields.named {
+            let field_name = field.ident.as_ref().unwrap();
+            if fields_with_setters.contains(&field_name.to_string()) {
+                let field_type = &field.ty;
+                let setter_name = quote::format_ident!("set_{}", field_name);
+                
+                // Check if the field type is Option<T> where T is a clonable object type
+                if let Some(inner_type) = extract_option_type(field_type) {
+                    // Check if inner type looks like an object type (capitalized)
+                    if let Type::Path(type_path) = inner_type {
+                        if let Some(ident) = type_path.path.get_ident() {
+                            let type_name = ident.to_string();
+                            if type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
+                                && !is_standard_type(&type_name) {
+                                // Generate FFI wrapper for setter that takes &T
+                                let type_str = type_to_string(inner_type);
+                                let wrapper_fn_name = quote::format_ident!(
+                                    "{}__{}______obj_mut_dyn_Any____value__ref_{}____to__unit__{}",
+                                    struct_name,
+                                    setter_name,
+                                    type_str,
+                                    rustc_commit
+                                );
+                                
+                                method_wrappers.push(quote! {
+                                    #[unsafe(no_mangle)]
+                                    #[allow(non_snake_case)]
+                                    pub extern "Rust" fn #wrapper_fn_name(
+                                        obj: &mut dyn ::std::any::Any,
+                                        value: &#inner_type
+                                    ) {
+                                        let instance = match obj.downcast_mut::<#struct_name>() {
+                                            Some(inst) => inst,
+                                            None => {
+                                                let type_name: &'static str = ::std::any::type_name_of_val(&*obj);
+                                                panic!(
+                                                    "Type mismatch in method {}: expected {}, but got {}",
+                                                    stringify!(#setter_name),
+                                                    stringify!(#struct_name),
+                                                    type_name
+                                                )
+                                            }
+                                        };
+                                        instance.#setter_name(value)
+                                    }
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     for item in &main_impl.items {
         if let ImplItem::Fn(method) = item {
@@ -823,17 +977,52 @@ pub fn object(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Generate builder methods for fields with #[setter]
+    // Generate setter and builder methods for fields with #[setter]
+    let mut setter_methods = Vec::new();
     let mut builder_methods = Vec::new();
     if let Fields::Named(fields) = &modified_struct.fields {
         for field in &fields.named {
             let field_name = field.ident.as_ref().unwrap();
             if fields_with_setters.contains(&field_name.to_string()) {
                 let field_type = &field.ty;
-                let method_name = quote::format_ident!("with_{}", field_name);
+                let setter_name = quote::format_ident!("set_{}", field_name);
+                let builder_name = quote::format_ident!("with_{}", field_name);
                 
+                // Check if the field type is Option<T> where T is a clonable object type
+                if let Some(inner_type) = extract_option_type(field_type) {
+                    // Check if inner type looks like an object type (capitalized)
+                    if let Type::Path(type_path) = inner_type {
+                        if let Some(ident) = type_path.path.get_ident() {
+                            let type_name = ident.to_string();
+                            if type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
+                                && !is_standard_type(&type_name) {
+                                // Generate setter that takes &T and wraps in Some()
+                                setter_methods.push(quote! {
+                                    pub fn #setter_name(&mut self, value: &#inner_type) {
+                                        self.#field_name = Some(value.clone());
+                                    }
+                                });
+                                // Generate builder that takes &T  
+                                builder_methods.push(quote! {
+                                    pub fn #builder_name(mut self, value: &#inner_type) -> Self {
+                                        self.#setter_name(value);
+                                        self
+                                    }
+                                });
+                                continue;
+                            }
+                        }
+                    }
+                }
+                
+                // Default behavior for other types
+                setter_methods.push(quote! {
+                    pub fn #setter_name(&mut self, value: #field_type) {
+                        self.#field_name = value;
+                    }
+                });
                 builder_methods.push(quote! {
-                    pub fn #method_name(mut self, value: #field_type) -> Self {
+                    pub fn #builder_name(mut self, value: #field_type) -> Self {
                         self.#field_name = value;
                         self
                     }
@@ -842,9 +1031,10 @@ pub fn object(input: TokenStream) -> TokenStream {
         }
     }
     
-    let builder_impl = if !builder_methods.is_empty() {
+    let setter_builder_impl = if !builder_methods.is_empty() || !setter_methods.is_empty() {
         quote! {
             impl #struct_name {
+                #(#setter_methods)*
                 #(#builder_methods)*
             }
         }
@@ -906,7 +1096,7 @@ pub fn object(input: TokenStream) -> TokenStream {
 
         #trait_impl
         
-        #builder_impl
+        #setter_builder_impl
 
         #constructor
 
