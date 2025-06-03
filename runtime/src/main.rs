@@ -32,6 +32,31 @@ fn main() -> Result<(), String> {
     let objects_dir = Path::new("objects");
     let mut loaded_libs = Vec::new();
     
+    // First, rebuild all libraries at launch
+    println!("rebuilding all libraries at launch...");
+    if let Ok(entries) = fs::read_dir(objects_dir) {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(lib_name) = path.file_name().and_then(|n| n.to_str()) {
+                        println!("building {}...", lib_name);
+                        let output = std::process::Command::new("cargo")
+                            .args(&["build", "--release", "-p", lib_name])
+                            .output()
+                            .expect(&format!("failed to build {}", lib_name));
+                        
+                        if !output.status.success() {
+                            eprintln!("failed to build {}: {}", lib_name, String::from_utf8_lossy(&output.stderr));
+                        } else {
+                            println!("successfully built {}", lib_name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     if let Ok(entries) = fs::read_dir(objects_dir) {
         for entry in entries {
             if let Ok(entry) = entry {
