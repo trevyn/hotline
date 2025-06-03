@@ -8,9 +8,45 @@ use syn::{
     Fields, FnArg, GenericArgument, ImplItem, ItemImpl, ItemStruct, Pat, PathArguments, ReturnType,
     Type, braced,
     parse::{Parse, ParseStream},
+    Token,
 };
 
+#[derive(Default, Debug)]
+struct UsePrototypes {
+    prototypes: Vec<(String, String)>, // (TypeName, method)
+}
+
+impl Parse for UsePrototypes {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut prototypes = Vec::new();
+        
+        // Parse comma-separated list of Type.method
+        while !input.is_empty() {
+            // Parse Type
+            let type_name: syn::Ident = input.parse()?;
+            
+            // Parse dot
+            let _dot: Token![.] = input.parse()?;
+            
+            // Parse method
+            let method_name: syn::Ident = input.parse()?;
+            
+            prototypes.push((type_name.to_string(), method_name.to_string()));
+            
+            // Check for comma
+            if input.peek(Token![,]) {
+                let _comma: Token![,] = input.parse()?;
+            } else {
+                break;
+            }
+        }
+        
+        Ok(UsePrototypes { prototypes })
+    }
+}
+
 struct ObjectInput {
+    use_prototypes: Option<UsePrototypes>,
     struct_item: ItemStruct,
     impl_item: ItemImpl,
 }
@@ -20,6 +56,31 @@ impl Parse for ObjectInput {
         let content;
         braced!(content in input);
 
+        // Try to parse use_prototypes! as a macro invocation
+        let use_prototypes = if content.peek(syn::Ident) {
+            let fork = content.fork();
+            if let Ok(ident) = fork.parse::<syn::Ident>() {
+                if ident == "use_prototypes" && fork.peek(Token![!]) {
+                    // Consume the tokens we checked
+                    let _: syn::Ident = content.parse()?;
+                    let _: Token![!] = content.parse()?;
+                    
+                    // Parse the braced content
+                    let proto_content;
+                    braced!(proto_content in content);
+                    let protos: UsePrototypes = proto_content.parse()?;
+                    
+                    Some(protos)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let struct_item: ItemStruct = content
             .parse()
             .map_err(|e| syn::Error::new(e.span(), "Expected a struct definition"))?;
@@ -27,14 +88,14 @@ impl Parse for ObjectInput {
             .parse()
             .map_err(|e| syn::Error::new(e.span(), "Expected an impl block after the struct"))?;
 
-        Ok(ObjectInput { struct_item, impl_item })
+        Ok(ObjectInput { use_prototypes, struct_item, impl_item })
     }
 }
 
 #[proc_macro]
 #[proc_macro_error]
 pub fn object(input: TokenStream) -> TokenStream {
-    let ObjectInput { struct_item, impl_item } = syn::parse_macro_input!(input as ObjectInput);
+    let ObjectInput { use_prototypes, struct_item, impl_item } = syn::parse_macro_input!(input as ObjectInput);
 
     let struct_name = &struct_item.ident;
     let struct_attrs = &struct_item.attrs;
@@ -340,7 +401,17 @@ pub fn object(input: TokenStream) -> TokenStream {
         #init_function
     };
 
-    TokenStream::from(output)
+    // Generate extension trait for prototypes if any
+    let prototype_trait = if let Some(ref protos) = use_prototypes {
+        generate_prototype_extensions(&protos, &rustc_commit)
+    } else {
+        quote! {}
+    };
+
+    TokenStream::from(quote! {
+        #output
+        #prototype_trait
+    })
 }
 
 fn is_generic_type(ty: &Type) -> bool {
@@ -618,4 +689,174 @@ fn get_rustc_commit_hash() -> String {
         .and_then(|line| line.strip_prefix("commit-hash: "))
         .map(|hash| hash[..9].to_string())
         .expect("Failed to find rustc commit hash")
+}
+
+fn generate_prototype_extensions(prototypes: &UsePrototypes, rustc_commit: &str) -> proc_macro2::TokenStream {
+    let mut trait_methods = Vec::new();
+    let mut impl_methods = Vec::new();
+    
+    // Read and parse each prototype
+    for (type_name, method_name) in &prototypes.prototypes {
+        // Find and read the .sig file
+        let sig_path = find_sig_file(type_name);
+        if let Ok(content) = fs::read_to_string(&sig_path) {
+            // Find the method signature
+            for line in content.lines() {
+                if line.starts_with(&format!("{}:", method_name)) {
+                    if let Some(parsed) = parse_signature_line(line) {
+                        let (method, params, return_type) = parsed;
+                        
+                        // Generate trait method
+                        let method_ident = quote::format_ident!("{}", method);
+                        let param_types: Vec<proc_macro2::TokenStream> = params.iter().map(|p| {
+                            let ty = parse_type_string(p);
+                            quote! { #ty }
+                        }).collect();
+                        
+                        let return_ty = parse_type_string(&return_type);
+                        
+                        // Generate parameter names
+                        let param_names: Vec<proc_macro2::TokenStream> = params.iter().enumerate().map(|(i, _)| {
+                            let name = quote::format_ident!("arg{}", i);
+                            quote! { #name }
+                        }).collect();
+                        
+                        // Trait method
+                        trait_methods.push(quote! {
+                            fn #method_ident(&mut self #(, #param_names: #param_types)*) -> #return_ty;
+                        });
+                        
+                        // Implementation method
+                        let fn_type = quote! {
+                            unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*) -> #return_ty
+                        };
+                        
+                        // Build the exact symbol name format
+                        let params_part = if params.is_empty() {
+                            String::new()
+                        } else {
+                            let param_parts: Vec<String> = params.iter().enumerate().map(|(i, p)| {
+                                format!("__arg{}__{}", i, p)
+                            }).collect();
+                            param_parts.join("")
+                        };
+                        
+                        // Convert return type to symbol format
+                        let return_part = if return_type.starts_with("(") && return_type.ends_with(")") {
+                            let inner = &return_type[1..return_type.len()-1];
+                            if inner.is_empty() {
+                                "unit".to_string()
+                            } else {
+                                format!("tuple_{}", inner.replace(",", "_comma_"))
+                            }
+                        } else if return_type == "()" {
+                            "unit".to_string()
+                        } else {
+                            return_type.clone()
+                        };
+                        
+                        impl_methods.push(quote! {
+                            fn #method_ident(&mut self #(, #param_names: #param_types)*) -> #return_ty {
+                                crate::with_library_registry(|registry| {
+                                    if let Ok(mut guard) = self.lock() {
+                                        let type_name = guard.type_name();
+                                        
+                                        let symbol_name = format!(
+                                            "{}__{}______obj_mut_dyn_Any{}____to__{}__{}",
+                                            type_name,
+                                            stringify!(#method_ident),
+                                            #params_part,
+                                            #return_part,
+                                            #rustc_commit
+                                        );
+                                        let lib_name = format!("lib{}", type_name);
+                                        
+                                        let obj_any = guard.as_any_mut();
+                                        
+                                        type FnType = #fn_type;
+                                        registry.with_symbol::<FnType, _, _>(
+                                            &lib_name,
+                                            &symbol_name,
+                                            |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_names)*) }
+                                        ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e))
+                                    } else {
+                                        panic!("Failed to lock object for method {}", stringify!(#method_ident))
+                                    }
+                                }).unwrap_or_else(|| panic!("No library registry available for method {}", stringify!(#method_ident)))
+                            }
+                        });
+                        
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    if trait_methods.is_empty() {
+        return quote! {};
+    }
+    
+    quote! {
+        trait ObjectHandleExt {
+            #(#trait_methods)*
+        }
+        
+        impl ObjectHandleExt for ::hotline::ObjectHandle {
+            #(#impl_methods)*
+        }
+    }
+}
+
+fn find_sig_file(type_name: &str) -> std::path::PathBuf {
+    // Get the workspace root
+    let mut current_dir = std::env::current_dir().unwrap();
+    loop {
+        let sig_path = current_dir.join("signatures").join(format!("{}.sig", type_name));
+        if sig_path.exists() {
+            return sig_path;
+        }
+        if !current_dir.pop() {
+            panic!("Could not find {}.sig file", type_name);
+        }
+    }
+}
+
+fn parse_signature_line(line: &str) -> Option<(String, Vec<String>, String)> {
+    let parts: Vec<&str> = line.split(':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    
+    let method_name = parts[0].to_string();
+    let params = if parts[1].is_empty() {
+        Vec::new()
+    } else {
+        parts[1].split(',').map(|s| s.trim().to_string()).collect()
+    };
+    let return_type = parts[2].to_string();
+    
+    Some((method_name, params, return_type))
+}
+
+fn parse_type_string(type_str: &str) -> proc_macro2::TokenStream {
+    match type_str.trim() {
+        "()" => quote! { () },
+        "bool" => quote! { bool },
+        "i64" => quote! { i64 },
+        "f64" => quote! { f64 },
+        "u8" => quote! { u8 },
+        "ObjectHandle" => quote! { ::hotline::ObjectHandle },
+        "mut_ref_slice_u8" => quote! { &mut [u8] },
+        s if s.starts_with("(") && s.ends_with(")") => {
+            // Parse tuple types
+            let inner = &s[1..s.len()-1];
+            let types: Vec<proc_macro2::TokenStream> = inner
+                .split(',')
+                .map(|t| parse_type_string(t.trim()))
+                .collect();
+            quote! { (#(#types),*) }
+        }
+        _ => panic!("Unknown type in signature: {}", type_str),
+    }
 }
