@@ -1,5 +1,4 @@
-- always raise errors instead of assuming a default or using ok() to hide
-- panic instead of fallback
+- always raise errors or panic instead of assuming a default or using ok() to hide or using a fallback
 - crates in the `objects` directory are slim and must not have `build.rs` files or dependencies other than `hotline`
 - use alan kay's idea of inter-object messages as "intent tokens", not data passing
 - this is a real implementation, don't hard-code things that should be generic
