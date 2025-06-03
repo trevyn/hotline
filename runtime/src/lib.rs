@@ -504,10 +504,10 @@ macro_rules! direct_call {
 #[macro_export]
 macro_rules! direct_call_old {
     // Rect field getters - return f64 directly
-    ($runtime:expr, $handle:expr, Rect, x()) => {{ $runtime.call_getter::<f64>($handle, "Rect", "librect", "x") }};
-    ($runtime:expr, $handle:expr, Rect, y()) => {{ $runtime.call_getter::<f64>($handle, "Rect", "librect", "y") }};
-    ($runtime:expr, $handle:expr, Rect, width()) => {{ $runtime.call_getter::<f64>($handle, "Rect", "librect", "width") }};
-    ($runtime:expr, $handle:expr, Rect, height()) => {{ $runtime.call_getter::<f64>($handle, "Rect", "librect", "height") }};
+    ($runtime:expr, $handle:expr, Rect, x()) => {{ $runtime.call_getter::<f64>($handle, "Rect", "libRect", "x") }};
+    ($runtime:expr, $handle:expr, Rect, y()) => {{ $runtime.call_getter::<f64>($handle, "Rect", "libRect", "y") }};
+    ($runtime:expr, $handle:expr, Rect, width()) => {{ $runtime.call_getter::<f64>($handle, "Rect", "libRect", "width") }};
+    ($runtime:expr, $handle:expr, Rect, height()) => {{ $runtime.call_getter::<f64>($handle, "Rect", "libRect", "height") }};
 
     // WindowManager field getters - return f64 directly
     ($runtime:expr, $handle:expr, WindowManager, drag_offset_x()) => {{ $runtime.call_getter::<f64>($handle, "WindowManager", "libWindowManager", "drag_offset_x") }};
@@ -600,11 +600,11 @@ macro_rules! direct_call_old {
     ($runtime:expr, $handle:expr, Rect, initialize($x:expr, $y:expr, $width:expr, $height:expr)) => {{
         let args: Vec<Box<dyn std::any::Any>> =
             vec![Box::new($x), Box::new($y), Box::new($width), Box::new($height)];
-        $runtime.call_method($handle, "Rect", "librect", "initialize", args)
+        $runtime.call_method($handle, "Rect", "libRect", "initialize", args)
     }};
     ($runtime:expr, $handle:expr, Rect, contains_point($x:expr, $y:expr)) => {{
         let args: Vec<Box<dyn std::any::Any>> = vec![Box::new($x), Box::new($y)];
-        $runtime.call_method($handle, "Rect", "librect", "contains_point", args).and_then(|r| {
+        $runtime.call_method($handle, "Rect", "libRect", "contains_point", args).and_then(|r| {
             r.downcast::<bool>()
                 .map(|b| *b)
                 .map_err(|_| "Failed to downcast contains_point result".into())
@@ -612,7 +612,7 @@ macro_rules! direct_call_old {
     }};
     ($runtime:expr, $handle:expr, Rect, get_position()) => {{
         let args: Vec<Box<dyn std::any::Any>> = vec![];
-        $runtime.call_method($handle, "Rect", "librect", "get_position", args).and_then(|r| {
+        $runtime.call_method($handle, "Rect", "libRect", "get_position", args).and_then(|r| {
             r.downcast::<(f64, f64)>()
                 .map(|b| *b)
                 .map_err(|_| "Failed to downcast get_position result".into())
@@ -620,7 +620,7 @@ macro_rules! direct_call_old {
     }};
     ($runtime:expr, $handle:expr, Rect, get_bounds()) => {{
         let args: Vec<Box<dyn std::any::Any>> = vec![];
-        $runtime.call_method($handle, "Rect", "librect", "get_bounds", args).and_then(|r| {
+        $runtime.call_method($handle, "Rect", "libRect", "get_bounds", args).and_then(|r| {
             r.downcast::<(f64, f64, f64, f64)>()
                 .map(|b| *b)
                 .map_err(|_| "Failed to downcast get_bounds result".into())
@@ -628,6 +628,6 @@ macro_rules! direct_call_old {
     }};
     ($runtime:expr, $handle:expr, Rect, move_by($dx:expr, $dy:expr)) => {{
         let args: Vec<Box<dyn std::any::Any>> = vec![Box::new($dx), Box::new($dy)];
-        $runtime.call_method($handle, "Rect", "librect", "move_by", args)
+        $runtime.call_method($handle, "Rect", "libRect", "move_by", args)
     }};
 }

@@ -17,7 +17,7 @@ impl Rect {
         self.runtime.lock().unwrap().call_getter::<f64>(
             self.handle,
             "Rect",
-            "librect",
+            "libRect",
             "get_height"
         )
     }
@@ -26,7 +26,7 @@ impl Rect {
         self.runtime.lock().unwrap().call_getter::<f64>(
             self.handle,
             "Rect",
-            "librect",
+            "libRect",
             "get_width"
         )
     }
@@ -35,7 +35,7 @@ impl Rect {
         self.runtime.lock().unwrap().call_getter::<f64>(
             self.handle,
             "Rect",
-            "librect",
+            "libRect",
             "get_x"
         )
     }
@@ -44,7 +44,7 @@ impl Rect {
         self.runtime.lock().unwrap().call_getter::<f64>(
             self.handle,
             "Rect",
-            "librect",
+            "libRect",
             "get_y"
         )
     }
@@ -54,7 +54,7 @@ impl Rect {
         self.runtime.lock().unwrap().call_method(
             self.handle,
             "Rect",
-            "librect",
+            "libRect",
             "move_by",
             args
         )?;
@@ -66,7 +66,7 @@ impl Rect {
         self.runtime.lock().unwrap().call_method(
             self.handle,
             "Rect",
-            "librect",
+            "libRect",
             "render",
             args
         )?;
@@ -77,7 +77,7 @@ impl Rect {
         self.runtime.lock().unwrap().call_setter(
             self.handle,
             "Rect",
-            "librect",
+            "libRect",
             "set_height",
             value
         )
@@ -87,7 +87,7 @@ impl Rect {
         self.runtime.lock().unwrap().call_setter(
             self.handle,
             "Rect",
-            "librect",
+            "libRect",
             "set_width",
             value
         )
@@ -97,7 +97,7 @@ impl Rect {
         self.runtime.lock().unwrap().call_setter(
             self.handle,
             "Rect",
-            "librect",
+            "libRect",
             "set_x",
             value
         )
@@ -107,7 +107,7 @@ impl Rect {
         self.runtime.lock().unwrap().call_setter(
             self.handle,
             "Rect",
-            "librect",
+            "libRect",
             "set_y",
             value
         )

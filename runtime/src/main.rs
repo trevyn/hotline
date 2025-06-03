@@ -5,6 +5,9 @@ use sdl2::mouse::MouseButton;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use std::any::Any;
 use std::time::Duration;
+use notify::{RecommendedWatcher, RecursiveMode, Watcher, Config};
+use std::sync::mpsc::{channel, TryRecvError};
+use std::path::PathBuf;
 
 fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
@@ -22,50 +25,60 @@ fn main() -> Result<(), String> {
 
     let mut runtime = DirectRuntime::new();
 
-    // Build and load Rect first (dependency of WindowManager)
-    std::process::Command::new("cargo")
-        .args(&["build", "--release", "-p", "rect"])
-        .status()
-        .expect("Failed to build rect");
-
-    #[cfg(target_os = "macos")]
-    let rect_path = "target/release/librect.dylib";
-    #[cfg(target_os = "linux")]
-    let rect_path = "target/release/librect.so";
-    #[cfg(target_os = "windows")]
-    let rect_path = "target/release/rect.dll";
-
-    runtime.hot_reload(rect_path, "Rect").expect("Failed to load rect library");
-
-    // Build and load HighlightLens
-    std::process::Command::new("cargo")
-        .args(&["build", "--release", "-p", "HighlightLens"])
-        .status()
-        .expect("Failed to build HighlightLens");
-
-    #[cfg(target_os = "macos")]
-    let hl_path = "target/release/libHighlightLens.dylib";
-    #[cfg(target_os = "linux")]
-    let hl_path = "target/release/libHighlightLens.so";
-    #[cfg(target_os = "windows")]
-    let hl_path = "target/release/HighlightLens.dll";
-
-    runtime.hot_reload(hl_path, "HighlightLens").expect("Failed to load HighlightLens library");
-
-    // Build and load WindowManager
-    std::process::Command::new("cargo")
-        .args(&["build", "--release", "-p", "WindowManager"])
-        .status()
-        .expect("Failed to build WindowManager");
-
-    #[cfg(target_os = "macos")]
-    let wm_path = "target/release/libWindowManager.dylib";
-    #[cfg(target_os = "linux")]
-    let wm_path = "target/release/libWindowManager.so";
-    #[cfg(target_os = "windows")]
-    let wm_path = "target/release/WindowManager.dll";
-
-    runtime.hot_reload(wm_path, "WindowManager").expect("Failed to load WindowManager library");
+    // Dynamically discover and load libraries from objects directory
+    use std::fs;
+    use std::path::Path;
+    
+    let objects_dir = Path::new("objects");
+    let mut loaded_libs = Vec::new();
+    
+    if let Ok(entries) = fs::read_dir(objects_dir) {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(lib_name) = path.file_name().and_then(|n| n.to_str()) {
+                        // Construct library path based on OS
+                        #[cfg(target_os = "macos")]
+                        let lib_path = format!("target/release/lib{}.dylib", lib_name);
+                        #[cfg(target_os = "linux")]
+                        let lib_path = format!("target/release/lib{}.so", lib_name);
+                        #[cfg(target_os = "windows")]
+                        let lib_path = format!("target/release/{}.dll", lib_name);
+                        
+                        // Load library if it exists
+                        if Path::new(&lib_path).exists() {
+                            if let Err(e) = runtime.hot_reload(&lib_path, lib_name) {
+                                eprintln!("Failed to load {} library: {}", lib_name, e);
+                            } else {
+                                println!("Loaded library: {}", lib_name);
+                                loaded_libs.push((lib_name.to_string(), lib_path));
+                            }
+                        } else {
+                            eprintln!("Library not found at {}, skipping", lib_path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Store lib paths for hot reload
+    let lib_paths = loaded_libs.clone();
+    
+    // Set up file watcher for automatic hot reload
+    let (tx, rx) = channel();
+    let mut watcher = RecommendedWatcher::new(tx, Config::default()).expect("Failed to create file watcher");
+    
+    // Watch lib.rs files in each object directory
+    for (lib_name, _) in &loaded_libs {
+        let lib_rs_path = format!("objects/{}/src/lib.rs", lib_name);
+        if Path::new(&lib_rs_path).exists() {
+            watcher.watch(Path::new(&lib_rs_path), RecursiveMode::NonRecursive)
+                .expect(&format!("Failed to watch {}", lib_rs_path));
+            println!("Watching {} for changes", lib_rs_path);
+        }
+    }
 
     // Create window manager instance
     let window_manager = runtime
@@ -77,6 +90,41 @@ fn main() -> Result<(), String> {
         .create_texture_streaming(PixelFormatEnum::ARGB8888, 800, 600)
         .map_err(|e| e.to_string())?;
     'running: loop {
+        // Check for file system events
+        match rx.try_recv() {
+            Ok(event) => {
+                if let Ok(event) = event {
+                    // Find which library changed
+                    for (lib_name, lib_path) in &lib_paths {
+                        let lib_rs_path = format!("objects/{}/src/lib.rs", lib_name);
+                        let lib_rs_pathbuf = PathBuf::from(&lib_rs_path);
+                        
+                        if event.paths.iter().any(|p| p.ends_with(&lib_rs_pathbuf)) {
+                            println!("Detected change in {}, rebuilding and reloading...", lib_name);
+                            
+                            // Rebuild the specific library
+                            std::process::Command::new("cargo")
+                                .args(&["build", "--release", "-p", lib_name])
+                                .status()
+                                .expect(&format!("Failed to build {}", lib_name));
+                            
+                            // Reload the library
+                            if let Err(e) = runtime.hot_reload(lib_path, lib_name) {
+                                eprintln!("Failed to reload {} lib: {}", lib_name, e);
+                            } else {
+                                println!("Successfully reloaded {}", lib_name);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(TryRecvError::Empty) => {},
+            Err(TryRecvError::Disconnected) => {
+                eprintln!("File watcher disconnected");
+            }
+        }
+        
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
 
@@ -117,31 +165,19 @@ fn main() -> Result<(), String> {
                 }
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {
-                    // First rebuild the libraries
-                    std::process::Command::new("cargo")
-                        .args(&["build", "--release", "-p", "rect"])
-                        .status()
-                        .expect("Failed to build rect");
-
-                    std::process::Command::new("cargo")
-                        .args(&["build", "--release", "-p", "HighlightLens"])
-                        .status()
-                        .expect("Failed to build HighlightLens");
-
-                    std::process::Command::new("cargo")
-                        .args(&["build", "--release", "-p", "WindowManager"])
-                        .status()
-                        .expect("Failed to build WindowManager");
+                    // First rebuild all libraries
+                    for (lib_name, _) in &lib_paths {
+                        std::process::Command::new("cargo")
+                            .args(&["build", "--release", "-p", lib_name])
+                            .status()
+                            .expect(&format!("Failed to build {}", lib_name));
+                    }
 
                     // Reload all libraries
-                    if let Err(e) = runtime.hot_reload(rect_path, "Rect") {
-                        eprintln!("Failed to reload rect lib: {}", e);
-                    }
-                    if let Err(e) = runtime.hot_reload(hl_path, "HighlightLens") {
-                        eprintln!("Failed to reload HighlightLens lib: {}", e);
-                    }
-                    if let Err(e) = runtime.hot_reload(wm_path, "WindowManager") {
-                        eprintln!("Failed to reload WindowManager lib: {}", e);
+                    for (lib_name, lib_path) in &lib_paths {
+                        if let Err(e) = runtime.hot_reload(lib_path, lib_name) {
+                            eprintln!("Failed to reload {} lib: {}", lib_name, e);
+                        }
                     }
                 }
                 _ => {}

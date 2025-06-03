@@ -38,7 +38,7 @@ object!({
                         hotline::RUSTC_COMMIT
                     );
 
-                    let lib_name = format!("lib{}", type_name.to_lowercase());
+                    let lib_name = format!("lib{}", type_name);
                     let obj_any = target_guard.as_any_mut();
 
                     with_library_registry(|registry| {

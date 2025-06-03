@@ -77,7 +77,7 @@ object!({
                             unsafe extern "Rust" fn(&mut dyn std::any::Any, f64, f64) -> bool;
                         registry
                             .with_symbol::<ContainsFn, _, _>(
-                                "librect",
+                                "libRect",
                                 &symbol_name,
                                 |contains_fn| unsafe { (**contains_fn)(rect_any, x, y) },
                             )
@@ -96,7 +96,7 @@ object!({
                                 let symbol_name = format!("Rect__position______obj_mut_dyn_Any____to__tuple_f64_comma_f64__{}", hotline::RUSTC_COMMIT);
 
                                 type PositionFn = unsafe extern "Rust" fn(&mut dyn std::any::Any) -> (f64, f64);
-                                registry.with_symbol::<PositionFn, _, _>("librect", &symbol_name, |pos_fn| {
+                                registry.with_symbol::<PositionFn, _, _>("libRect", &symbol_name, |pos_fn| {
                                     unsafe { (**pos_fn)(rect_any) }
                                 }).ok()
                             }).flatten() {
@@ -162,7 +162,7 @@ object!({
 
                 // Create rect via registry
                 let new_rect = with_library_registry(|registry| {
-                    if let Ok(rect_obj) = registry.call_constructor("librect", "Rect", hotline::RUSTC_COMMIT) {
+                    if let Ok(rect_obj) = registry.call_constructor("libRect", "Rect", hotline::RUSTC_COMMIT) {
                         let rect_handle = Arc::new(Mutex::new(rect_obj));
                         // Initialize the rect with position and size
                         if let Ok(mut rect_guard) = rect_handle.lock() {
@@ -171,7 +171,7 @@ object!({
                             // Initialize rect
                             let init_symbol = format!("Rect__initialize______obj_mut_dyn_Any____x__f64____y__f64____width__f64____height__f64____to__unit__{}", hotline::RUSTC_COMMIT);
                             type InitFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, f64, f64, f64, f64);
-                            let _ = registry.with_symbol::<InitFn, _, _>("librect", &init_symbol, |init_fn| {
+                            let _ = registry.with_symbol::<InitFn, _, _>("libRect", &init_symbol, |init_fn| {
                                 unsafe { (**init_fn)(rect_any, rect_x, rect_y, width, height) };
                             });
                         }
@@ -205,7 +205,7 @@ object!({
                             let pos_symbol = format!("Rect__position______obj_mut_dyn_Any____to__tuple_f64_comma_f64__{}", hotline::RUSTC_COMMIT);
 
                             type PositionFn = unsafe extern "Rust" fn(&mut dyn std::any::Any) -> (f64, f64);
-                            registry.with_symbol::<PositionFn, _, _>("librect", &pos_symbol, |pos_fn| {
+                            registry.with_symbol::<PositionFn, _, _>("libRect", &pos_symbol, |pos_fn| {
                                 unsafe { (**pos_fn)(rect_any) }
                             }).ok()
                         }).flatten() {
@@ -218,7 +218,7 @@ object!({
                                 let move_symbol = format!("Rect__move_by______obj_mut_dyn_Any____dx__f64____dy__f64____to__unit__{}", hotline::RUSTC_COMMIT);
 
                                 type MoveFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, f64, f64);
-                                let _ = registry.with_symbol::<MoveFn, _, _>("librect", &move_symbol, |move_fn| {
+                                let _ = registry.with_symbol::<MoveFn, _, _>("libRect", &move_symbol, |move_fn| {
                                     unsafe { (**move_fn)(rect_any, dx, dy) };
                                 });
                             });
@@ -255,7 +255,7 @@ object!({
                             i64,
                         );
                         let _ = registry.with_symbol::<RenderFn, _, _>(
-                            "librect",
+                            "libRect",
                             &render_symbol,
                             |render_fn| {
                                 unsafe {
