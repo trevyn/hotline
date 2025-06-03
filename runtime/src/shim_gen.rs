@@ -256,7 +256,7 @@ mod tests {
         assert_eq!(parsed.type_name, "Rect");
         assert_eq!(parsed.method_name, "get_x");
         assert_eq!(parsed.params.len(), 1);
-        assert_eq!(parsed.params[0], ("obj_ref_dyn", "Any".to_string()));
+        assert_eq!(parsed.params[0], ("obj_ref_dyn".to_string(), "Any".to_string()));
         assert_eq!(parsed.return_type, "f64");
     }
 
@@ -268,8 +268,8 @@ mod tests {
         assert_eq!(parsed.type_name, "Rect");
         assert_eq!(parsed.method_name, "set_x");
         assert_eq!(parsed.params.len(), 2);
-        assert_eq!(parsed.params[0], ("obj_mut_dyn", "Any".to_string()));
-        assert_eq!(parsed.params[1], ("x", "f64".to_string()));
+        assert_eq!(parsed.params[0], ("obj_mut_dyn".to_string(), "Any".to_string()));
+        assert_eq!(parsed.params[1], ("x".to_string(), "f64".to_string()));
         assert_eq!(parsed.return_type, "unit");
     }
 
@@ -281,9 +281,9 @@ mod tests {
         assert_eq!(parsed.type_name, "Rect");
         assert_eq!(parsed.method_name, "move_by");
         assert_eq!(parsed.params.len(), 3);
-        assert_eq!(parsed.params[0], ("obj_mut_dyn", "Any".to_string()));
-        assert_eq!(parsed.params[1], ("dx", "f64".to_string()));
-        assert_eq!(parsed.params[2], ("dy", "f64".to_string()));
+        assert_eq!(parsed.params[0], ("obj_mut_dyn".to_string(), "Any".to_string()));
+        assert_eq!(parsed.params[1], ("dx".to_string(), "f64".to_string()));
+        assert_eq!(parsed.params[2], ("dy".to_string(), "f64".to_string()));
         assert_eq!(parsed.return_type, "unit");
     }
 }

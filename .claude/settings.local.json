@@ -17,7 +17,8 @@
       "Bash(cargo tree:*)",
       "Bash(touch:*)",
       "Bash(sed:*)",
-      "Bash(cargo fmt:*)"
+      "Bash(cargo fmt:*)",
+      "mcp__ide__getDiagnostics"
     ],
     "deny": [
       "Bash(./target/release/runtime)",
