@@ -74,8 +74,18 @@ pub fn object(input: TokenStream) -> TokenStream {
                     #[unsafe(no_mangle)]
                     #[allow(non_snake_case)]
                     pub extern "Rust" fn #getter_fn_name(obj: &dyn ::std::any::Any) -> #field_type {
-                        let instance = obj.downcast_ref::<#struct_name>()
-                            .expect(concat!("Type mismatch: expected ", stringify!(#struct_name)));
+                        let instance = match obj.downcast_ref::<#struct_name>() {
+                            Some(inst) => inst,
+                            None => {
+                                let type_name: &'static str = ::std::any::type_name_of_val(obj);
+                                panic!(
+                                    "Type mismatch in getter {}: expected {}, but got {}",
+                                    stringify!(#field_name),
+                                    stringify!(#struct_name),
+                                    type_name
+                                )
+                            }
+                        };
                         instance.#field_name.clone()
                     }
                 });
@@ -94,8 +104,18 @@ pub fn object(input: TokenStream) -> TokenStream {
                     #[unsafe(no_mangle)]
                     #[allow(non_snake_case)]
                     pub extern "Rust" fn #setter_fn_name(obj: &mut dyn ::std::any::Any, value: #field_type) {
-                        let instance = obj.downcast_mut::<#struct_name>()
-                            .expect(concat!("Type mismatch: expected ", stringify!(#struct_name)));
+                        let instance = match obj.downcast_mut::<#struct_name>() {
+                            Some(inst) => inst,
+                            None => {
+                                let type_name: &'static str = ::std::any::type_name_of_val(&*obj);
+                                panic!(
+                                    "Type mismatch in setter {}: expected {}, but got {}",
+                                    stringify!(#field_name),
+                                    stringify!(#struct_name),
+                                    type_name
+                                )
+                            }
+                        };
                         instance.#field_name = value;
                     }
                 });
@@ -181,8 +201,18 @@ pub fn object(input: TokenStream) -> TokenStream {
                     obj: &mut dyn ::std::any::Any
                     #(, #arg_names: #arg_types)*
                 ) #method_output {
-                    let instance = obj.downcast_mut::<#struct_name>()
-                        .expect(concat!("Type mismatch: expected ", stringify!(#struct_name)));
+                    let instance = match obj.downcast_mut::<#struct_name>() {
+                        Some(inst) => inst,
+                        None => {
+                            let type_name: &'static str = ::std::any::type_name_of_val(&*obj);
+                            panic!(
+                                "Type mismatch in method {}: expected {}, but got {}",
+                                stringify!(#method_name),
+                                stringify!(#struct_name),
+                                type_name
+                            )
+                        }
+                    };
                     instance.#method_name(#(#arg_names),*)
                 }
             };
@@ -220,9 +250,17 @@ pub fn object(input: TokenStream) -> TokenStream {
             #[allow(non_snake_case)]
             pub extern "Rust" fn #type_name_fn_name(obj: &dyn ::std::any::Any) -> &'static str {
                 // Verify it's the right type
-                obj.downcast_ref::<#struct_name>()
-                    .expect(concat!("Type mismatch: expected ", stringify!(#struct_name)));
-                stringify!(#struct_name)
+                match obj.downcast_ref::<#struct_name>() {
+                    Some(_) => stringify!(#struct_name),
+                    None => {
+                        let type_name: &'static str = ::std::any::type_name_of_val(obj);
+                        panic!(
+                            "Type mismatch in type_name getter: expected {}, but got {}",
+                            stringify!(#struct_name),
+                            type_name
+                        )
+                    }
+                }
             }
         }
     };

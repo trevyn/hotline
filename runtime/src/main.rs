@@ -68,7 +68,7 @@ fn main() -> Result<(), String> {
     
     // Set up file watcher for automatic hot reload
     let (tx, rx) = channel();
-    let mut watcher = RecommendedWatcher::new(tx, Config::default()).expect("Failed to create file watcher");
+    let mut watcher = RecommendedWatcher::new(tx, Config::default().with_poll_interval(Duration::from_millis(20))).expect("Failed to create file watcher");
     
     // Watch lib.rs files in each object directory
     for (lib_name, _) in &loaded_libs {
