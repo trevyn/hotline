@@ -11,7 +11,7 @@ use syn::{
 
 struct ObjectInput {
     struct_item: ItemStruct,
-    impl_item: ItemImpl,
+    impl_blocks: Vec<ItemImpl>,
 }
 
 impl Parse for ObjectInput {
@@ -21,14 +21,22 @@ impl Parse for ObjectInput {
 
         let struct_item: ItemStruct =
             content.parse().map_err(|e| syn::Error::new(e.span(), "Expected a struct definition"))?;
-        let impl_item: ItemImpl =
-            content.parse().map_err(|e| syn::Error::new(e.span(), "Expected an impl block after the struct"))?;
+        
+        // Parse all remaining impl blocks
+        let mut impl_blocks = Vec::new();
+        while !content.is_empty() {
+            impl_blocks.push(content.parse::<ItemImpl>()?);
+        }
 
-        Ok(ObjectInput { struct_item, impl_item })
+        if impl_blocks.is_empty() {
+            return Err(syn::Error::new(content.span(), "Expected at least one impl block after the struct"));
+        }
+
+        Ok(ObjectInput { struct_item, impl_blocks })
     }
 }
 
-fn find_referenced_object_types(struct_item: &ItemStruct, impl_item: &ItemImpl) -> std::collections::HashSet<String> {
+fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImpl]) -> std::collections::HashSet<String> {
     use std::collections::HashSet;
     use syn::visit::{self, Visit};
 
@@ -74,8 +82,10 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_item: &ItemImpl) 
     // Visit struct fields
     visitor.visit_item_struct(struct_item);
 
-    // Visit impl methods
-    visitor.visit_item_impl(impl_item);
+    // Visit all impl blocks
+    for impl_block in impl_blocks {
+        visitor.visit_item_impl(impl_block);
+    }
 
     visitor.types
 }
@@ -198,8 +208,19 @@ fn extract_object_methods_for_wrapper(
             if is_object_macro {
                 if let Ok(obj_input) = syn::parse2::<ObjectInput>(item_macro.mac.tokens.clone()) {
                     let mut methods = Vec::new();
-
-                    for impl_item in &obj_input.impl_item.items {
+                    
+                    // Find the main impl block
+                    let main_impl = obj_input.impl_blocks.iter().find(|impl_block| {
+                        impl_block.trait_.is_none() && 
+                        if let Type::Path(type_path) = &*impl_block.self_ty {
+                            type_path.path.get_ident().map(|i| i.to_string()) == Some(type_name.to_string())
+                        } else {
+                            false
+                        }
+                    });
+                    
+                    if let Some(main_impl) = main_impl {
+                        for impl_item in &main_impl.items {
                         if let ImplItem::Fn(method) = impl_item {
                             if matches!(method.vis, syn::Visibility::Public(_)) {
                                 let method_name = method.sig.ident.to_string();
@@ -241,6 +262,7 @@ fn extract_object_methods_for_wrapper(
                                 methods.push((method_name, param_names, param_types, return_type, receiver_type));
                             }
                         }
+                    }
                     }
 
                     return Some(methods);
@@ -427,7 +449,7 @@ fn generate_methods_for_type(
 #[proc_macro]
 #[proc_macro_error]
 pub fn object(input: TokenStream) -> TokenStream {
-    let ObjectInput { struct_item, impl_item } = syn::parse_macro_input!(input as ObjectInput);
+    let ObjectInput { struct_item, impl_blocks } = syn::parse_macro_input!(input as ObjectInput);
 
     let struct_name = &struct_item.ident;
     let struct_attrs = &struct_item.attrs;
@@ -435,6 +457,29 @@ pub fn object(input: TokenStream) -> TokenStream {
 
     // Get rustc commit hash at macro expansion time
     let rustc_commit = get_rustc_commit_hash();
+    
+    // Find the main impl block (impl StructName) and other impl blocks
+    let mut main_impl_block = None;
+    let mut other_impl_blocks = Vec::new();
+    
+    for impl_block in &impl_blocks {
+        // Check if this is impl StructName (not impl Trait for StructName)
+        if impl_block.trait_.is_none() {
+            if let Type::Path(type_path) = &*impl_block.self_ty {
+                if type_path.path.is_ident(struct_name) {
+                    main_impl_block = Some(impl_block);
+                } else {
+                    other_impl_blocks.push(impl_block);
+                }
+            } else {
+                other_impl_blocks.push(impl_block);
+            }
+        } else {
+            other_impl_blocks.push(impl_block);
+        }
+    }
+    
+    let main_impl = main_impl_block.expect("Expected at least one impl block for the struct itself");
 
     // Generate field accessors
     let mut field_accessors = Vec::new();
@@ -516,10 +561,20 @@ pub fn object(input: TokenStream) -> TokenStream {
         }
     }
 
-    // Generate constructor if Default is derived
-    let has_default = struct_attrs
+    // Generate constructor if Default is derived or implemented
+    let has_derive_default = struct_attrs
         .iter()
         .any(|attr| attr.path().is_ident("derive") && attr.to_token_stream().to_string().contains("Default"));
+    
+    let has_impl_default = other_impl_blocks.iter().any(|impl_block| {
+        if let Some((_, trait_path, _)) = &impl_block.trait_ {
+            trait_path.segments.last().map(|seg| seg.ident == "Default").unwrap_or(false)
+        } else {
+            false
+        }
+    });
+    
+    let has_default = has_derive_default || has_impl_default;
 
     let constructor = if has_default {
         let ctor_fn_name =
@@ -538,7 +593,7 @@ pub fn object(input: TokenStream) -> TokenStream {
     // Generate method wrappers
     let mut method_wrappers = Vec::new();
 
-    for item in &impl_item.items {
+    for item in &main_impl.items {
         if let ImplItem::Fn(method) = item {
             // Only generate extern functions for pub methods
             let is_public = matches!(method.vis, syn::Visibility::Public(_));
@@ -701,7 +756,9 @@ pub fn object(input: TokenStream) -> TokenStream {
     let output = quote! {
         #struct_item
 
-        #impl_item
+        #main_impl
+        
+        #(#other_impl_blocks)*
 
         #trait_impl
 
@@ -717,7 +774,7 @@ pub fn object(input: TokenStream) -> TokenStream {
     };
 
     // Find all object types referenced in the code
-    let referenced_types = find_referenced_object_types(&struct_item, &impl_item);
+    let referenced_types = find_referenced_object_types(&struct_item, &impl_blocks);
 
     // Generate typed wrappers for referenced objects
     let typed_wrappers = generate_typed_wrappers(&referenced_types, &rustc_commit);

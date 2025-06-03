@@ -1,20 +1,27 @@
 hotline::object!({
-    #[derive(Default, Clone)]
+    #[derive(Clone)]
     pub struct HighlightLens {
         target: Option<Rect>,
         highlight_color: (u8, u8, u8, u8), // BGRA
     }
 
+    impl Default for HighlightLens {
+        fn default() -> Self {
+            Self {
+                target: None,
+                highlight_color: (0, 255, 0, 255), // Green by default
+            }
+        }
+    }
+
     impl HighlightLens {
         pub fn with_target(mut self, target: ::hotline::ObjectHandle) -> Self {
             self.target = Some(Rect::from_handle(target));
-            self.highlight_color = (0, 255, 0, 255); // Green by default
             self
         }
         
         pub fn set_target(&mut self, target: ::hotline::ObjectHandle) {
             self.target = Some(Rect::from_handle(target));
-            self.highlight_color = (0, 255, 0, 255); // Green by default
         }
 
         pub fn set_highlight_color(&mut self, b: u8, g: u8, r: u8, a: u8) {
