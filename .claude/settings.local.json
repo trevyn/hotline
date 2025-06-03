@@ -16,7 +16,8 @@
       "Bash(cargo check:*)",
       "Bash(cargo tree:*)",
       "Bash(touch:*)",
-      "Bash(sed:*)"
+      "Bash(sed:*)",
+      "Bash(cargo fmt:*)"
     ],
     "deny": [
       "Bash(./target/release/runtime)",

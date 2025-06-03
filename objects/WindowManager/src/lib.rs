@@ -94,7 +94,7 @@ object!({
                             let rect_any = rect_guard.as_any_mut();
                             if let Some((rx, ry)) = with_library_registry(|registry| {
                                 let symbol_name = format!("Rect__position______obj_mut_dyn_Any____to__tuple_f64_comma_f64__{}", hotline::RUSTC_COMMIT);
-                                
+
                                 type PositionFn = unsafe extern "Rust" fn(&mut dyn std::any::Any) -> (f64, f64);
                                 registry.with_symbol::<PositionFn, _, _>("librect", &symbol_name, |pos_fn| {
                                     unsafe { (**pos_fn)(rect_any) }
@@ -125,18 +125,18 @@ object!({
                 if let Some(highlight_lens) = with_library_registry(|registry| {
                     if let Ok(hl_obj) = registry.call_constructor("libHighlightLens", "HighlightLens", hotline::RUSTC_COMMIT) {
                         let hl_handle = Arc::new(Mutex::new(hl_obj));
-                        
+
                         // Set the target to the selected rect
                         if let Ok(mut hl_guard) = hl_handle.lock() {
                             let hl_any = hl_guard.as_any_mut();
                             let set_target_symbol = format!("HighlightLens__set_target______obj_mut_dyn_Any____target__ObjectHandle____to__unit__{}", hotline::RUSTC_COMMIT);
-                            
+
                             type SetTargetFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, ObjectHandle);
                             let _ = registry.with_symbol::<SetTargetFn, _, _>("libHighlightLens", &set_target_symbol, |set_fn| {
                                 unsafe { (**set_fn)(hl_any, rect_handle.clone()) };
                             });
                         }
-                        
+
                         Some(hl_handle)
                     } else {
                         None
@@ -167,7 +167,7 @@ object!({
                         // Initialize the rect with position and size
                         if let Ok(mut rect_guard) = rect_handle.lock() {
                             let rect_any = rect_guard.as_any_mut();
-                            
+
                             // Initialize rect
                             let init_symbol = format!("Rect__initialize______obj_mut_dyn_Any____x__f64____y__f64____width__f64____height__f64____to__unit__{}", hotline::RUSTC_COMMIT);
                             type InitFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, f64, f64, f64, f64);
@@ -203,7 +203,7 @@ object!({
                         // Get current position
                         if let Some((current_x, current_y)) = with_library_registry(|registry| {
                             let pos_symbol = format!("Rect__position______obj_mut_dyn_Any____to__tuple_f64_comma_f64__{}", hotline::RUSTC_COMMIT);
-                            
+
                             type PositionFn = unsafe extern "Rust" fn(&mut dyn std::any::Any) -> (f64, f64);
                             registry.with_symbol::<PositionFn, _, _>("librect", &pos_symbol, |pos_fn| {
                                 unsafe { (**pos_fn)(rect_any) }
@@ -212,11 +212,11 @@ object!({
                             // Calculate delta movement
                             let dx = new_x - current_x;
                             let dy = new_y - current_y;
-                            
+
                             // Move the rect
                             with_library_registry(|registry| {
                                 let move_symbol = format!("Rect__move_by______obj_mut_dyn_Any____dx__f64____dy__f64____to__unit__{}", hotline::RUSTC_COMMIT);
-                                
+
                                 type MoveFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, f64, f64);
                                 let _ = registry.with_symbol::<MoveFn, _, _>("librect", &move_symbol, |move_fn| {
                                     unsafe { (**move_fn)(rect_any, dx, dy) };

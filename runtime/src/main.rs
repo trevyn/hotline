@@ -153,7 +153,7 @@ fn main() -> Result<(), String> {
             // Clear buffer with a dark gray color
             for pixel in buffer.chunks_exact_mut(4) {
                 pixel[0] = 30;  // B
-                pixel[1] = 30;  // G  
+                pixel[1] = 30;  // G
                 pixel[2] = 30;  // R
                 pixel[3] = 255; // A
             }
@@ -162,7 +162,7 @@ fn main() -> Result<(), String> {
             if let Ok(mut wm_guard) = window_manager.lock() {
                 let wm_obj = &mut **wm_guard;
                 let render_symbol = format!("WindowManager__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}", runtime::RUSTC_COMMIT);
-                
+
                 // Generic dynamic call
                 type RenderFn = extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64);
                 match runtime.library_registry().with_symbol::<RenderFn, _, _>("libWindowManager", &render_symbol, |render_fn| {
@@ -175,7 +175,7 @@ fn main() -> Result<(), String> {
                     }
                 }
             }
-            
+
         })?;
 
         // Copy texture to canvas
