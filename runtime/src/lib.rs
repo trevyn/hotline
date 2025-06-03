@@ -258,15 +258,6 @@ impl DirectRuntime {
                 }
                 "render" if args.len() == 4 => {
                     // Special handling for render which takes a buffer slice
-                    let symbol_name = format!("WindowManager__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8_____buffer_width__i64_____buffer_height__i64_____pitch__i64____to__unit__{}", RUSTC_COMMIT);
-                    type RenderFn = unsafe extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64);
-                    
-                    // Extract arguments without boxing the slice
-                    // args[0] is the buffer slice which we can't box
-                    let _buffer_width = args[1].downcast_ref::<i64>().copied().ok_or("arg 1 not i64")?;
-                    let _buffer_height = args[2].downcast_ref::<i64>().copied().ok_or("arg 2 not i64")?;
-                    let _pitch = args[3].downcast_ref::<i64>().copied().ok_or("arg 3 not i64")?;
-                    
                     // This is a hack - we'll need to pass the buffer differently
                     return Err("render method needs special handling".into());
                 }

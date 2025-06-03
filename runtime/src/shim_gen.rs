@@ -124,7 +124,6 @@ fn generate_shim(type_name: &str, methods: Vec<MethodSignature>) -> String {
         // Determine if it's a getter, setter, or regular method
         if method.method_name.starts_with("get_") && method.params.len() == 1 {
             // Getter
-            let field_name = &method.method_name[4..];
             let return_type = convert_type(&method.return_type);
 
             code.push_str(&format!(
@@ -143,7 +142,6 @@ fn generate_shim(type_name: &str, methods: Vec<MethodSignature>) -> String {
             code.push_str("    }\n\n");
         } else if method.method_name.starts_with("set_") && method.params.len() == 2 {
             // Setter
-            let field_name = &method.method_name[4..];
             let value_type = convert_type(&method.params[1].1);
 
             code.push_str(&format!(
@@ -164,7 +162,7 @@ fn generate_shim(type_name: &str, methods: Vec<MethodSignature>) -> String {
             let mut arg_list = Vec::new();
 
             // Skip the first param (obj)
-            for (i, (param_name, param_type)) in method.params.iter().skip(1).enumerate() {
+            for (param_name, param_type) in method.params.iter().skip(1) {
                 let rust_type = convert_type(param_type);
                 param_list.push(format!("{}: {}", param_name, rust_type));
                 arg_list.push(format!("Box::new({})", param_name));

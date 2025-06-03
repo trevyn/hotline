@@ -1,5 +1,4 @@
 use runtime::{DirectRuntime};
-use hotline::HotlineObject;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting test...");

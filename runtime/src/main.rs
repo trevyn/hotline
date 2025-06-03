@@ -1,5 +1,4 @@
 use runtime::{DirectRuntime, direct_call};
-use hotline::ObjectHandle;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -153,7 +152,7 @@ fn main() -> Result<(), String> {
                 type RenderFn = extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64);
                 match runtime.library_registry().with_symbol::<RenderFn, _, _>("libWindowManager", &render_symbol, |render_fn| {
                     let any_obj = wm_obj.as_any_mut();
-                    unsafe { (**render_fn)(any_obj, buffer, 800, 600, pitch as i64) };
+                    (**render_fn)(any_obj, buffer, 800, 600, pitch as i64);
                 }) {
                     Ok(_) => {},
                     Err(e) => {
