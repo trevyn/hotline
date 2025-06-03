@@ -175,10 +175,17 @@ fn generate_typed_wrappers(types: &std::collections::HashSet<String>, rustc_comm
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum ReceiverType {
+    Value,      // self
+    Ref,        // &self
+    RefMut,     // &mut self
+}
+
 fn extract_object_methods_for_wrapper(
     file: &syn::File,
-    _type_name: &str,
-) -> Option<Vec<(String, Vec<String>, Vec<Type>, Type)>> {
+    type_name: &str,
+) -> Option<Vec<(String, Vec<String>, Vec<Type>, Type, ReceiverType)>> {
     use syn::{FnArg, ImplItem, Item, Pat, ReturnType};
 
     for item in &file.items {
@@ -197,6 +204,20 @@ fn extract_object_methods_for_wrapper(
                             if matches!(method.vis, syn::Visibility::Public(_)) {
                                 let method_name = method.sig.ident.to_string();
 
+                                // Determine receiver type
+                                let receiver_type = if let Some(FnArg::Receiver(receiver)) = method.sig.inputs.first() {
+                                    if receiver.reference.is_none() {
+                                        ReceiverType::Value
+                                    } else if receiver.mutability.is_some() {
+                                        ReceiverType::RefMut
+                                    } else {
+                                        ReceiverType::Ref
+                                    }
+                                } else {
+                                    // No self receiver, skip this method
+                                    continue;
+                                };
+
                                 let mut param_names = Vec::new();
                                 let mut param_types = Vec::new();
 
@@ -211,10 +232,13 @@ fn extract_object_methods_for_wrapper(
 
                                 let return_type = match &method.sig.output {
                                     ReturnType::Default => syn::parse_quote! { () },
-                                    ReturnType::Type(_, ty) => (**ty).clone(),
+                                    ReturnType::Type(_, ty) => {
+                                        // Replace Self with the actual type name
+                                        resolve_self_type((**ty).clone(), type_name)
+                                    },
                                 };
 
-                                methods.push((method_name, param_names, param_types, return_type));
+                                methods.push((method_name, param_names, param_types, return_type, receiver_type));
                             }
                         }
                     }
@@ -229,13 +253,13 @@ fn extract_object_methods_for_wrapper(
 
 fn generate_methods_for_type(
     type_name: &str,
-    methods: &[(String, Vec<String>, Vec<Type>, Type)],
+    methods: &[(String, Vec<String>, Vec<Type>, Type, ReceiverType)],
     rustc_commit: &str,
 ) -> proc_macro2::TokenStream {
     let type_ident = quote::format_ident!("{}", type_name);
     let mut impl_methods = Vec::new();
 
-    for (method_name, param_names, param_types, return_type) in methods {
+    for (method_name, param_names, param_types, return_type, receiver_type) in methods {
         let method_ident = quote::format_ident!("{}", method_name);
         let param_idents: Vec<proc_macro2::TokenStream> = param_names
             .iter()
@@ -266,34 +290,127 @@ fn generate_methods_for_type(
 
         let return_part = type_to_string(return_type);
 
-        let method_impl = quote! {
-            pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
-                crate::with_library_registry(|registry| {
-                    if let Ok(mut guard) = self.0.lock() {
-                        let type_name = guard.type_name();
+        // Check if return type is Self (now resolved to the actual type name)
+        let returns_self = if let Type::Path(type_path) = return_type {
+            type_path.path.is_ident(type_name)
+        } else {
+            false
+        };
 
-                        let symbol_name = format!(
-                            "{}__{}______obj_mut_dyn_Any{}____to__{}__{}",
-                            type_name,
-                            stringify!(#method_ident),
-                            #params_part,
-                            #return_part,
-                            #rustc_commit
-                        );
-                        let lib_name = format!("lib{}", type_name);
-
-                        let obj_any = guard.as_any_mut();
-
-                        type FnType = #fn_type;
-                        registry.with_symbol::<FnType, _, _>(
-                            &lib_name,
-                            &symbol_name,
-                            |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
-                        ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e))
-                    } else {
-                        panic!("Failed to lock object for method {}", stringify!(#method_ident))
+        // For builder pattern methods (self by value, returns Self)
+        if *receiver_type == ReceiverType::Value && returns_self {
+            // Generate builder pattern method
+            // Try to find if there's a corresponding setter method (with_ -> set_)
+            let setter_method_name = if method_name.starts_with("with_") {
+                format!("set_{}", &method_name[5..])
+            } else {
+                // For other builder methods, we can't easily determine the setter
+                String::new()
+            };
+            
+            // Check if a setter exists by looking for it in the methods list
+            let has_setter = !setter_method_name.is_empty() && methods.iter().any(|(name, _, _, _, recv)| {
+                name == &setter_method_name && *recv == ReceiverType::RefMut
+            });
+            
+            let method_impl = if has_setter {
+                let setter_ident = quote::format_ident!("{}", setter_method_name);
+                quote! {
+                    pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
+                        // Call the setter method on self
+                        self.#setter_ident(#(#param_idents),*);
+                        self
                     }
-                }).unwrap_or_else(|| panic!("No library registry available for method {}", stringify!(#method_ident)))
+                }
+            } else {
+                // Fallback: just return self without modification
+                // This is for builder methods that don't have a corresponding setter
+                quote! {
+                    pub fn #method_ident(self #(, #param_idents: #param_types)*) -> Self {
+                        // Builder method without corresponding setter - returning self unchanged
+                        // The actual object implementation handles the state change internally
+                        self
+                    }
+                }
+            };
+            
+            impl_methods.push(method_impl);
+            continue;
+        }
+
+        // For regular methods, ensure we're not trying to handle self by value
+        if *receiver_type == ReceiverType::Value {
+            // Skip methods that take self by value but don't return Self
+            // These can't be wrapped via FFI
+            continue;
+        }
+
+        let method_impl = if returns_self {
+            // For methods that return Self, return the wrapper type
+            quote! {
+                pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> Self {
+                    crate::with_library_registry(|registry| {
+                        if let Ok(mut guard) = self.0.lock() {
+                            let type_name = guard.type_name();
+
+                            let symbol_name = format!(
+                                "{}__{}______obj_mut_dyn_Any{}____to__{}__{}",
+                                type_name,
+                                stringify!(#method_ident),
+                                #params_part,
+                                #return_part,
+                                #rustc_commit
+                            );
+                            let lib_name = format!("lib{}", type_name);
+
+                            let obj_any = guard.as_any_mut();
+
+                            type FnType = #fn_type;
+                            let result = registry.with_symbol::<FnType, _, _>(
+                                &lib_name,
+                                &symbol_name,
+                                |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
+                            ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e));
+                            
+                            // Wrap the returned object in a new handle
+                            drop(guard);
+                            Self::from_handle(self.0.clone())
+                        } else {
+                            panic!("Failed to lock object for method {}", stringify!(#method_ident))
+                        }
+                    }).unwrap_or_else(|| panic!("No library registry available for method {}", stringify!(#method_ident)))
+                }
+            }
+        } else {
+            quote! {
+                pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
+                    crate::with_library_registry(|registry| {
+                        if let Ok(mut guard) = self.0.lock() {
+                            let type_name = guard.type_name();
+
+                            let symbol_name = format!(
+                                "{}__{}______obj_mut_dyn_Any{}____to__{}__{}",
+                                type_name,
+                                stringify!(#method_ident),
+                                #params_part,
+                                #return_part,
+                                #rustc_commit
+                            );
+                            let lib_name = format!("lib{}", type_name);
+
+                            let obj_any = guard.as_any_mut();
+
+                            type FnType = #fn_type;
+                            registry.with_symbol::<FnType, _, _>(
+                                &lib_name,
+                                &symbol_name,
+                                |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
+                            ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e))
+                        } else {
+                            panic!("Failed to lock object for method {}", stringify!(#method_ident))
+                        }
+                    }).unwrap_or_else(|| panic!("No library registry available for method {}", stringify!(#method_ident)))
+                }
             }
         };
 
@@ -438,6 +555,18 @@ pub fn object(input: TokenStream) -> TokenStream {
             let mut symbol_parts =
                 vec![struct_name.to_string(), method_name.to_string(), "____obj_mut_dyn_Any".to_string()];
 
+            // Check receiver type to decide if we should generate FFI wrapper
+            if let Some(FnArg::Receiver(receiver)) = method.sig.inputs.first() {
+                if receiver.reference.is_none() {
+                    // Method takes self by value - skip FFI wrapper generation
+                    continue;
+                }
+                // &self or &mut self - we can generate FFI wrapper
+            } else {
+                // No self receiver, skip
+                continue;
+            }
+
             // Process arguments (skip self)
             for arg in method.sig.inputs.iter().skip(1) {
                 if let FnArg::Typed(typed) = arg {
@@ -456,12 +585,25 @@ pub fn object(input: TokenStream) -> TokenStream {
             // Add return type
             let return_type_str = match method_output {
                 ReturnType::Default => "unit".to_string(),
-                ReturnType::Type(_, ty) => type_to_string(ty),
+                ReturnType::Type(_, ty) => {
+                    // Resolve Self before converting to string
+                    let resolved_ty = resolve_self_type((**ty).clone(), &struct_name.to_string());
+                    type_to_string(&resolved_ty)
+                },
             };
             symbol_parts.push(format!("__to__{}", return_type_str));
             symbol_parts.push(rustc_commit.clone());
 
             let wrapper_fn_name = quote::format_ident!("{}", symbol_parts.join("__"));
+
+            // Resolve return type for the wrapper function
+            let wrapper_return_type = match method_output {
+                ReturnType::Default => quote! {},
+                ReturnType::Type(arrow, ty) => {
+                    let resolved_ty = resolve_self_type((**ty).clone(), &struct_name.to_string());
+                    quote! { #arrow #resolved_ty }
+                }
+            };
 
             let wrapper = quote! {
                 #[unsafe(no_mangle)]
@@ -469,7 +611,7 @@ pub fn object(input: TokenStream) -> TokenStream {
                 pub extern "Rust" fn #wrapper_fn_name(
                     obj: &mut dyn ::std::any::Any
                     #(, #arg_names: #arg_types)*
-                ) #method_output {
+                ) #wrapper_return_type {
                     let instance = match obj.downcast_mut::<#struct_name>() {
                         Some(inst) => inst,
                         None => {
@@ -683,6 +825,31 @@ fn get_rustc_commit_hash() -> String {
         .and_then(|line| line.strip_prefix("commit-hash: "))
         .map(|hash| hash[..9].to_string())
         .expect("Failed to find rustc commit hash")
+}
+
+fn resolve_self_type(ty: Type, type_name: &str) -> Type {
+    use syn::visit_mut::{self, VisitMut};
+    
+    struct SelfResolver<'a> {
+        type_name: &'a str,
+    }
+    
+    impl<'a> VisitMut for SelfResolver<'a> {
+        fn visit_type_mut(&mut self, ty: &mut Type) {
+            if let Type::Path(type_path) = ty {
+                if type_path.path.is_ident("Self") {
+                    // Replace Self with the actual type name
+                    *ty = syn::parse_str(self.type_name).expect("Failed to parse type name");
+                    return;
+                }
+            }
+            visit_mut::visit_type_mut(self, ty);
+        }
+    }
+    
+    let mut ty = ty;
+    SelfResolver { type_name }.visit_type_mut(&mut ty);
+    ty
 }
 
 fn find_object_lib_file(type_name: &str) -> std::path::PathBuf {
