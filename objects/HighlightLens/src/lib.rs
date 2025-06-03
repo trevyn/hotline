@@ -1,22 +1,15 @@
-use hotline::{object, ObjectHandle, ObjectRef};
-
-// Include the Rect proxy
-#[path = "../../Rect/src/proxy.rs"]
-mod rect_proxy;
-use rect_proxy::{Rect, RectProxy};
+use hotline::{object, ObjectHandle};
 
 object!({
     #[derive(Default)]
     pub struct HighlightLens {
-        target: Option<ObjectRef<Rect>>,
+        target: Option<ObjectHandle>,
         highlight_color: (u8, u8, u8, u8), // BGRA
     }
 
     impl HighlightLens {
         pub fn set_target(&mut self, target: ObjectHandle) {
-            // TODO: This should ideally take ObjectRef<Rect> directly,
-            // but for now we wrap the handle
-            self.target = Some(ObjectRef::new(target));
+            self.target = Some(target);
             self.highlight_color = (0, 255, 0, 255); // Green by default
         }
 
@@ -31,10 +24,33 @@ object!({
             buffer_height: i64,
             pitch: i64,
         ) {
-            if let Some(ref mut target) = self.target {
+            if let Some(ref target) = self.target {
                 // Only draw highlight border (rect is already rendered by WindowManager)
-                // Get bounds using the proxy trait
-                let (x, y, width, height) = target.bounds();
+                // Dynamically call bounds method on any object that has it
+                let (x, y, width, height) = crate::with_library_registry(|registry| {
+                    if let Ok(mut guard) = target.lock() {
+                        // Get type name first, before mutable borrow
+                        let type_name = guard.type_name();
+                        
+                        // Construct symbol name dynamically based on the object's actual type
+                        let symbol_name = format!(
+                            "{type_name}__bounds______obj_mut_dyn_Any____to__tuple_f64_comma_f64_comma_f64_comma_f64__5d707b07e"
+                        );
+                        let lib_name = format!("lib{type_name}");
+                        
+                        // Now get mutable reference
+                        let obj_any = guard.as_any_mut();
+                        
+                        type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any) -> (f64, f64, f64, f64);
+                        registry.with_symbol::<FnType, _, _>(
+                            &lib_name,
+                            &symbol_name,
+                            |fn_ptr| unsafe { (**fn_ptr)(obj_any) }
+                        ).unwrap_or_else(|e| panic!("Target object {} doesn't have bounds method: {}", type_name, e))
+                    } else {
+                        panic!("Failed to lock target object")
+                    }
+                }).unwrap_or_else(|| panic!("No library registry available"));
 
                 let x_start = (x as i32).max(0) as u32;
                 let y_start = (y as i32).max(0) as u32;
