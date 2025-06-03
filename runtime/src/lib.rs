@@ -6,9 +6,6 @@ pub const RUSTC_COMMIT: &str = env!("RUSTC_COMMIT_HASH");
 
 pub mod shim_gen;
 
-// Include the generated signatures
-include!(concat!(env!("OUT_DIR"), "/signatures.rs"));
-
 pub struct DirectRuntime {
     library_registry: LibraryRegistry,
 }

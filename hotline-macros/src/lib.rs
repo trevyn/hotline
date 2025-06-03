@@ -206,10 +206,8 @@ pub fn object(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    // Generate method wrappers and collect signatures
+    // Generate method wrappers
     let mut method_wrappers = Vec::new();
-    let mut method_signatures = Vec::new();
-    let mut proxy_methods = Vec::new();
 
     for item in &impl_item.items {
         if let ImplItem::Fn(method) = item {
@@ -280,38 +278,9 @@ pub fn object(input: TokenStream) -> TokenStream {
             };
 
             method_wrappers.push(wrapper);
-
-            // Collect signature for this method
-            let param_types: Vec<String> = arg_types.iter().map(|ty| type_to_string(ty)).collect();
-            let return_type = match method_output {
-                ReturnType::Default => "()".to_string(),
-                ReturnType::Type(_, ty) => ty.to_token_stream().to_string().replace(" ", ""),
-            };
-
-            method_signatures.push(format!(
-                "{}:{}:{}",
-                method_name,
-                param_types.join(","),
-                return_type
-            ));
-            
-            // Store proxy method info
-            proxy_methods.push((
-                method_name.clone(),
-                wrapper_fn_name.to_string(),
-                arg_names.clone(),
-                arg_types.clone(),
-                method_output.clone(),
-                method.sig.inputs.clone(),
-            ));
         }
     }
 
-    // Write signatures to file
-    write_signatures(&struct_name.to_string(), &method_signatures);
-    
-    // Write proxy module
-    write_proxy_module(&struct_name.to_string(), &proxy_methods, &rustc_commit);
 
     // Generate a type name getter
     let type_name_fn = {
@@ -492,183 +461,6 @@ fn type_to_string(ty: &Type) -> String {
     }
 }
 
-fn write_signatures(struct_name: &str, signatures: &[String]) {
-    // Get the workspace root by looking for Cargo.toml
-    let mut current_dir = std::env::current_dir().unwrap();
-    loop {
-        if current_dir.join("Cargo.toml").exists() && current_dir.join("signatures").exists() {
-            break;
-        }
-        if !current_dir.pop() {
-            // Fallback: try to create signatures next to target dir
-            current_dir = std::env::current_dir().unwrap();
-            if let Ok(out_dir) = std::env::var("OUT_DIR") {
-                let out_path = Path::new(&out_dir);
-                if let Some(target_dir) = out_path.ancestors().find(|p| p.ends_with("target")) {
-                    if let Some(workspace) = target_dir.parent() {
-                        current_dir = workspace.to_path_buf();
-                    }
-                }
-            }
-            break;
-        }
-    }
-
-    let signatures_dir = current_dir.join("signatures");
-    fs::create_dir_all(&signatures_dir).ok();
-
-    let sig_file = signatures_dir.join(format!("{}.sig", struct_name));
-    let content = signatures.join("\n");
-    fs::write(&sig_file, content).ok();
-}
-
-fn write_proxy_module(struct_name: &str, proxy_methods: &[(syn::Ident, String, Vec<&syn::Ident>, Vec<&Type>, ReturnType, syn::punctuated::Punctuated<FnArg, syn::Token![,]>)], _rustc_commit: &str) {
-    use std::fmt::Write;
-    
-    let mut proxy_content = String::new();
-    
-    // Header
-    writeln!(proxy_content, "// Auto-generated proxy module for {}", struct_name).ok();
-    writeln!(proxy_content, "// Include this module in objects that need to call {} methods", struct_name).ok();
-    writeln!(proxy_content, "").ok();
-    writeln!(proxy_content, "use hotline::ObjectRef;").ok();
-    writeln!(proxy_content, "").ok();
-    writeln!(proxy_content, "/// Type marker for {}", struct_name).ok();
-    writeln!(proxy_content, "pub struct {};", struct_name).ok();
-    writeln!(proxy_content, "").ok();
-    writeln!(proxy_content, "/// Extension methods for ObjectRef<{}>", struct_name).ok();
-    writeln!(proxy_content, "pub trait {}Proxy {{", struct_name).ok();
-    
-    // Trait method signatures
-    for (method_name, _, _arg_names, _arg_types, output, inputs) in proxy_methods {
-        write!(proxy_content, "    fn {}(", method_name).ok();
-        
-        // Write parameters
-        let mut first = true;
-        for arg in inputs {
-            if !first {
-                write!(proxy_content, ", ").ok();
-            }
-            first = false;
-            match arg {
-                FnArg::Receiver(receiver) => {
-                    if receiver.mutability.is_some() {
-                        write!(proxy_content, "&mut self").ok();
-                    } else {
-                        write!(proxy_content, "&self").ok();
-                    }
-                }
-                FnArg::Typed(pat_type) => {
-                    write!(proxy_content, "{}", quote! { #pat_type }).ok();
-                }
-            }
-        }
-        
-        // Write return type
-        match output {
-            ReturnType::Default => writeln!(proxy_content, ");").ok(),
-            ReturnType::Type(_, ty) => writeln!(proxy_content, ") -> {};", quote! { #ty }).ok(),
-        };
-    }
-    
-    writeln!(proxy_content, "}}").ok();
-    writeln!(proxy_content, "").ok();
-    
-    // Implementation
-    writeln!(proxy_content, "impl {}Proxy for ObjectRef<{}> {{", struct_name, struct_name).ok();
-    
-    for (method_name, symbol_name, arg_names, arg_types, output, inputs) in proxy_methods {
-        // Method signature
-        write!(proxy_content, "    fn {}(", method_name).ok();
-        
-        let mut param_names = Vec::new();
-        let mut first = true;
-        for arg in inputs {
-            if !first {
-                write!(proxy_content, ", ").ok();
-            }
-            first = false;
-            match arg {
-                FnArg::Receiver(receiver) => {
-                    if receiver.mutability.is_some() {
-                        write!(proxy_content, "&mut self").ok();
-                    } else {
-                        write!(proxy_content, "&self").ok();
-                    }
-                }
-                FnArg::Typed(pat_type) => {
-                    if let Pat::Ident(pat_ident) = &*pat_type.pat {
-                        param_names.push(pat_ident.ident.to_string());
-                    }
-                    write!(proxy_content, "{}", quote! { #pat_type }).ok();
-                }
-            }
-        }
-        
-        // Return type
-        let return_type_str = match output {
-            ReturnType::Default => "".to_string(),
-            ReturnType::Type(_, ty) => format!(" -> {}", quote! { #ty }),
-        };
-        writeln!(proxy_content, "){} {{", return_type_str).ok();
-        
-        // Method body
-        writeln!(proxy_content, "        crate::with_library_registry(|registry| {{").ok();
-        
-        let is_mut = inputs.first().map_or(false, |arg| {
-            if let FnArg::Receiver(receiver) = arg {
-                receiver.mutability.is_some()
-            } else {
-                false
-            }
-        });
-        
-        if is_mut {
-            writeln!(proxy_content, "            if let Ok(mut guard) = self.inner().lock() {{").ok();
-            writeln!(proxy_content, "                let obj_any = guard.as_any_mut();").ok();
-        } else {
-            writeln!(proxy_content, "            if let Ok(guard) = self.inner().lock() {{").ok();
-            writeln!(proxy_content, "                let obj_any = guard.as_any();").ok();
-        }
-        
-        // Function type
-        write!(proxy_content, "                type FnType = unsafe extern \"Rust\" fn(&{} dyn std::any::Any", if is_mut { "mut" } else { "" }).ok();
-        for ty in arg_types {
-            write!(proxy_content, ", {}", quote! { #ty }).ok();
-        }
-        let return_type = match output {
-            ReturnType::Default => quote! { () },
-            ReturnType::Type(_, ty) => quote! { #ty },
-        };
-        writeln!(proxy_content, ") -> {};", return_type).ok();
-        
-        // Call with symbol
-        writeln!(proxy_content, "                registry.with_symbol::<FnType, _, _>(").ok();
-        writeln!(proxy_content, "                    \"lib{}\",", struct_name).ok();
-        writeln!(proxy_content, "                    \"{}\",", symbol_name).ok();
-        write!(proxy_content, "                    |fn_ptr| unsafe {{ (**fn_ptr)(obj_any").ok();
-        for name in arg_names.iter() {
-            write!(proxy_content, ", {}", name).ok();
-        }
-        writeln!(proxy_content, ") }}").ok();
-        writeln!(proxy_content, "                ).unwrap_or_else(|e| panic!(\"Failed to call {}: {{}}\", e))", method_name).ok();
-        writeln!(proxy_content, "            }} else {{").ok();
-        writeln!(proxy_content, "                panic!(\"Failed to lock object for method {}\")", method_name).ok();
-        writeln!(proxy_content, "            }}").ok();
-        writeln!(proxy_content, "        }}).unwrap_or_else(|| panic!(\"No library registry available for method {}\"))", method_name).ok();
-        writeln!(proxy_content, "    }}").ok();
-        writeln!(proxy_content, "").ok();
-    }
-    
-    writeln!(proxy_content, "}}").ok();
-    
-    // Write to file in src directory
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        let src_dir = Path::new(&manifest_dir).join("src");
-        let proxy_file = src_dir.join("proxy.rs");
-        fs::write(&proxy_file, proxy_content).ok();
-    }
-}
 
 fn get_rustc_commit_hash() -> String {
     // Try to get from env var first (for when we're building hotline-macros itself)
