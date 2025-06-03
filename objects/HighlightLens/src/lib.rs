@@ -1,19 +1,15 @@
-use hotline::{object, ObjectHandle};
+use hotline::object;
 
 object!({
-    use_prototypes! {
-        Rect.bounds
-    }
-    
     #[derive(Default)]
     pub struct HighlightLens {
-        target: Option<ObjectHandle>,
+        target: Option<Rect>,
         highlight_color: (u8, u8, u8, u8), // BGRA
     }
 
     impl HighlightLens {
-        pub fn set_target(&mut self, target: ObjectHandle) {
-            self.target = Some(target);
+        pub fn set_target(&mut self, target: ::hotline::ObjectHandle) {
+            self.target = Some(Rect::from_handle(target));
             self.highlight_color = (0, 255, 0, 255); // Green by default
         }
 

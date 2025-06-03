@@ -8,45 +8,10 @@ use syn::{
     Fields, FnArg, GenericArgument, ImplItem, ItemImpl, ItemStruct, Pat, PathArguments, ReturnType,
     Type, braced,
     parse::{Parse, ParseStream},
-    Token,
 };
 
-#[derive(Default, Debug)]
-struct UsePrototypes {
-    prototypes: Vec<(String, String)>, // (TypeName, method)
-}
-
-impl Parse for UsePrototypes {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut prototypes = Vec::new();
-        
-        // Parse comma-separated list of Type.method
-        while !input.is_empty() {
-            // Parse Type
-            let type_name: syn::Ident = input.parse()?;
-            
-            // Parse dot
-            let _dot: Token![.] = input.parse()?;
-            
-            // Parse method
-            let method_name: syn::Ident = input.parse()?;
-            
-            prototypes.push((type_name.to_string(), method_name.to_string()));
-            
-            // Check for comma
-            if input.peek(Token![,]) {
-                let _comma: Token![,] = input.parse()?;
-            } else {
-                break;
-            }
-        }
-        
-        Ok(UsePrototypes { prototypes })
-    }
-}
 
 struct ObjectInput {
-    use_prototypes: Option<UsePrototypes>,
     struct_item: ItemStruct,
     impl_item: ItemImpl,
 }
@@ -56,31 +21,6 @@ impl Parse for ObjectInput {
         let content;
         braced!(content in input);
 
-        // Try to parse use_prototypes! as a macro invocation
-        let use_prototypes = if content.peek(syn::Ident) {
-            let fork = content.fork();
-            if let Ok(ident) = fork.parse::<syn::Ident>() {
-                if ident == "use_prototypes" && fork.peek(Token![!]) {
-                    // Consume the tokens we checked
-                    let _: syn::Ident = content.parse()?;
-                    let _: Token![!] = content.parse()?;
-                    
-                    // Parse the braced content
-                    let proto_content;
-                    braced!(proto_content in content);
-                    let protos: UsePrototypes = proto_content.parse()?;
-                    
-                    Some(protos)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
         let struct_item: ItemStruct = content
             .parse()
             .map_err(|e| syn::Error::new(e.span(), "Expected a struct definition"))?;
@@ -88,14 +28,250 @@ impl Parse for ObjectInput {
             .parse()
             .map_err(|e| syn::Error::new(e.span(), "Expected an impl block after the struct"))?;
 
-        Ok(ObjectInput { use_prototypes, struct_item, impl_item })
+        Ok(ObjectInput { struct_item, impl_item })
     }
 }
+
+
+fn find_referenced_object_types(struct_item: &ItemStruct, impl_item: &ItemImpl) -> std::collections::HashSet<String> {
+    use std::collections::HashSet;
+    use syn::visit::{self, Visit};
+    
+    struct TypeVisitor {
+        types: HashSet<String>,
+        current_type: String,
+    }
+    
+    impl<'ast> Visit<'ast> for TypeVisitor {
+        fn visit_type(&mut self, ty: &'ast Type) {
+            if let Type::Path(type_path) = ty {
+                if let Some(ident) = type_path.path.get_ident() {
+                    let name = ident.to_string();
+                    // Check if this looks like an object type (capitalized, not a standard type)
+                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                        && name != self.current_type
+                        && !is_standard_type(&name) {
+                        self.types.insert(name);
+                    }
+                }
+            }
+            visit::visit_type(self, ty);
+        }
+        
+        fn visit_expr(&mut self, expr: &'ast syn::Expr) {
+            // Look for string literals that might be object names (e.g., create_object("Rect"))
+            if let syn::Expr::Lit(expr_lit) = expr {
+                if let syn::Lit::Str(lit_str) = &expr_lit.lit {
+                    let value = lit_str.value();
+                    if value.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                        && value != self.current_type {
+                        self.types.insert(value);
+                    }
+                }
+            }
+            visit::visit_expr(self, expr);
+        }
+    }
+    
+    let mut visitor = TypeVisitor {
+        types: HashSet::new(),
+        current_type: struct_item.ident.to_string(),
+    };
+    
+    // Visit struct fields
+    visitor.visit_item_struct(struct_item);
+    
+    // Visit impl methods
+    visitor.visit_item_impl(impl_item);
+    
+    visitor.types
+}
+
+fn is_standard_type(name: &str) -> bool {
+    matches!(name, "String" | "Vec" | "Option" | "Result" | "Box" | "Arc" | "Mutex" | 
+             "HashMap" | "BTreeMap" | "HashSet" | "BTreeSet" | "Cell" | "RefCell" |
+             "Rc" | "Weak" | "PhantomData" | "Pin" | "Future" | "Stream")
+}
+
+fn generate_typed_wrappers(types: &std::collections::HashSet<String>, rustc_commit: &str) -> proc_macro2::TokenStream {
+    if types.is_empty() {
+        return quote! {};
+    }
+    
+    let mut wrapper_code = Vec::new();
+    
+    for type_name in types {
+        // Check if the object actually exists
+        let lib_path = find_object_lib_file(type_name);
+        if !lib_path.exists() {
+            continue;
+        }
+        
+        let type_ident = quote::format_ident!("{}", type_name);
+        
+        // Generate the typed wrapper as a local type alias/newtype
+        wrapper_code.push(quote! {
+            #[derive(Clone)]
+            pub struct #type_ident(::hotline::ObjectHandle);
+            
+            impl #type_ident {
+                pub fn from_handle(handle: ::hotline::ObjectHandle) -> Self {
+                    Self(handle)
+                }
+                
+                pub fn handle(&self) -> &::hotline::ObjectHandle {
+                    &self.0
+                }
+            }
+            
+            impl ::std::ops::Deref for #type_ident {
+                type Target = ::hotline::ObjectHandle;
+                
+                fn deref(&self) -> &Self::Target {
+                    &self.0
+                }
+            }
+            
+            impl ::std::ops::DerefMut for #type_ident {
+                fn deref_mut(&mut self) -> &mut Self::Target {
+                    &mut self.0
+                }
+            }
+        });
+        
+        // Read and parse the object's methods
+        if let Ok(content) = fs::read_to_string(&lib_path) {
+            if let Ok(file) = syn::parse_file(&content) {
+                if let Some(methods) = extract_object_methods_for_wrapper(&file, type_name) {
+                    wrapper_code.push(generate_methods_for_type(type_name, &methods, rustc_commit));
+                }
+            }
+        }
+    }
+    
+    quote! {
+        #(#wrapper_code)*
+    }
+}
+
+fn extract_object_methods_for_wrapper(file: &syn::File, _type_name: &str) -> Option<Vec<(String, Vec<String>, Vec<Type>, Type)>> {
+    use syn::{Item, ImplItem, FnArg, Pat, ReturnType};
+    
+    for item in &file.items {
+        if let Item::Macro(item_macro) = item {
+            if item_macro.mac.path.is_ident("object") {
+                if let Ok(obj_input) = syn::parse2::<ObjectInput>(item_macro.mac.tokens.clone()) {
+                    let mut methods = Vec::new();
+                    
+                    for impl_item in &obj_input.impl_item.items {
+                        if let ImplItem::Fn(method) = impl_item {
+                            if matches!(method.vis, syn::Visibility::Public(_)) {
+                                let method_name = method.sig.ident.to_string();
+                                
+                                let mut param_names = Vec::new();
+                                let mut param_types = Vec::new();
+                                
+                                for arg in method.sig.inputs.iter().skip(1) {
+                                    if let FnArg::Typed(typed) = arg {
+                                        if let Pat::Ident(pat_ident) = &*typed.pat {
+                                            param_names.push(pat_ident.ident.to_string());
+                                            param_types.push((*typed.ty).clone());
+                                        }
+                                    }
+                                }
+                                
+                                let return_type = match &method.sig.output {
+                                    ReturnType::Default => syn::parse_quote! { () },
+                                    ReturnType::Type(_, ty) => (**ty).clone(),
+                                };
+                                
+                                methods.push((method_name, param_names, param_types, return_type));
+                            }
+                        }
+                    }
+                    
+                    return Some(methods);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn generate_methods_for_type(type_name: &str, methods: &[(String, Vec<String>, Vec<Type>, Type)], rustc_commit: &str) -> proc_macro2::TokenStream {
+    let type_ident = quote::format_ident!("{}", type_name);
+    let mut impl_methods = Vec::new();
+    
+    for (method_name, param_names, param_types, return_type) in methods {
+        let method_ident = quote::format_ident!("{}", method_name);
+        let param_idents: Vec<proc_macro2::TokenStream> = param_names.iter().map(|name| {
+            let ident = quote::format_ident!("{}", name);
+            quote! { #ident }
+        }).collect();
+        
+        let fn_type = quote! {
+            unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*) -> #return_type
+        };
+        
+        // Build symbol name
+        let params_part = if param_names.is_empty() {
+            String::new()
+        } else {
+            let param_parts: Vec<String> = param_names.iter().zip(param_types.iter()).map(|(name, ty)| {
+                let type_str = type_to_string(ty);
+                format!("____{}__{}", name, type_str)
+            }).collect();
+            param_parts.join("")
+        };
+        
+        let return_part = type_to_string(return_type);
+        
+        let method_impl = quote! {
+            fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
+                crate::with_library_registry(|registry| {
+                    if let Ok(mut guard) = self.0.lock() {
+                        let type_name = guard.type_name();
+                        
+                        let symbol_name = format!(
+                            "{}__{}______obj_mut_dyn_Any{}____to__{}__{}",
+                            type_name,
+                            stringify!(#method_ident),
+                            #params_part,
+                            #return_part,
+                            #rustc_commit
+                        );
+                        let lib_name = format!("lib{}", type_name);
+                        
+                        let obj_any = guard.as_any_mut();
+                        
+                        type FnType = #fn_type;
+                        registry.with_symbol::<FnType, _, _>(
+                            &lib_name,
+                            &symbol_name,
+                            |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
+                        ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e))
+                    } else {
+                        panic!("Failed to lock object for method {}", stringify!(#method_ident))
+                    }
+                }).unwrap_or_else(|| panic!("No library registry available for method {}", stringify!(#method_ident)))
+            }
+        };
+        
+        impl_methods.push(method_impl);
+    }
+    
+    quote! {
+        impl #type_ident {
+            #(#impl_methods)*
+        }
+    }
+}
+
 
 #[proc_macro]
 #[proc_macro_error]
 pub fn object(input: TokenStream) -> TokenStream {
-    let ObjectInput { use_prototypes, struct_item, impl_item } = syn::parse_macro_input!(input as ObjectInput);
+    let ObjectInput { struct_item, impl_item } = syn::parse_macro_input!(input as ObjectInput);
 
     let struct_name = &struct_item.ident;
     let struct_attrs = &struct_item.attrs;
@@ -370,16 +546,15 @@ pub fn object(input: TokenStream) -> TokenStream {
         #init_function
     };
 
-    // Generate extension trait for prototypes if any
-    let prototype_trait = if let Some(ref protos) = use_prototypes {
-        generate_prototype_extensions(&protos, &rustc_commit)
-    } else {
-        quote! {}
-    };
+    // Find all object types referenced in the code
+    let referenced_types = find_referenced_object_types(&struct_item, &impl_item);
+    
+    // Generate typed wrappers for referenced objects
+    let typed_wrappers = generate_typed_wrappers(&referenced_types, &rustc_commit);
 
     TokenStream::from(quote! {
         #output
-        #prototype_trait
+        #typed_wrappers
     })
 }
 
@@ -508,144 +683,4 @@ fn find_object_lib_file(type_name: &str) -> std::path::PathBuf {
     current_dir.join("objects").join(type_name).join("src").join("lib.rs")
 }
 
-fn find_method_in_file(file: &syn::File, _type_name: &str, method_name: &str) -> Option<(Vec<String>, Vec<Type>, Type)> {
-    // Look for the object! macro invocation
-    for item in &file.items {
-        if let syn::Item::Macro(item_macro) = item {
-            if item_macro.mac.path.is_ident("object") {
-                // Parse the content of the object! macro
-                let tokens = &item_macro.mac.tokens;
-                if let Ok(obj_input) = syn::parse2::<ObjectInput>(tokens.clone()) {
-                    // Look through impl items for the method
-                    for impl_item in &obj_input.impl_item.items {
-                        if let ImplItem::Fn(method) = impl_item {
-                            if method.sig.ident == method_name {
-                                // Extract parameter names and types (skip self)
-                                let mut param_names = Vec::new();
-                                let mut param_types = Vec::new();
-                                
-                                for arg in method.sig.inputs.iter().skip(1) {
-                                    if let FnArg::Typed(typed) = arg {
-                                        if let Pat::Ident(pat_ident) = &*typed.pat {
-                                            param_names.push(pat_ident.ident.to_string());
-                                            param_types.push((*typed.ty).clone());
-                                        }
-                                    }
-                                }
-                                
-                                // Extract return type
-                                let return_type = match &method.sig.output {
-                                    ReturnType::Default => syn::parse_quote! { () },
-                                    ReturnType::Type(_, ty) => (**ty).clone(),
-                                };
-                                
-                                return Some((param_names, param_types, return_type));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn generate_prototype_extensions(prototypes: &UsePrototypes, rustc_commit: &str) -> proc_macro2::TokenStream {
-    let mut trait_methods = Vec::new();
-    let mut impl_methods = Vec::new();
-    
-    // Read and parse each prototype
-    for (type_name, method_name) in &prototypes.prototypes {
-        // Find and read the object's lib.rs file
-        let lib_path = find_object_lib_file(type_name);
-        if let Ok(content) = fs::read_to_string(&lib_path) {
-            // Parse the file to find the method
-            if let Ok(file) = syn::parse_file(&content) {
-                if let Some((param_names, param_types, return_type)) = find_method_in_file(&file, type_name, method_name) {
-                    // Generate trait method
-                    let method_ident = quote::format_ident!("{}", method_name);
-                    let param_idents: Vec<proc_macro2::TokenStream> = param_names.iter().map(|name| {
-                        let ident = quote::format_ident!("{}", name);
-                        quote! { #ident }
-                    }).collect();
-                    
-                    let param_type_tokens: Vec<proc_macro2::TokenStream> = param_types.iter().map(|ty| {
-                        quote! { #ty }
-                    }).collect();
-                    
-                    let return_ty = return_type;
-                    
-                    // Trait method
-                    trait_methods.push(quote! {
-                        fn #method_ident(&mut self #(, #param_idents: #param_type_tokens)*) -> #return_ty;
-                    });
-                    
-                    // Implementation method
-                    let fn_type = quote! {
-                        unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_type_tokens)*) -> #return_ty
-                    };
-                    
-                    // Build the exact symbol name format using actual parameter names
-                    let params_part = if param_names.is_empty() {
-                        String::new()
-                    } else {
-                        let param_parts: Vec<String> = param_names.iter().zip(param_types.iter()).map(|(name, ty)| {
-                            let type_str = type_to_string(ty);
-                            format!("____{}__{}", name, type_str)
-                        }).collect();
-                        param_parts.join("")
-                    };
-                    
-                    // Convert return type to symbol format
-                    let return_part = type_to_string(&return_ty);
-                    
-                    impl_methods.push(quote! {
-                        fn #method_ident(&mut self #(, #param_idents: #param_type_tokens)*) -> #return_ty {
-                            crate::with_library_registry(|registry| {
-                                if let Ok(mut guard) = self.lock() {
-                                    let type_name = guard.type_name();
-                                    
-                                    let symbol_name = format!(
-                                        "{}__{}______obj_mut_dyn_Any{}____to__{}__{}",
-                                        type_name,
-                                        stringify!(#method_ident),
-                                        #params_part,
-                                        #return_part,
-                                        #rustc_commit
-                                    );
-                                    let lib_name = format!("lib{}", type_name);
-                                    
-                                    let obj_any = guard.as_any_mut();
-                                    
-                                    type FnType = #fn_type;
-                                    registry.with_symbol::<FnType, _, _>(
-                                        &lib_name,
-                                        &symbol_name,
-                                        |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
-                                    ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e))
-                                } else {
-                                    panic!("Failed to lock object for method {}", stringify!(#method_ident))
-                                }
-                            }).unwrap_or_else(|| panic!("No library registry available for method {}", stringify!(#method_ident)))
-                        }
-                    });
-                }
-            }
-        }
-    }
-    
-    if trait_methods.is_empty() {
-        return quote! {};
-    }
-    
-    quote! {
-        trait ObjectHandleExt {
-            #(#trait_methods)*
-        }
-        
-        impl ObjectHandleExt for ::hotline::ObjectHandle {
-            #(#impl_methods)*
-        }
-    }
-}
 

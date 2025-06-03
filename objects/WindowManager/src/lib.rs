@@ -1,21 +1,12 @@
-use hotline::{ObjectHandle, object};
+use hotline::object;
 use std::sync::{Arc, Mutex};
 
 object!({
-    use_prototypes! {
-        Rect.initialize,
-        Rect.contains_point,
-        Rect.position,
-        Rect.move_by,
-        Rect.render,
-        HighlightLens.set_target
-    }
-    
     #[derive(Default)]
     pub struct WindowManager {
-        rects: Vec<ObjectHandle>,
-        selected: Option<ObjectHandle>,
-        highlight_lens: Option<ObjectHandle>, // HighlightLens for selected rect
+        rects: Vec<Rect>,
+        selected: Option<Rect>,
+        highlight_lens: Option<HighlightLens>, // HighlightLens for selected rect
         dragging: bool,
         drag_offset_x: f64,
         drag_offset_y: f64,
@@ -23,7 +14,7 @@ object!({
     }
 
     impl WindowManager {
-        pub fn add_rect(&mut self, rect: ObjectHandle) {
+        pub fn add_rect(&mut self, rect: Rect) {
             self.rects.push(rect);
         }
 
@@ -38,7 +29,7 @@ object!({
             self.drag_offset_y = y;
         }
 
-        pub fn start_dragging(&mut self, rect: ObjectHandle) {
+        pub fn start_dragging(&mut self, rect: Rect) {
             self.selected = Some(rect);
             self.dragging = true;
         }
@@ -47,7 +38,7 @@ object!({
             self.dragging = false;
         }
 
-        pub fn get_selected_handle(&mut self) -> Option<ObjectHandle> {
+        pub fn get_selected_handle(&mut self) -> Option<Rect> {
             self.selected.clone()
         }
 
@@ -55,7 +46,7 @@ object!({
             self.rects.len() as i64
         }
 
-        pub fn get_rect_at(&mut self, index: i64) -> Option<ObjectHandle> {
+        pub fn get_rect_at(&mut self, index: i64) -> Option<Rect> {
             if index >= 0 && (index as usize) < self.rects.len() {
                 Some(self.rects[index as usize].clone())
             } else {
@@ -97,13 +88,13 @@ object!({
                 self.dragging = true;
 
                 // Create HighlightLens for selected rect
-                if let Some(hl_obj) = with_library_registry(|registry| {
+                if let Some(hl_obj) = crate::with_library_registry(|registry| {
                     registry.call_constructor("libHighlightLens", "HighlightLens", hotline::RUSTC_COMMIT).ok()
                 }).flatten() {
-                    let mut hl_handle = Arc::new(Mutex::new(hl_obj));
+                    let mut hl_handle = HighlightLens::from_handle(Arc::new(Mutex::new(hl_obj)));
                     
-                    // Set the target to the selected rect
-                    hl_handle.set_target(rect_handle.clone());
+                    // Set the target to the selected rect  
+                    hl_handle.set_target(rect_handle.handle().clone());
                     
                     self.highlight_lens = Some(hl_handle);
                 }
@@ -124,9 +115,9 @@ object!({
                 let rect_y = start_y.min(y);
 
                 // Create rect via registry
-                let new_rect = with_library_registry(|registry| {
+                let new_rect = crate::with_library_registry(|registry| {
                     if let Ok(rect_obj) = registry.call_constructor("libRect", "Rect", hotline::RUSTC_COMMIT) {
-                        let mut rect_handle = Arc::new(Mutex::new(rect_obj));
+                        let mut rect_handle = Rect::from_handle(Arc::new(Mutex::new(rect_obj)));
                         
                         // Initialize the rect with position and size
                         rect_handle.initialize(rect_x, rect_y, width, height);

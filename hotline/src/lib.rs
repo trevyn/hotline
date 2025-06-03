@@ -37,6 +37,43 @@ pub trait HotlineObject: Any + Send + Sync {
 
 pub type ObjectHandle = Arc<Mutex<Box<dyn HotlineObject>>>;
 
+/// wrapper for duck-typed objects that can act like T
+pub struct Like<T> {
+    handle: ObjectHandle,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T> Like<T> {
+    pub fn new(handle: ObjectHandle) -> Self {
+        Self {
+            handle,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    pub fn handle(&self) -> &ObjectHandle {
+        &self.handle
+    }
+}
+
+// Global registry access for typed objects
+thread_local! {
+    static LIBRARY_REGISTRY: std::cell::RefCell<Option<&'static LibraryRegistry>> = std::cell::RefCell::new(None);
+}
+
+pub fn set_library_registry(registry: &'static LibraryRegistry) {
+    LIBRARY_REGISTRY.with(|r| {
+        *r.borrow_mut() = Some(registry);
+    });
+}
+
+pub fn with_library_registry<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&LibraryRegistry) -> R,
+{
+    LIBRARY_REGISTRY.with(|r| r.borrow().map(f))
+}
+
 use std::marker::PhantomData;
 
 /// Typed wrapper for hotline objects that provides clean method dispatch
