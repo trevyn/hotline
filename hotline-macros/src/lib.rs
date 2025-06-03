@@ -223,7 +223,7 @@ pub fn object(input: TokenStream) -> TokenStream {
             let param_types: Vec<String> = arg_types.iter().map(|ty| type_to_string(ty)).collect();
             let return_type = match method_output {
                 ReturnType::Default => "()".to_string(),
-                ReturnType::Type(_, ty) => ty.to_token_stream().to_string(),
+                ReturnType::Type(_, ty) => ty.to_token_stream().to_string().replace(" ", ""),
             };
 
             method_signatures.push(format!(
