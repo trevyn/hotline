@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro_error2::proc_macro_error;
 use quote::{ToTokens, quote};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -36,8 +37,7 @@ impl Parse for ObjectInput {
     }
 }
 
-fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImpl]) -> std::collections::HashSet<String> {
-    use std::collections::HashSet;
+fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImpl]) -> HashSet<String> {
     use syn::visit::{self, Visit};
 
     struct TypeVisitor {
@@ -115,7 +115,7 @@ fn is_standard_type(name: &str) -> bool {
     )
 }
 
-fn generate_typed_wrappers(types: &std::collections::HashSet<String>, rustc_commit: &str) -> proc_macro2::TokenStream {
+fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> proc_macro2::TokenStream {
     if types.is_empty() {
         return quote! {};
     }
@@ -453,7 +453,6 @@ pub fn object(input: TokenStream) -> TokenStream {
 
     let struct_name = &struct_item.ident;
     let struct_attrs = &struct_item.attrs;
-    let struct_fields = &struct_item.fields;
 
     // Get rustc commit hash at macro expansion time
     let rustc_commit = get_rustc_commit_hash();
@@ -484,7 +483,35 @@ pub fn object(input: TokenStream) -> TokenStream {
     // Generate field accessors
     let mut field_accessors = Vec::new();
 
-    if let Fields::Named(fields) = struct_fields {
+    // First, we need to process the struct fields to filter out #[setter] attributes
+    // and remember which fields have them
+    let mut fields_with_setters = HashSet::new();
+    
+    // Create a modified struct with filtered attributes
+    let mut modified_struct = struct_item.clone();
+    
+    if let Fields::Named(fields) = &mut modified_struct.fields {
+        for field in &mut fields.named {
+            // Check for #[setter] attribute
+            let mut has_setter = false;
+            field.attrs.retain(|attr| {
+                if attr.path().is_ident("setter") {
+                    has_setter = true;
+                    false // Remove the attribute
+                } else {
+                    true // Keep other attributes
+                }
+            });
+            
+            if has_setter {
+                if let Some(field_name) = &field.ident {
+                    fields_with_setters.insert(field_name.to_string());
+                }
+            }
+        }
+    }
+
+    if let Fields::Named(fields) = &modified_struct.fields {
         for field in &fields.named {
             // Only generate accessors for public fields
             let is_public = matches!(field.vis, syn::Visibility::Public(_));
@@ -499,7 +526,7 @@ pub fn object(input: TokenStream) -> TokenStream {
             if !is_generic_type(field_type) {
                 let type_str = type_to_string(field_type);
 
-                // Getter
+                // Getter (always generated for public fields)
                 let getter_fn_name = quote::format_ident!(
                     "{}__get_{}____obj_ref_dyn_Any__to__{}__{}",
                     struct_name,
@@ -528,35 +555,37 @@ pub fn object(input: TokenStream) -> TokenStream {
                     }
                 });
 
-                // Setter
-                let setter_fn_name = quote::format_ident!(
-                    "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
-                    struct_name,
-                    field_name,
-                    field_name,
-                    type_str,
-                    rustc_commit
-                );
+                // Setter (only generated if field has #[setter] attribute)
+                if fields_with_setters.contains(&field_name.to_string()) {
+                    let setter_fn_name = quote::format_ident!(
+                        "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
+                        struct_name,
+                        field_name,
+                        field_name,
+                        type_str,
+                        rustc_commit
+                    );
 
-                field_accessors.push(quote! {
-                    #[unsafe(no_mangle)]
-                    #[allow(non_snake_case)]
-                    pub extern "Rust" fn #setter_fn_name(obj: &mut dyn ::std::any::Any, value: #field_type) {
-                        let instance = match obj.downcast_mut::<#struct_name>() {
-                            Some(inst) => inst,
-                            None => {
-                                let type_name: &'static str = ::std::any::type_name_of_val(&*obj);
-                                panic!(
-                                    "Type mismatch in setter {}: expected {}, but got {}",
-                                    stringify!(#field_name),
-                                    stringify!(#struct_name),
-                                    type_name
-                                )
-                            }
-                        };
-                        instance.#field_name = value;
-                    }
-                });
+                    field_accessors.push(quote! {
+                        #[unsafe(no_mangle)]
+                        #[allow(non_snake_case)]
+                        pub extern "Rust" fn #setter_fn_name(obj: &mut dyn ::std::any::Any, value: #field_type) {
+                            let instance = match obj.downcast_mut::<#struct_name>() {
+                                Some(inst) => inst,
+                                None => {
+                                    let type_name: &'static str = ::std::any::type_name_of_val(&*obj);
+                                    panic!(
+                                        "Type mismatch in setter {}: expected {}, but got {}",
+                                        stringify!(#field_name),
+                                        stringify!(#struct_name),
+                                        type_name
+                                    )
+                                }
+                            };
+                            instance.#field_name = value;
+                        }
+                    });
+                }
             }
         }
     }
@@ -754,7 +783,7 @@ pub fn object(input: TokenStream) -> TokenStream {
 
     // Generate output
     let output = quote! {
-        #struct_item
+        #modified_struct
 
         #main_impl
         
