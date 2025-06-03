@@ -1,16 +1,22 @@
-use hotline::{object, ObjectHandle};
-use std::any::Any;
+use hotline::{object, ObjectHandle, ObjectRef};
+
+// Include the Rect proxy
+#[path = "../../Rect/src/proxy.rs"]
+mod rect_proxy;
+use rect_proxy::{Rect, RectProxy};
 
 object!({
     #[derive(Default)]
     pub struct HighlightLens {
-        target: Option<ObjectHandle>,
+        target: Option<ObjectRef<Rect>>,
         highlight_color: (u8, u8, u8, u8), // BGRA
     }
 
     impl HighlightLens {
         pub fn set_target(&mut self, target: ObjectHandle) {
-            self.target = Some(target);
+            // TODO: This should ideally take ObjectRef<Rect> directly,
+            // but for now we wrap the handle
+            self.target = Some(ObjectRef::new(target));
             self.highlight_color = (0, 255, 0, 255); // Green by default
         }
 
@@ -25,37 +31,10 @@ object!({
             buffer_height: i64,
             pitch: i64,
         ) {
-            if let Some(ref target) = self.target {
+            if let Some(ref mut target) = self.target {
                 // Only draw highlight border (rect is already rendered by WindowManager)
-                // Get bounds dynamically
-                let (x, y, width, height) = if let Ok(mut target_guard) = target.lock() {
-                    let type_name = target_guard.type_name();
-
-                    // Try to call bounds method
-                    let bounds_symbol = format!(
-                        "{}__bounds______obj_mut_dyn_Any____to__tuple_f64_comma_f64_comma_f64_comma_f64__{}",
-                        type_name,
-                        hotline::RUSTC_COMMIT
-                    );
-
-                    let lib_name = format!("lib{}", type_name);
-                    let obj_any = target_guard.as_any_mut();
-
-                    with_library_registry(|registry| {
-                        type BoundsFn =
-                            unsafe extern "Rust" fn(&mut dyn Any) -> (f64, f64, f64, f64);
-                        registry
-                            .with_symbol::<BoundsFn, _, _>(
-                                &lib_name,
-                                &bounds_symbol,
-                                |bounds_ptr| unsafe { (**bounds_ptr)(obj_any) },
-                            )
-                            .unwrap_or((0.0, 0.0, 0.0, 0.0))
-                    })
-                    .unwrap_or((0.0, 0.0, 0.0, 0.0))
-                } else {
-                    (0.0, 0.0, 0.0, 0.0)
-                };
+                // Get bounds using the proxy trait
+                let (x, y, width, height) = target.bounds();
 
                 let x_start = (x as i32).max(0) as u32;
                 let y_start = (y as i32).max(0) as u32;

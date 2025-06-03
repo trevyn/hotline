@@ -36,3 +36,33 @@ pub trait HotlineObject: Any + Send + Sync {
 }
 
 pub type ObjectHandle = Arc<Mutex<Box<dyn HotlineObject>>>;
+
+use std::marker::PhantomData;
+
+/// Typed wrapper for hotline objects that provides clean method dispatch
+pub struct ObjectRef<T> {
+    inner: ObjectHandle,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> ObjectRef<T> {
+    pub fn new(inner: ObjectHandle) -> Self {
+        Self {
+            inner,
+            _phantom: PhantomData,
+        }
+    }
+    
+    pub fn inner(&self) -> &ObjectHandle {
+        &self.inner
+    }
+}
+
+impl<T> Clone for ObjectRef<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            _phantom: PhantomData,
+        }
+    }
+}
