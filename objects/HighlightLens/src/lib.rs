@@ -3,23 +3,12 @@ hotline::object!({
     pub struct HighlightLens {
         #[setter]
         target: Option<Rect>,
+        #[setter]
+        #[default((0, 255, 0, 255))]
         highlight_color: (u8, u8, u8, u8), // BGRA
     }
 
-    impl Default for HighlightLens {
-        fn default() -> Self {
-            Self {
-                target: None,
-                highlight_color: (0, 255, 0, 255), // Green by default
-            }
-        }
-    }
-
     impl HighlightLens {
-        pub fn set_highlight_color(&mut self, b: u8, g: u8, r: u8, a: u8) {
-            self.highlight_color = (b, g, r, a);
-        }
-
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             if let Some(ref mut target) = self.target {
                 // Only draw highlight border (rect is already rendered by WindowManager)

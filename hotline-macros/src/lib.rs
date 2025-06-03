@@ -510,20 +510,29 @@ pub fn object(input: TokenStream) -> TokenStream {
     // Generate field accessors
     let mut field_accessors = Vec::new();
 
-    // First, we need to process the struct fields to filter out #[setter] attributes
+    // First, we need to process the struct fields to filter out #[setter] and #[default] attributes
     // and remember which fields have them
     let mut fields_with_setters = HashSet::new();
+    let mut field_defaults = std::collections::HashMap::new();
     
     // Create a modified struct with filtered attributes
     let mut modified_struct = struct_item.clone();
     
     if let Fields::Named(fields) = &mut modified_struct.fields {
         for field in &mut fields.named {
-            // Check for #[setter] attribute
+            // Check for #[setter] and #[default] attributes
             let mut has_setter = false;
+            let mut default_value = None;
+            
             field.attrs.retain(|attr| {
                 if attr.path().is_ident("setter") {
                     has_setter = true;
+                    false // Remove the attribute
+                } else if attr.path().is_ident("default") {
+                    // Parse the default value
+                    if let Ok(value) = attr.parse_args::<syn::Expr>() {
+                        default_value = Some(value);
+                    }
                     false // Remove the attribute
                 } else {
                     true // Keep other attributes
@@ -534,6 +543,10 @@ pub fn object(input: TokenStream) -> TokenStream {
                 if let Some(field_name) = &field.ident {
                     fields_with_setters.insert(field_name.to_string());
                 }
+            }
+            
+            if let (Some(field_name), Some(value)) = (&field.ident, default_value) {
+                field_defaults.insert(field_name.to_string(), value);
             }
         }
     }
@@ -630,7 +643,9 @@ pub fn object(input: TokenStream) -> TokenStream {
         }
     });
     
-    let has_default = has_derive_default || has_impl_default;
+    // If there are field defaults, we should generate a Default impl (but not if derive is used)
+    let should_generate_default = !has_derive_default && !has_impl_default && !field_defaults.is_empty();
+    let has_default = has_derive_default || has_impl_default || !field_defaults.is_empty();
 
     let constructor = if has_default {
         let ctor_fn_name =
@@ -836,6 +851,48 @@ pub fn object(input: TokenStream) -> TokenStream {
     } else {
         quote! {}
     };
+    
+    // Generate Default implementation if we have field defaults and no manual implementation
+    let default_impl = if should_generate_default {
+        let mut field_initializers = Vec::new();
+        
+        if let Fields::Named(fields) = &modified_struct.fields {
+            for field in &fields.named {
+                let field_name = field.ident.as_ref().unwrap();
+                let field_init = if let Some(default_expr) = field_defaults.get(&field_name.to_string()) {
+                    quote! { #field_name: #default_expr }
+                } else {
+                    quote! { #field_name: Default::default() }
+                };
+                field_initializers.push(field_init);
+            }
+        }
+        
+        quote! {
+            impl Default for #struct_name {
+                fn default() -> Self {
+                    Self {
+                        #(#field_initializers),*
+                    }
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+    
+    // Filter out any manual Default implementations if we're generating one
+    let filtered_other_impl_blocks: Vec<_> = if should_generate_default {
+        other_impl_blocks.into_iter().filter(|impl_block| {
+            if let Some((_, trait_path, _)) = &impl_block.trait_ {
+                !trait_path.segments.last().map(|seg| seg.ident == "Default").unwrap_or(false)
+            } else {
+                true
+            }
+        }).collect()
+    } else {
+        other_impl_blocks
+    };
 
     // Generate output
     let output = quote! {
@@ -843,7 +900,9 @@ pub fn object(input: TokenStream) -> TokenStream {
 
         #main_impl
         
-        #(#other_impl_blocks)*
+        #(#filtered_other_impl_blocks)*
+        
+        #default_impl
 
         #trait_impl
         
