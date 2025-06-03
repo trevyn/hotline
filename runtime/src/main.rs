@@ -8,6 +8,8 @@ use std::time::Duration;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher, Config};
 use std::sync::mpsc::{channel, TryRecvError};
 use std::path::PathBuf;
+use std::collections::HashMap;
+use xxhash_rust::xxh3::xxh3_64;
 
 fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
@@ -95,13 +97,20 @@ fn main() -> Result<(), String> {
     let (tx, rx) = channel();
     let mut watcher = RecommendedWatcher::new(tx, Config::default().with_poll_interval(Duration::from_millis(20))).expect("Failed to create file watcher");
     
-    // Watch lib.rs files in each object directory
+    // Watch lib.rs files in each object directory and compute initial hashes
+    let mut file_hashes: HashMap<String, u64> = HashMap::new();
     for (lib_name, _) in &loaded_libs {
         let lib_rs_path = format!("objects/{}/src/lib.rs", lib_name);
         if Path::new(&lib_rs_path).exists() {
             watcher.watch(Path::new(&lib_rs_path), RecursiveMode::NonRecursive)
                 .expect(&format!("Failed to watch {}", lib_rs_path));
             println!("Watching {} for changes", lib_rs_path);
+            
+            // Compute initial hash
+            if let Ok(contents) = std::fs::read(&lib_rs_path) {
+                let hash = xxh3_64(&contents);
+                file_hashes.insert(lib_name.clone(), hash);
+            }
         }
     }
 
@@ -114,6 +123,7 @@ fn main() -> Result<(), String> {
     let mut texture = texture_creator
         .create_texture_streaming(PixelFormatEnum::ARGB8888, 800, 600)
         .map_err(|e| e.to_string())?;
+    
     'running: loop {
         // Check for file system events
         match rx.try_recv() {
@@ -125,19 +135,30 @@ fn main() -> Result<(), String> {
                         let lib_rs_pathbuf = PathBuf::from(&lib_rs_path);
                         
                         if event.paths.iter().any(|p| p.ends_with(&lib_rs_pathbuf)) {
-                            println!("Detected change in {}, rebuilding and reloading...", lib_name);
-                            
-                            // Rebuild the specific library
-                            std::process::Command::new("cargo")
-                                .args(&["build", "--release", "-p", lib_name])
-                                .status()
-                                .expect(&format!("Failed to build {}", lib_name));
-                            
-                            // Reload the library
-                            if let Err(e) = runtime.hot_reload(lib_path, lib_name) {
-                                eprintln!("Failed to reload {} lib: {}", lib_name, e);
-                            } else {
-                                println!("Successfully reloaded {}", lib_name);
+                            // Read file and compute hash
+                            if let Ok(contents) = std::fs::read(&lib_rs_path) {
+                                let new_hash = xxh3_64(&contents);
+                                let old_hash = file_hashes.get(lib_name).copied().unwrap_or(0);
+                                
+                                if new_hash != old_hash {
+                                    println!("Detected change in {}, rebuilding and reloading...", lib_name);
+                                    
+                                    // Update hash
+                                    file_hashes.insert(lib_name.clone(), new_hash);
+                                    
+                                    // Rebuild the specific library
+                                    std::process::Command::new("cargo")
+                                        .args(&["build", "--release", "-p", lib_name])
+                                        .status()
+                                        .expect(&format!("Failed to build {}", lib_name));
+                                    
+                                    // Reload the library
+                                    if let Err(e) = runtime.hot_reload(lib_path, lib_name) {
+                                        eprintln!("Failed to reload {} lib: {}", lib_name, e);
+                                    } else {
+                                        println!("Successfully reloaded {}", lib_name);
+                                    }
+                                }
                             }
                             break;
                         }
