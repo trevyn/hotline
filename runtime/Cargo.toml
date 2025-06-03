@@ -19,14 +19,6 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 name = "hotline"
 path = "src/main.rs"
 
-[[bin]]
-name = "gen_shims"
-path = "src/bin/gen_shims.rs"
-
-[[bin]]
-name = "test-hotline"
-path = "src/test_main.rs"
-
 [features]
 default = []
 reload = []

@@ -4,8 +4,6 @@ use std::sync::{Arc, Mutex};
 
 pub const RUSTC_COMMIT: &str = env!("RUSTC_COMMIT_HASH");
 
-pub mod shim_gen;
-
 pub struct DirectRuntime {
     library_registry: LibraryRegistry,
 }
