@@ -50,6 +50,7 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_item: &ItemImpl) 
                     // Check if this looks like an object type (capitalized, not a standard type)
                     if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
                         && name != self.current_type
+                        && name != "Self"
                         && !is_standard_type(&name) {
                         self.types.insert(name);
                     }
@@ -159,7 +160,12 @@ fn extract_object_methods_for_wrapper(file: &syn::File, _type_name: &str) -> Opt
     
     for item in &file.items {
         if let Item::Macro(item_macro) = item {
-            if item_macro.mac.path.is_ident("object") {
+            let is_object_macro = item_macro.mac.path.is_ident("object") || 
+                (item_macro.mac.path.segments.len() == 2 && 
+                 item_macro.mac.path.segments[0].ident == "hotline" &&
+                 item_macro.mac.path.segments[1].ident == "object");
+            
+            if is_object_macro {
                 if let Ok(obj_input) = syn::parse2::<ObjectInput>(item_macro.mac.tokens.clone()) {
                     let mut methods = Vec::new();
                     
@@ -227,7 +233,7 @@ fn generate_methods_for_type(type_name: &str, methods: &[(String, Vec<String>, V
         let return_part = type_to_string(return_type);
         
         let method_impl = quote! {
-            fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
+            pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
                 crate::with_library_registry(|registry| {
                     if let Ok(mut guard) = self.0.lock() {
                         let type_name = guard.type_name();
@@ -548,6 +554,7 @@ pub fn object(input: TokenStream) -> TokenStream {
 
     // Find all object types referenced in the code
     let referenced_types = find_referenced_object_types(&struct_item, &impl_item);
+    
     
     // Generate typed wrappers for referenced objects
     let typed_wrappers = generate_typed_wrappers(&referenced_types, &rustc_commit);

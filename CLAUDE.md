@@ -4,3 +4,4 @@
 - this is a real implementation, don't hard-code things that should be generic
 - do not use "get" prefix; e.g. "bounds" method instead of "get_bounds"
 - runtime/main should not call any specific objects other than WindowManager
+- when working with macros, remember that you can use cargo-expand

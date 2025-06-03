@@ -1,6 +1,4 @@
-use hotline::object;
-
-object!({
+hotline::object!({
     #[derive(Default)]
     pub struct HighlightLens {
         target: Option<Rect>,

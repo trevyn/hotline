@@ -1,7 +1,6 @@
-use hotline::object;
 use std::sync::{Arc, Mutex};
 
-object!({
+hotline::object!({
     #[derive(Default)]
     pub struct WindowManager {
         rects: Vec<Rect>,
