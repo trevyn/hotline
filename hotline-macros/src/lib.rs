@@ -209,6 +209,33 @@ fn extract_object_methods_for_wrapper(
                 if let Ok(obj_input) = syn::parse2::<ObjectInput>(item_macro.mac.tokens.clone()) {
                     let mut methods = Vec::new();
                     
+                    // Find fields with #[setter] to generate builder methods
+                    if let Fields::Named(fields) = &obj_input.struct_item.fields {
+                        for field in &fields.named {
+                            let field_name = field.ident.as_ref().unwrap();
+                            let field_type = &field.ty;
+                            
+                            // Check if field has #[setter] attribute
+                            let has_setter = field.attrs.iter().any(|attr| attr.path().is_ident("setter"));
+                            
+                            if has_setter {
+                                // Add builder method (with_fieldname)
+                                let builder_method_name = format!("with_{}", field_name);
+                                let param_names = vec![field_name.to_string()];
+                                let param_types = vec![field_type.clone()];
+                                let return_type: Type = syn::parse_str(type_name).expect("Failed to parse type name");
+                                
+                                methods.push((
+                                    builder_method_name,
+                                    param_names,
+                                    param_types,
+                                    return_type,
+                                    ReceiverType::Value,
+                                ));
+                            }
+                        }
+                    }
+                    
                     // Find the main impl block
                     let main_impl = obj_input.impl_blocks.iter().find(|impl_block| {
                         impl_block.trait_.is_none() && 
@@ -781,6 +808,35 @@ pub fn object(input: TokenStream) -> TokenStream {
         }
     };
 
+    // Generate builder methods for fields with #[setter]
+    let mut builder_methods = Vec::new();
+    if let Fields::Named(fields) = &modified_struct.fields {
+        for field in &fields.named {
+            let field_name = field.ident.as_ref().unwrap();
+            if fields_with_setters.contains(&field_name.to_string()) {
+                let field_type = &field.ty;
+                let method_name = quote::format_ident!("with_{}", field_name);
+                
+                builder_methods.push(quote! {
+                    pub fn #method_name(mut self, value: #field_type) -> Self {
+                        self.#field_name = value;
+                        self
+                    }
+                });
+            }
+        }
+    }
+    
+    let builder_impl = if !builder_methods.is_empty() {
+        quote! {
+            impl #struct_name {
+                #(#builder_methods)*
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     // Generate output
     let output = quote! {
         #modified_struct
@@ -790,6 +846,8 @@ pub fn object(input: TokenStream) -> TokenStream {
         #(#other_impl_blocks)*
 
         #trait_impl
+        
+        #builder_impl
 
         #constructor
 
