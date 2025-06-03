@@ -60,8 +60,7 @@ fn parse_symbol(symbol: &str) -> Option<MethodSignature> {
     }
 
     // Get return type (after "to")
-    let return_type =
-        if to_idx + 1 < parts.len() { parts[to_idx + 1..].join("__") } else { "unit".to_string() };
+    let return_type = if to_idx + 1 < parts.len() { parts[to_idx + 1..].join("__") } else { "unit".to_string() };
 
     Some(MethodSignature { type_name, method_name, params, return_type })
 }
@@ -111,7 +110,9 @@ fn generate_shim(type_name: &str, methods: Vec<MethodSignature>) -> String {
     code.push_str(&format!("impl {} {{\n", type_name));
 
     // Constructor
-    code.push_str("    pub fn new(runtime: std::sync::Arc<std::sync::Mutex<DirectRuntime>>, handle: ObjectHandle) -> Self {\n");
+    code.push_str(
+        "    pub fn new(runtime: std::sync::Arc<std::sync::Mutex<DirectRuntime>>, handle: ObjectHandle) -> Self {\n",
+    );
     code.push_str("        Self { runtime, handle }\n");
     code.push_str("    }\n\n");
 
@@ -130,10 +131,7 @@ fn generate_shim(type_name: &str, methods: Vec<MethodSignature>) -> String {
                 "    pub fn {}(&self) -> Result<{}, Box<dyn std::error::Error>> {{\n",
                 method.method_name, return_type
             ));
-            code.push_str(&format!(
-                "        self.runtime.lock().unwrap().call_getter::<{}>(\n",
-                return_type
-            ));
+            code.push_str(&format!("        self.runtime.lock().unwrap().call_getter::<{}>(\n", return_type));
             code.push_str(&format!("            self.handle,\n"));
             code.push_str(&format!("            \"{}\",\n", type_name));
             code.push_str(&format!("            \"lib{}\",\n", type_name.to_lowercase()));
@@ -175,10 +173,7 @@ fn generate_shim(type_name: &str, methods: Vec<MethodSignature>) -> String {
                 "    pub fn {}(&self, {}) -> Result<(), Box<dyn std::error::Error>> {{\n",
                 method.method_name, params_str
             ));
-            code.push_str(&format!(
-                "        let args: Vec<Box<dyn std::any::Any>> = vec![{}];\n",
-                args_str
-            ));
+            code.push_str(&format!("        let args: Vec<Box<dyn std::any::Any>> = vec![{}];\n", args_str));
             code.push_str("        self.runtime.lock().unwrap().call_method(\n");
             code.push_str(&format!("            self.handle,\n"));
             code.push_str(&format!("            \"{}\",\n", type_name));

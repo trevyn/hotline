@@ -9,9 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Step 4: Build WindowManager
     println!("Building WindowManager...");
-    std::process::Command::new("cargo")
-        .args(&["build", "--release", "-p", "WindowManager"])
-        .status()?;
+    std::process::Command::new("cargo").args(&["build", "--release", "-p", "WindowManager"]).status()?;
     println!("Build complete");
 
     // Step 5: Load library

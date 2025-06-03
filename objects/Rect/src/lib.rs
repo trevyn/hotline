@@ -16,10 +16,7 @@ hotline::object!({
         }
 
         pub fn contains_point(&mut self, point_x: f64, point_y: f64) -> bool {
-            point_x >= self.x
-                && point_x <= self.x + self.width
-                && point_y >= self.y
-                && point_y <= self.y + self.height
+            point_x >= self.x && point_x <= self.x + self.width && point_y >= self.y && point_y <= self.y + self.height
         }
 
         pub fn position(&mut self) -> (f64, f64) {
@@ -35,13 +32,7 @@ hotline::object!({
             self.y += dy;
         }
 
-        pub fn render(
-            &mut self,
-            buffer: &mut [u8],
-            buffer_width: i64,
-            buffer_height: i64,
-            pitch: i64,
-        ) {
+        pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             // Draw rectangle by setting pixels
             let x_start = (self.x as i32).max(0) as u32;
             let y_start = (self.y as i32).max(0) as u32;

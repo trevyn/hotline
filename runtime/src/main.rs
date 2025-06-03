@@ -1,14 +1,14 @@
+use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use runtime::{DirectRuntime, direct_call};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use std::any::Any;
-use std::time::Duration;
-use notify::{RecommendedWatcher, RecursiveMode, Watcher, Config};
-use std::sync::mpsc::{channel, TryRecvError};
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::mpsc::{TryRecvError, channel};
+use std::time::Duration;
 use xxhash_rust::xxh3::xxh3_64;
 
 fn main() -> Result<(), String> {
@@ -30,10 +30,10 @@ fn main() -> Result<(), String> {
     // Dynamically discover and load libraries from objects directory
     use std::fs;
     use std::path::Path;
-    
+
     let objects_dir = Path::new("objects");
     let mut loaded_libs = Vec::new();
-    
+
     // First, rebuild all libraries at launch
     println!("rebuilding all libraries at launch...");
     if let Ok(entries) = fs::read_dir(objects_dir) {
@@ -47,7 +47,7 @@ fn main() -> Result<(), String> {
                             .args(&["build", "--release", "-p", lib_name])
                             .output()
                             .expect(&format!("failed to build {}", lib_name));
-                        
+
                         if !output.status.success() {
                             eprintln!("failed to build {}: {}", lib_name, String::from_utf8_lossy(&output.stderr));
                         } else {
@@ -58,7 +58,7 @@ fn main() -> Result<(), String> {
             }
         }
     }
-    
+
     if let Ok(entries) = fs::read_dir(objects_dir) {
         for entry in entries {
             if let Ok(entry) = entry {
@@ -72,7 +72,7 @@ fn main() -> Result<(), String> {
                         let lib_path = format!("target/release/lib{}.so", lib_name);
                         #[cfg(target_os = "windows")]
                         let lib_path = format!("target/release/{}.dll", lib_name);
-                        
+
                         // Load library if it exists
                         if Path::new(&lib_path).exists() {
                             if let Err(e) = runtime.hot_reload(&lib_path, lib_name) {
@@ -89,23 +89,24 @@ fn main() -> Result<(), String> {
             }
         }
     }
-    
+
     // Store lib paths for hot reload
     let lib_paths = loaded_libs.clone();
-    
+
     // Set up file watcher for automatic hot reload
     let (tx, rx) = channel();
     let mut watcher = RecommendedWatcher::new(tx, Config::default()).expect("Failed to create file watcher");
-    
+
     // Watch lib.rs files in each object directory and compute initial hashes
     let mut file_hashes: HashMap<String, u64> = HashMap::new();
     for (lib_name, _) in &loaded_libs {
         let lib_rs_path = format!("objects/{}/src/lib.rs", lib_name);
         if Path::new(&lib_rs_path).exists() {
-            watcher.watch(Path::new(&lib_rs_path), RecursiveMode::NonRecursive)
+            watcher
+                .watch(Path::new(&lib_rs_path), RecursiveMode::NonRecursive)
                 .expect(&format!("Failed to watch {}", lib_rs_path));
             println!("Watching {} for changes", lib_rs_path);
-            
+
             // Compute initial hash
             if let Ok(contents) = std::fs::read(&lib_rs_path) {
                 let hash = xxh3_64(&contents);
@@ -115,15 +116,13 @@ fn main() -> Result<(), String> {
     }
 
     // Create window manager instance
-    let window_manager = runtime
-        .create_from_lib("libWindowManager", "WindowManager")
-        .expect("Failed to create WindowManager");
+    let window_manager =
+        runtime.create_from_lib("libWindowManager", "WindowManager").expect("Failed to create WindowManager");
 
     // Create texture once outside the loop
-    let mut texture = texture_creator
-        .create_texture_streaming(PixelFormatEnum::ARGB8888, 800, 600)
-        .map_err(|e| e.to_string())?;
-    
+    let mut texture =
+        texture_creator.create_texture_streaming(PixelFormatEnum::ARGB8888, 800, 600).map_err(|e| e.to_string())?;
+
     'running: loop {
         // Check for file system events
         match rx.try_recv() {
@@ -133,25 +132,25 @@ fn main() -> Result<(), String> {
                     for (lib_name, lib_path) in &lib_paths {
                         let lib_rs_path = format!("objects/{}/src/lib.rs", lib_name);
                         let lib_rs_pathbuf = PathBuf::from(&lib_rs_path);
-                        
+
                         if event.paths.iter().any(|p| p.ends_with(&lib_rs_pathbuf)) {
                             // Read file and compute hash
                             if let Ok(contents) = std::fs::read(&lib_rs_path) {
                                 let new_hash = xxh3_64(&contents);
                                 let old_hash = file_hashes.get(lib_name).copied().unwrap_or(0);
-                                
+
                                 if new_hash != old_hash {
                                     println!("Detected change in {}, rebuilding and reloading...", lib_name);
-                                    
+
                                     // Update hash
                                     file_hashes.insert(lib_name.clone(), new_hash);
-                                    
+
                                     // Rebuild the specific library
                                     std::process::Command::new("cargo")
                                         .args(&["build", "--release", "-p", lib_name])
                                         .status()
                                         .expect(&format!("Failed to build {}", lib_name));
-                                    
+
                                     // Reload the library
                                     if let Err(e) = runtime.hot_reload(lib_path, lib_name) {
                                         eprintln!("Failed to reload {} lib: {}", lib_name, e);
@@ -165,12 +164,12 @@ fn main() -> Result<(), String> {
                     }
                 }
             }
-            Err(TryRecvError::Empty) => {},
+            Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
                 eprintln!("File watcher disconnected");
             }
         }
-        
+
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
 
@@ -181,33 +180,18 @@ fn main() -> Result<(), String> {
                 }
                 Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
                     // Pass event to WindowManager
-                    direct_call!(
-                        runtime,
-                        &window_manager,
-                        WindowManager,
-                        handle_mouse_down(x as f64, y as f64)
-                    )
-                    .expect("Failed to handle mouse down");
+                    direct_call!(runtime, &window_manager, WindowManager, handle_mouse_down(x as f64, y as f64))
+                        .expect("Failed to handle mouse down");
                 }
                 Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
                     // Pass event to WindowManager
-                    direct_call!(
-                        runtime,
-                        &window_manager,
-                        WindowManager,
-                        handle_mouse_up(x as f64, y as f64)
-                    )
-                    .expect("Failed to handle mouse up");
+                    direct_call!(runtime, &window_manager, WindowManager, handle_mouse_up(x as f64, y as f64))
+                        .expect("Failed to handle mouse up");
                 }
                 Event::MouseMotion { x, y, .. } => {
                     // Pass event to WindowManager
-                    direct_call!(
-                        runtime,
-                        &window_manager,
-                        WindowManager,
-                        handle_mouse_motion(x as f64, y as f64)
-                    )
-                    .expect("Failed to handle mouse motion");
+                    direct_call!(runtime, &window_manager, WindowManager, handle_mouse_motion(x as f64, y as f64))
+                        .expect("Failed to handle mouse motion");
                 }
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {

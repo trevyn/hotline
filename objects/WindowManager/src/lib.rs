@@ -66,7 +66,7 @@ hotline::object!({
                 // Check if this rect contains the point
                 if rect_handle.contains_point(x, y) {
                     hit_index = Some(i);
-                    
+
                     // Get rect position for offset calculation
                     hit_position = rect_handle.position();
                     break;
@@ -89,12 +89,14 @@ hotline::object!({
                 // Create HighlightLens for selected rect
                 if let Some(hl_obj) = crate::with_library_registry(|registry| {
                     registry.call_constructor("libHighlightLens", "HighlightLens", hotline::RUSTC_COMMIT).ok()
-                }).flatten() {
+                })
+                .flatten()
+                {
                     let mut hl_handle = HighlightLens::from_handle(Arc::new(Mutex::new(hl_obj)));
-                    
-                    // Set the target to the selected rect  
+
+                    // Set the target to the selected rect
                     hl_handle.set_target(rect_handle.handle().clone());
-                    
+
                     self.highlight_lens = Some(hl_handle);
                 }
             } else {
@@ -117,15 +119,16 @@ hotline::object!({
                 let new_rect = crate::with_library_registry(|registry| {
                     if let Ok(rect_obj) = registry.call_constructor("libRect", "Rect", hotline::RUSTC_COMMIT) {
                         let mut rect_handle = Rect::from_handle(Arc::new(Mutex::new(rect_obj)));
-                        
+
                         // Initialize the rect with position and size
                         rect_handle.initialize(rect_x, rect_y, width, height);
-                        
+
                         Some(rect_handle)
                     } else {
                         None
                     }
-                }).flatten();
+                })
+                .flatten();
 
                 if let Some(rect_handle) = new_rect {
                     // Add to our rects list
@@ -145,24 +148,18 @@ hotline::object!({
 
                     // Get current position
                     let (current_x, current_y) = selected_handle.position();
-                    
+
                     // Calculate delta movement
                     let dx = new_x - current_x;
                     let dy = new_y - current_y;
-                    
+
                     // Move the rect
                     selected_handle.move_by(dx, dy);
                 }
             }
         }
 
-        pub fn render(
-            &mut self,
-            buffer: &mut [u8],
-            buffer_width: i64,
-            buffer_height: i64,
-            pitch: i64,
-        ) {
+        pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             // Render all rects
             for rect_handle in &mut self.rects {
                 rect_handle.render(buffer, buffer_width, buffer_height, pitch);

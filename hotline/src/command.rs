@@ -17,23 +17,15 @@ impl LibraryRegistry {
 
     pub fn load(&self, lib_path: &str) -> Result<String, Box<dyn std::error::Error>> {
         let lib = unsafe { Library::new(lib_path)? };
-        let lib_name = std::path::Path::new(lib_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or("invalid lib path")?
-            .to_string();
+        let lib_name =
+            std::path::Path::new(lib_path).file_stem().and_then(|s| s.to_str()).ok_or("invalid lib path")?.to_string();
 
         let mut libs = self.libs.lock().unwrap();
         libs.insert(lib_name.clone(), Arc::new(lib));
         Ok(lib_name)
     }
 
-    pub fn with_symbol<T, R, F>(
-        &self,
-        lib_name: &str,
-        symbol_name: &str,
-        f: F,
-    ) -> Result<R, Box<dyn std::error::Error>>
+    pub fn with_symbol<T, R, F>(&self, lib_name: &str, symbol_name: &str, f: F) -> Result<R, Box<dyn std::error::Error>>
     where
         T: 'static,
         F: FnOnce(&Symbol<T>) -> R,
@@ -43,11 +35,7 @@ impl LibraryRegistry {
             let libs = self.libs.lock().unwrap();
             libs.get(lib_name)
                 .ok_or_else(|| {
-                    format!(
-                        "library '{}' not loaded. Available: {:?}",
-                        lib_name,
-                        libs.keys().collect::<Vec<_>>()
-                    )
+                    format!("library '{}' not loaded. Available: {:?}", lib_name, libs.keys().collect::<Vec<_>>())
                 })?
                 .clone()
         }; // mutex is dropped here
@@ -63,8 +51,7 @@ impl LibraryRegistry {
         type_name: &str,
         rustc_commit: &str,
     ) -> Result<Box<dyn HotlineObject>, Box<dyn std::error::Error>> {
-        let constructor_symbol =
-            format!("{}__new____to__Box_lt_dyn_HotlineObject_gt__{}", type_name, rustc_commit);
+        let constructor_symbol = format!("{}__new____to__Box_lt_dyn_HotlineObject_gt__{}", type_name, rustc_commit);
         type ConstructorFn = fn() -> Box<dyn HotlineObject>;
 
         self.with_symbol::<ConstructorFn, _, _>(lib_name, &constructor_symbol, |symbol| symbol())

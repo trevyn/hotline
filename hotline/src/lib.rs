@@ -45,10 +45,7 @@ pub struct Like<T> {
 
 impl<T> Like<T> {
     pub fn new(handle: ObjectHandle) -> Self {
-        Self {
-            handle,
-            _phantom: std::marker::PhantomData,
-        }
+        Self { handle, _phantom: std::marker::PhantomData }
     }
 
     pub fn handle(&self) -> &ObjectHandle {
@@ -84,12 +81,9 @@ pub struct ObjectRef<T> {
 
 impl<T> ObjectRef<T> {
     pub fn new(inner: ObjectHandle) -> Self {
-        Self {
-            inner,
-            _phantom: PhantomData,
-        }
+        Self { inner, _phantom: PhantomData }
     }
-    
+
     pub fn inner(&self) -> &ObjectHandle {
         &self.inner
     }
@@ -97,9 +91,6 @@ impl<T> ObjectRef<T> {
 
 impl<T> Clone for ObjectRef<T> {
     fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            _phantom: PhantomData,
-        }
+        Self { inner: self.inner.clone(), _phantom: PhantomData }
     }
 }

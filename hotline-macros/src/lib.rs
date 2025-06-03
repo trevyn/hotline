@@ -5,11 +5,9 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use syn::{
-    Fields, FnArg, GenericArgument, ImplItem, ItemImpl, ItemStruct, Pat, PathArguments, ReturnType,
-    Type, braced,
+    Fields, FnArg, GenericArgument, ImplItem, ItemImpl, ItemStruct, Pat, PathArguments, ReturnType, Type, braced,
     parse::{Parse, ParseStream},
 };
-
 
 struct ObjectInput {
     struct_item: ItemStruct,
@@ -21,27 +19,24 @@ impl Parse for ObjectInput {
         let content;
         braced!(content in input);
 
-        let struct_item: ItemStruct = content
-            .parse()
-            .map_err(|e| syn::Error::new(e.span(), "Expected a struct definition"))?;
-        let impl_item: ItemImpl = content
-            .parse()
-            .map_err(|e| syn::Error::new(e.span(), "Expected an impl block after the struct"))?;
+        let struct_item: ItemStruct =
+            content.parse().map_err(|e| syn::Error::new(e.span(), "Expected a struct definition"))?;
+        let impl_item: ItemImpl =
+            content.parse().map_err(|e| syn::Error::new(e.span(), "Expected an impl block after the struct"))?;
 
         Ok(ObjectInput { struct_item, impl_item })
     }
 }
 
-
 fn find_referenced_object_types(struct_item: &ItemStruct, impl_item: &ItemImpl) -> std::collections::HashSet<String> {
     use std::collections::HashSet;
     use syn::visit::{self, Visit};
-    
+
     struct TypeVisitor {
         types: HashSet<String>,
         current_type: String,
     }
-    
+
     impl<'ast> Visit<'ast> for TypeVisitor {
         fn visit_type(&mut self, ty: &'ast Type) {
             if let Type::Path(type_path) = ty {
@@ -51,21 +46,21 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_item: &ItemImpl) 
                     if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
                         && name != self.current_type
                         && name != "Self"
-                        && !is_standard_type(&name) {
+                        && !is_standard_type(&name)
+                    {
                         self.types.insert(name);
                     }
                 }
             }
             visit::visit_type(self, ty);
         }
-        
+
         fn visit_expr(&mut self, expr: &'ast syn::Expr) {
             // Look for string literals that might be object names (e.g., create_object("Rect"))
             if let syn::Expr::Lit(expr_lit) = expr {
                 if let syn::Lit::Str(lit_str) = &expr_lit.lit {
                     let value = lit_str.value();
-                    if value.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                        && value != self.current_type {
+                    if value.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && value != self.current_type {
                         self.types.insert(value);
                     }
                 }
@@ -73,73 +68,89 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_item: &ItemImpl) 
             visit::visit_expr(self, expr);
         }
     }
-    
-    let mut visitor = TypeVisitor {
-        types: HashSet::new(),
-        current_type: struct_item.ident.to_string(),
-    };
-    
+
+    let mut visitor = TypeVisitor { types: HashSet::new(), current_type: struct_item.ident.to_string() };
+
     // Visit struct fields
     visitor.visit_item_struct(struct_item);
-    
+
     // Visit impl methods
     visitor.visit_item_impl(impl_item);
-    
+
     visitor.types
 }
 
 fn is_standard_type(name: &str) -> bool {
-    matches!(name, "String" | "Vec" | "Option" | "Result" | "Box" | "Arc" | "Mutex" | 
-             "HashMap" | "BTreeMap" | "HashSet" | "BTreeSet" | "Cell" | "RefCell" |
-             "Rc" | "Weak" | "PhantomData" | "Pin" | "Future" | "Stream")
+    matches!(
+        name,
+        "String"
+            | "Vec"
+            | "Option"
+            | "Result"
+            | "Box"
+            | "Arc"
+            | "Mutex"
+            | "HashMap"
+            | "BTreeMap"
+            | "HashSet"
+            | "BTreeSet"
+            | "Cell"
+            | "RefCell"
+            | "Rc"
+            | "Weak"
+            | "PhantomData"
+            | "Pin"
+            | "Future"
+            | "Stream"
+    )
 }
 
 fn generate_typed_wrappers(types: &std::collections::HashSet<String>, rustc_commit: &str) -> proc_macro2::TokenStream {
     if types.is_empty() {
         return quote! {};
     }
-    
+
     let mut wrapper_code = Vec::new();
-    
+
     for type_name in types {
         // Check if the object actually exists
         let lib_path = find_object_lib_file(type_name);
         if !lib_path.exists() {
             continue;
         }
-        
+
         let type_ident = quote::format_ident!("{}", type_name);
-        
+
         // Generate the typed wrapper as a local type alias/newtype
         wrapper_code.push(quote! {
             #[derive(Clone)]
             pub struct #type_ident(::hotline::ObjectHandle);
-            
+
             impl #type_ident {
                 pub fn from_handle(handle: ::hotline::ObjectHandle) -> Self {
                     Self(handle)
                 }
-                
+
                 pub fn handle(&self) -> &::hotline::ObjectHandle {
                     &self.0
                 }
             }
-            
+
             impl ::std::ops::Deref for #type_ident {
                 type Target = ::hotline::ObjectHandle;
-                
+
                 fn deref(&self) -> &Self::Target {
                     &self.0
                 }
             }
-            
+
             impl ::std::ops::DerefMut for #type_ident {
                 fn deref_mut(&mut self) -> &mut Self::Target {
                     &mut self.0
                 }
             }
         });
-        
+
         // Read and parse the object's methods
         if let Ok(content) = fs::read_to_string(&lib_path) {
             if let Ok(file) = syn::parse_file(&content) {
@@ -149,34 +160,37 @@ fn generate_typed_wrappers(types: &std::collections::HashSet<String>, rustc_comm
             }
         }
     }
-    
+
     quote! {
         #(#wrapper_code)*
     }
 }
 
-fn extract_object_methods_for_wrapper(file: &syn::File, _type_name: &str) -> Option<Vec<(String, Vec<String>, Vec<Type>, Type)>> {
-    use syn::{Item, ImplItem, FnArg, Pat, ReturnType};
-    
+fn extract_object_methods_for_wrapper(
+    file: &syn::File,
+    _type_name: &str,
+) -> Option<Vec<(String, Vec<String>, Vec<Type>, Type)>> {
+    use syn::{FnArg, ImplItem, Item, Pat, ReturnType};
+
     for item in &file.items {
         if let Item::Macro(item_macro) = item {
-            let is_object_macro = item_macro.mac.path.is_ident("object") || 
-                (item_macro.mac.path.segments.len() == 2 && 
-                 item_macro.mac.path.segments[0].ident == "hotline" &&
-                 item_macro.mac.path.segments[1].ident == "object");
-            
+            let is_object_macro = item_macro.mac.path.is_ident("object")
+                || (item_macro.mac.path.segments.len() == 2
+                    && item_macro.mac.path.segments[0].ident == "hotline"
+                    && item_macro.mac.path.segments[1].ident == "object");
+
             if is_object_macro {
                 if let Ok(obj_input) = syn::parse2::<ObjectInput>(item_macro.mac.tokens.clone()) {
                     let mut methods = Vec::new();
-                    
+
                     for impl_item in &obj_input.impl_item.items {
                         if let ImplItem::Fn(method) = impl_item {
                             if matches!(method.vis, syn::Visibility::Public(_)) {
                                 let method_name = method.sig.ident.to_string();
-                                
+
                                 let mut param_names = Vec::new();
                                 let mut param_types = Vec::new();
-                                
+
                                 for arg in method.sig.inputs.iter().skip(1) {
                                     if let FnArg::Typed(typed) = arg {
                                         if let Pat::Ident(pat_ident) = &*typed.pat {
@@ -185,17 +199,17 @@ fn extract_object_methods_for_wrapper(file: &syn::File, _type_name: &str) -> Opt
                                         }
                                     }
                                 }
-                                
+
                                 let return_type = match &method.sig.output {
                                     ReturnType::Default => syn::parse_quote! { () },
                                     ReturnType::Type(_, ty) => (**ty).clone(),
                                 };
-                                
+
                                 methods.push((method_name, param_names, param_types, return_type));
                             }
                         }
                     }
-                    
+
                     return Some(methods);
                 }
             }
@@ -204,40 +218,51 @@ fn extract_object_methods_for_wrapper(file: &syn::File, _type_name: &str) -> Opt
     None
 }
 
-fn generate_methods_for_type(type_name: &str, methods: &[(String, Vec<String>, Vec<Type>, Type)], rustc_commit: &str) -> proc_macro2::TokenStream {
+fn generate_methods_for_type(
+    type_name: &str,
+    methods: &[(String, Vec<String>, Vec<Type>, Type)],
+    rustc_commit: &str,
+) -> proc_macro2::TokenStream {
     let type_ident = quote::format_ident!("{}", type_name);
     let mut impl_methods = Vec::new();
-    
+
     for (method_name, param_names, param_types, return_type) in methods {
         let method_ident = quote::format_ident!("{}", method_name);
-        let param_idents: Vec<proc_macro2::TokenStream> = param_names.iter().map(|name| {
-            let ident = quote::format_ident!("{}", name);
-            quote! { #ident }
-        }).collect();
-        
+        let param_idents: Vec<proc_macro2::TokenStream> = param_names
+            .iter()
+            .map(|name| {
+                let ident = quote::format_ident!("{}", name);
+                quote! { #ident }
+            })
+            .collect();
+
         let fn_type = quote! {
             unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*) -> #return_type
         };
-        
+
         // Build symbol name
         let params_part = if param_names.is_empty() {
             String::new()
         } else {
-            let param_parts: Vec<String> = param_names.iter().zip(param_types.iter()).map(|(name, ty)| {
-                let type_str = type_to_string(ty);
-                format!("____{}__{}", name, type_str)
-            }).collect();
+            let param_parts: Vec<String> = param_names
+                .iter()
+                .zip(param_types.iter())
+                .map(|(name, ty)| {
+                    let type_str = type_to_string(ty);
+                    format!("____{}__{}", name, type_str)
+                })
+                .collect();
             param_parts.join("")
         };
-        
+
         let return_part = type_to_string(return_type);
-        
+
         let method_impl = quote! {
             pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
                 crate::with_library_registry(|registry| {
                     if let Ok(mut guard) = self.0.lock() {
                         let type_name = guard.type_name();
-                        
+
                         let symbol_name = format!(
                             "{}__{}______obj_mut_dyn_Any{}____to__{}__{}",
                             type_name,
@@ -247,9 +272,9 @@ fn generate_methods_for_type(type_name: &str, methods: &[(String, Vec<String>, V
                             #rustc_commit
                         );
                         let lib_name = format!("lib{}", type_name);
-                        
+
                         let obj_any = guard.as_any_mut();
-                        
+
                         type FnType = #fn_type;
                         registry.with_symbol::<FnType, _, _>(
                             &lib_name,
@@ -262,17 +287,16 @@ fn generate_methods_for_type(type_name: &str, methods: &[(String, Vec<String>, V
                 }).unwrap_or_else(|| panic!("No library registry available for method {}", stringify!(#method_ident)))
             }
         };
-        
+
         impl_methods.push(method_impl);
     }
-    
+
     quote! {
         impl #type_ident {
             #(#impl_methods)*
         }
     }
 }
-
 
 #[proc_macro]
 #[proc_macro_error]
@@ -367,16 +391,13 @@ pub fn object(input: TokenStream) -> TokenStream {
     }
 
     // Generate constructor if Default is derived
-    let has_default = struct_attrs.iter().any(|attr| {
-        attr.path().is_ident("derive") && attr.to_token_stream().to_string().contains("Default")
-    });
+    let has_default = struct_attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("derive") && attr.to_token_stream().to_string().contains("Default"));
 
     let constructor = if has_default {
-        let ctor_fn_name = quote::format_ident!(
-            "{}__new____to__Box_lt_dyn_HotlineObject_gt__{}",
-            struct_name,
-            rustc_commit
-        );
+        let ctor_fn_name =
+            quote::format_ident!("{}__new____to__Box_lt_dyn_HotlineObject_gt__{}", struct_name, rustc_commit);
         quote! {
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
@@ -405,11 +426,8 @@ pub fn object(input: TokenStream) -> TokenStream {
             // Build arg info
             let mut arg_names = Vec::new();
             let mut arg_types = Vec::new();
-            let mut symbol_parts = vec![
-                struct_name.to_string(),
-                method_name.to_string(),
-                "____obj_mut_dyn_Any".to_string(),
-            ];
+            let mut symbol_parts =
+                vec![struct_name.to_string(), method_name.to_string(), "____obj_mut_dyn_Any".to_string()];
 
             // Process arguments (skip self)
             for arg in method.sig.inputs.iter().skip(1) {
@@ -463,14 +481,10 @@ pub fn object(input: TokenStream) -> TokenStream {
         }
     }
 
-
     // Generate a type name getter
     let type_name_fn = {
-        let type_name_fn_name = quote::format_ident!(
-            "{}__get_type_name____obj_ref_dyn_Any__to__str__{}",
-            struct_name,
-            rustc_commit
-        );
+        let type_name_fn_name =
+            quote::format_ident!("{}__get_type_name____obj_ref_dyn_Any__to__str__{}", struct_name, rustc_commit);
         quote! {
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
@@ -532,7 +546,6 @@ pub fn object(input: TokenStream) -> TokenStream {
         }
     };
 
-
     // Generate output
     let output = quote! {
         #struct_item
@@ -554,8 +567,7 @@ pub fn object(input: TokenStream) -> TokenStream {
 
     // Find all object types referenced in the code
     let referenced_types = find_referenced_object_types(&struct_item, &impl_item);
-    
-    
+
     // Generate typed wrappers for referenced objects
     let typed_wrappers = generate_typed_wrappers(&referenced_types, &rustc_commit);
 
@@ -643,7 +655,6 @@ fn type_to_string(ty: &Type) -> String {
     }
 }
 
-
 fn get_rustc_commit_hash() -> String {
     // Try to get from env var first (for when we're building hotline-macros itself)
     if let Ok(hash) = std::env::var("RUSTC_COMMIT_HASH") {
@@ -686,8 +697,6 @@ fn find_object_lib_file(type_name: &str) -> std::path::PathBuf {
             break;
         }
     }
-    
+
     current_dir.join("objects").join(type_name).join("src").join("lib.rs")
 }
-
-

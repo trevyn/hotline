@@ -15,13 +15,7 @@ hotline::object!({
             self.highlight_color = (b, g, r, a);
         }
 
-        pub fn render(
-            &mut self,
-            buffer: &mut [u8],
-            buffer_width: i64,
-            buffer_height: i64,
-            pitch: i64,
-        ) {
+        pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             if let Some(ref mut target) = self.target {
                 // Only draw highlight border (rect is already rendered by WindowManager)
                 // Now just call bounds() directly!
