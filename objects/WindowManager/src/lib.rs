@@ -2,6 +2,15 @@ use hotline::{ObjectHandle, object};
 use std::sync::{Arc, Mutex};
 
 object!({
+    use_prototypes! {
+        Rect.initialize,
+        Rect.contains_point,
+        Rect.position,
+        Rect.move_by,
+        Rect.render,
+        HighlightLens.set_target
+    }
+    
     #[derive(Default)]
     pub struct WindowManager {
         rects: Vec<ObjectHandle>,
@@ -63,48 +72,14 @@ object!({
             let mut hit_index = None;
             let mut hit_position = (0.0, 0.0);
 
-            for (i, rect_handle) in self.rects.iter().enumerate().rev() {
-                // Check if this rect contains the point using dynamic dispatch
-                if let Some(contains) = with_library_registry(|registry| {
-                    if let Ok(mut rect_guard) = rect_handle.lock() {
-                        let rect_any = rect_guard.as_any_mut();
-                        let symbol_name = format!(
-                            "Rect__contains_point______obj_mut_dyn_Any____point_x__f64____point_y__f64____to__bool__{}",
-                            hotline::RUSTC_COMMIT
-                        );
-
-                        type ContainsFn =
-                            unsafe extern "Rust" fn(&mut dyn std::any::Any, f64, f64) -> bool;
-                        registry
-                            .with_symbol::<ContainsFn, _, _>(
-                                "libRect",
-                                &symbol_name,
-                                |contains_fn| unsafe { (**contains_fn)(rect_any, x, y) },
-                            )
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    }
-                }) {
-                    if contains {
-                        hit_index = Some(i);
-
-                        // Get rect position for offset calculation
-                        if let Ok(mut rect_guard) = rect_handle.lock() {
-                            let rect_any = rect_guard.as_any_mut();
-                            if let Some((rx, ry)) = with_library_registry(|registry| {
-                                let symbol_name = format!("Rect__position______obj_mut_dyn_Any____to__tuple_f64_comma_f64__{}", hotline::RUSTC_COMMIT);
-
-                                type PositionFn = unsafe extern "Rust" fn(&mut dyn std::any::Any) -> (f64, f64);
-                                registry.with_symbol::<PositionFn, _, _>("libRect", &symbol_name, |pos_fn| {
-                                    unsafe { (**pos_fn)(rect_any) }
-                                }).ok()
-                            }).flatten() {
-                                hit_position = (rx, ry);
-                            }
-                        }
-                        break;
-                    }
+            for (i, rect_handle) in self.rects.iter_mut().enumerate().rev() {
+                // Check if this rect contains the point
+                if rect_handle.contains_point(x, y) {
+                    hit_index = Some(i);
+                    
+                    // Get rect position for offset calculation
+                    hit_position = rect_handle.position();
+                    break;
                 }
             }
 
@@ -122,27 +97,15 @@ object!({
                 self.dragging = true;
 
                 // Create HighlightLens for selected rect
-                if let Some(highlight_lens) = with_library_registry(|registry| {
-                    if let Ok(hl_obj) = registry.call_constructor("libHighlightLens", "HighlightLens", hotline::RUSTC_COMMIT) {
-                        let hl_handle = Arc::new(Mutex::new(hl_obj));
-
-                        // Set the target to the selected rect
-                        if let Ok(mut hl_guard) = hl_handle.lock() {
-                            let hl_any = hl_guard.as_any_mut();
-                            let set_target_symbol = format!("HighlightLens__set_target______obj_mut_dyn_Any____target__ObjectHandle____to__unit__{}", hotline::RUSTC_COMMIT);
-
-                            type SetTargetFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, ObjectHandle);
-                            let _ = registry.with_symbol::<SetTargetFn, _, _>("libHighlightLens", &set_target_symbol, |set_fn| {
-                                unsafe { (**set_fn)(hl_any, rect_handle.clone()) };
-                            });
-                        }
-
-                        Some(hl_handle)
-                    } else {
-                        None
-                    }
+                if let Some(hl_obj) = with_library_registry(|registry| {
+                    registry.call_constructor("libHighlightLens", "HighlightLens", hotline::RUSTC_COMMIT).ok()
                 }).flatten() {
-                    self.highlight_lens = Some(highlight_lens);
+                    let mut hl_handle = Arc::new(Mutex::new(hl_obj));
+                    
+                    // Set the target to the selected rect
+                    hl_handle.set_target(rect_handle.clone());
+                    
+                    self.highlight_lens = Some(hl_handle);
                 }
             } else {
                 // No hit - start rect creation
@@ -163,18 +126,11 @@ object!({
                 // Create rect via registry
                 let new_rect = with_library_registry(|registry| {
                     if let Ok(rect_obj) = registry.call_constructor("libRect", "Rect", hotline::RUSTC_COMMIT) {
-                        let rect_handle = Arc::new(Mutex::new(rect_obj));
+                        let mut rect_handle = Arc::new(Mutex::new(rect_obj));
+                        
                         // Initialize the rect with position and size
-                        if let Ok(mut rect_guard) = rect_handle.lock() {
-                            let rect_any = rect_guard.as_any_mut();
-
-                            // Initialize rect
-                            let init_symbol = format!("Rect__initialize______obj_mut_dyn_Any____x__f64____y__f64____width__f64____height__f64____to__unit__{}", hotline::RUSTC_COMMIT);
-                            type InitFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, f64, f64, f64, f64);
-                            let _ = registry.with_symbol::<InitFn, _, _>("libRect", &init_symbol, |init_fn| {
-                                unsafe { (**init_fn)(rect_any, rect_x, rect_y, width, height) };
-                            });
-                        }
+                        rect_handle.initialize(rect_x, rect_y, width, height);
+                        
                         Some(rect_handle)
                     } else {
                         None
@@ -192,38 +148,20 @@ object!({
 
         pub fn handle_mouse_motion(&mut self, x: f64, y: f64) {
             if self.dragging {
-                if let Some(ref selected_handle) = self.selected {
+                if let Some(ref mut selected_handle) = self.selected {
                     // Move the selected rect to follow the mouse
                     let new_x = x + self.drag_offset_x;
                     let new_y = y + self.drag_offset_y;
 
-                    if let Ok(mut rect_guard) = selected_handle.lock() {
-                        let rect_any = rect_guard.as_any_mut();
-
-                        // Get current position
-                        if let Some((current_x, current_y)) = with_library_registry(|registry| {
-                            let pos_symbol = format!("Rect__position______obj_mut_dyn_Any____to__tuple_f64_comma_f64__{}", hotline::RUSTC_COMMIT);
-
-                            type PositionFn = unsafe extern "Rust" fn(&mut dyn std::any::Any) -> (f64, f64);
-                            registry.with_symbol::<PositionFn, _, _>("libRect", &pos_symbol, |pos_fn| {
-                                unsafe { (**pos_fn)(rect_any) }
-                            }).ok()
-                        }).flatten() {
-                            // Calculate delta movement
-                            let dx = new_x - current_x;
-                            let dy = new_y - current_y;
-
-                            // Move the rect
-                            with_library_registry(|registry| {
-                                let move_symbol = format!("Rect__move_by______obj_mut_dyn_Any____dx__f64____dy__f64____to__unit__{}", hotline::RUSTC_COMMIT);
-
-                                type MoveFn = unsafe extern "Rust" fn(&mut dyn std::any::Any, f64, f64);
-                                let _ = registry.with_symbol::<MoveFn, _, _>("libRect", &move_symbol, |move_fn| {
-                                    unsafe { (**move_fn)(rect_any, dx, dy) };
-                                });
-                            });
-                        }
-                    }
+                    // Get current position
+                    let (current_x, current_y) = selected_handle.position();
+                    
+                    // Calculate delta movement
+                    let dx = new_x - current_x;
+                    let dy = new_y - current_y;
+                    
+                    // Move the rect
+                    selected_handle.move_by(dx, dy);
                 }
             }
         }
@@ -236,78 +174,13 @@ object!({
             pitch: i64,
         ) {
             // Render all rects
-            for rect_handle in &self.rects {
-                if let Ok(mut rect_guard) = rect_handle.lock() {
-                    let rect_any = rect_guard.as_any_mut();
-
-                    // Call rect's render method
-                    with_library_registry(|registry| {
-                        let render_symbol = format!(
-                            "Rect__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}",
-                            hotline::RUSTC_COMMIT
-                        );
-
-                        type RenderFn = unsafe extern "Rust" fn(
-                            &mut dyn std::any::Any,
-                            &mut [u8],
-                            i64,
-                            i64,
-                            i64,
-                        );
-                        let _ = registry.with_symbol::<RenderFn, _, _>(
-                            "libRect",
-                            &render_symbol,
-                            |render_fn| {
-                                unsafe {
-                                    (**render_fn)(
-                                        rect_any,
-                                        buffer,
-                                        buffer_width,
-                                        buffer_height,
-                                        pitch,
-                                    )
-                                };
-                            },
-                        );
-                    });
-                }
+            for rect_handle in &mut self.rects {
+                rect_handle.render(buffer, buffer_width, buffer_height, pitch);
             }
 
             // Render the highlight lens if we have one (this will render the selected rect with highlight)
-            if let Some(ref hl_handle) = self.highlight_lens {
-                if let Ok(mut hl_guard) = hl_handle.lock() {
-                    let hl_any = hl_guard.as_any_mut();
-
-                    with_library_registry(|registry| {
-                        let render_symbol = format!(
-                            "HighlightLens__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}",
-                            hotline::RUSTC_COMMIT
-                        );
-
-                        type RenderFn = unsafe extern "Rust" fn(
-                            &mut dyn std::any::Any,
-                            &mut [u8],
-                            i64,
-                            i64,
-                            i64,
-                        );
-                        let _ = registry.with_symbol::<RenderFn, _, _>(
-                            "libHighlightLens",
-                            &render_symbol,
-                            |render_fn| {
-                                unsafe {
-                                    (**render_fn)(
-                                        hl_any,
-                                        buffer,
-                                        buffer_width,
-                                        buffer_height,
-                                        pitch,
-                                    )
-                                };
-                            },
-                        );
-                    });
-                }
+            if let Some(ref mut hl_handle) = self.highlight_lens {
+                hl_handle.render(buffer, buffer_width, buffer_height, pitch);
             }
         }
     }
