@@ -1,10 +1,14 @@
 use proc_macro::TokenStream;
 use proc_macro_error2::proc_macro_error;
-use quote::{quote, ToTokens};
-use syn::{parse::{Parse, ParseStream}, ItemStruct, ItemImpl, Fields, Type, PathArguments, GenericArgument, FnArg, ReturnType, ImplItem, Pat, braced};
-use std::process::Command;
+use quote::{ToTokens, quote};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
+use syn::{
+    Fields, FnArg, GenericArgument, ImplItem, ItemImpl, ItemStruct, Pat, PathArguments, ReturnType,
+    Type, braced,
+    parse::{Parse, ParseStream},
+};
 
 struct ObjectInput {
     struct_item: ItemStruct,
@@ -15,16 +19,15 @@ impl Parse for ObjectInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let content;
         braced!(content in input);
-        
-        let struct_item: ItemStruct = content.parse()
+
+        let struct_item: ItemStruct = content
+            .parse()
             .map_err(|e| syn::Error::new(e.span(), "Expected a struct definition"))?;
-        let impl_item: ItemImpl = content.parse()
+        let impl_item: ItemImpl = content
+            .parse()
             .map_err(|e| syn::Error::new(e.span(), "Expected an impl block after the struct"))?;
-        
-        Ok(ObjectInput {
-            struct_item,
-            impl_item,
-        })
+
+        Ok(ObjectInput { struct_item, impl_item })
     }
 }
 
@@ -32,17 +35,17 @@ impl Parse for ObjectInput {
 #[proc_macro_error]
 pub fn object(input: TokenStream) -> TokenStream {
     let ObjectInput { struct_item, impl_item } = syn::parse_macro_input!(input as ObjectInput);
-    
+
     let struct_name = &struct_item.ident;
     let struct_attrs = &struct_item.attrs;
     let struct_fields = &struct_item.fields;
-    
+
     // Get rustc commit hash at macro expansion time
     let rustc_commit = get_rustc_commit_hash();
-    
+
     // Generate field accessors
     let mut field_accessors = Vec::new();
-    
+
     if let Fields::Named(fields) = struct_fields {
         for field in &fields.named {
             // Only generate accessors for public fields
@@ -50,20 +53,23 @@ pub fn object(input: TokenStream) -> TokenStream {
             if !is_public {
                 continue;
             }
-            
+
             let field_name = field.ident.as_ref().unwrap();
             let field_type = &field.ty;
-            
+
             // Only generate accessors for simple types
             if !is_generic_type(field_type) {
                 let type_str = type_to_string(field_type);
-                
+
                 // Getter
                 let getter_fn_name = quote::format_ident!(
                     "{}__get_{}____obj_ref_dyn_Any__to__{}__{}",
-                    struct_name, field_name, type_str, rustc_commit
+                    struct_name,
+                    field_name,
+                    type_str,
+                    rustc_commit
                 );
-                
+
                 field_accessors.push(quote! {
                     #[unsafe(no_mangle)]
                     #[allow(non_snake_case)]
@@ -73,13 +79,17 @@ pub fn object(input: TokenStream) -> TokenStream {
                         instance.#field_name.clone()
                     }
                 });
-                
+
                 // Setter
                 let setter_fn_name = quote::format_ident!(
                     "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
-                    struct_name, field_name, field_name, type_str, rustc_commit
+                    struct_name,
+                    field_name,
+                    field_name,
+                    type_str,
+                    rustc_commit
                 );
-                
+
                 field_accessors.push(quote! {
                     #[unsafe(no_mangle)]
                     #[allow(non_snake_case)]
@@ -92,17 +102,17 @@ pub fn object(input: TokenStream) -> TokenStream {
             }
         }
     }
-    
+
     // Generate constructor if Default is derived
     let has_default = struct_attrs.iter().any(|attr| {
-        attr.path().is_ident("derive") && 
-        attr.to_token_stream().to_string().contains("Default")
+        attr.path().is_ident("derive") && attr.to_token_stream().to_string().contains("Default")
     });
-    
+
     let constructor = if has_default {
         let ctor_fn_name = quote::format_ident!(
             "{}__new____to__Box_lt_dyn_HotlineObject_gt__{}",
-            struct_name, rustc_commit
+            struct_name,
+            rustc_commit
         );
         quote! {
             #[unsafe(no_mangle)]
@@ -114,11 +124,11 @@ pub fn object(input: TokenStream) -> TokenStream {
     } else {
         quote! {}
     };
-    
+
     // Generate method wrappers and collect signatures
     let mut method_wrappers = Vec::new();
     let mut method_signatures = Vec::new();
-    
+
     for item in &impl_item.items {
         if let ImplItem::Fn(method) = item {
             // Only generate extern functions for pub methods
@@ -126,10 +136,10 @@ pub fn object(input: TokenStream) -> TokenStream {
             if !is_public {
                 continue;
             }
-            
+
             let method_name = &method.sig.ident;
             let method_output = &method.sig.output;
-            
+
             // Build arg info
             let mut arg_names = Vec::new();
             let mut arg_types = Vec::new();
@@ -138,7 +148,7 @@ pub fn object(input: TokenStream) -> TokenStream {
                 method_name.to_string(),
                 "____obj_mut_dyn_Any".to_string(),
             ];
-            
+
             // Process arguments (skip self)
             for arg in method.sig.inputs.iter().skip(1) {
                 if let FnArg::Typed(typed) = arg {
@@ -146,14 +156,14 @@ pub fn object(input: TokenStream) -> TokenStream {
                         let arg_name = &pat_ident.ident;
                         let arg_type = &*typed.ty;
                         let type_str = type_to_string(&arg_type);
-                        
+
                         arg_names.push(arg_name);
                         arg_types.push(arg_type);
                         symbol_parts.push(format!("__{}__{}", arg_name, type_str));
                     }
                 }
             }
-            
+
             // Add return type
             let return_type_str = match method_output {
                 ReturnType::Default => "unit".to_string(),
@@ -161,9 +171,9 @@ pub fn object(input: TokenStream) -> TokenStream {
             };
             symbol_parts.push(format!("__to__{}", return_type_str));
             symbol_parts.push(rustc_commit.clone());
-            
+
             let wrapper_fn_name = quote::format_ident!("{}", symbol_parts.join("__"));
-            
+
             let wrapper = quote! {
                 #[unsafe(no_mangle)]
                 #[allow(non_snake_case)]
@@ -176,18 +186,16 @@ pub fn object(input: TokenStream) -> TokenStream {
                     instance.#method_name(#(#arg_names),*)
                 }
             };
-            
+
             method_wrappers.push(wrapper);
-            
+
             // Collect signature for this method
-            let param_types: Vec<String> = arg_types.iter()
-                .map(|ty| type_to_string(ty))
-                .collect();
+            let param_types: Vec<String> = arg_types.iter().map(|ty| type_to_string(ty)).collect();
             let return_type = match method_output {
                 ReturnType::Default => "()".to_string(),
                 ReturnType::Type(_, ty) => ty.to_token_stream().to_string(),
             };
-            
+
             method_signatures.push(format!(
                 "{}:{}:{}",
                 method_name,
@@ -196,15 +204,16 @@ pub fn object(input: TokenStream) -> TokenStream {
             ));
         }
     }
-    
+
     // Write signatures to file
     write_signatures(&struct_name.to_string(), &method_signatures);
-    
+
     // Generate a type name getter
     let type_name_fn = {
         let type_name_fn_name = quote::format_ident!(
             "{}__get_type_name____obj_ref_dyn_Any__to__str__{}",
-            struct_name, rustc_commit
+            struct_name,
+            rustc_commit
         );
         quote! {
             #[unsafe(no_mangle)]
@@ -217,33 +226,30 @@ pub fn object(input: TokenStream) -> TokenStream {
             }
         }
     };
-    
+
     // Generate HotlineObject trait implementation
     let trait_impl = quote! {
         impl ::hotline::HotlineObject for #struct_name {
             fn type_name(&self) -> &'static str {
                 stringify!(#struct_name)
             }
-            
+
             fn as_any(&self) -> &dyn ::std::any::Any {
                 self
             }
-            
+
             fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any {
                 self
             }
         }
     };
-    
+
     // Generate init function for setting library registry
-    let init_fn_name = quote::format_ident!(
-        "{}__init__registry__{}",
-        struct_name, rustc_commit
-    );
-    
+    let init_fn_name = quote::format_ident!("{}__init__registry__{}", struct_name, rustc_commit);
+
     let init_function = quote! {
         static mut LIBRARY_REGISTRY: Option<*const ::hotline::LibraryRegistry> = None;
-        
+
         #[unsafe(no_mangle)]
         #[allow(non_snake_case)]
         pub extern "C" fn #init_fn_name(registry: *const ::hotline::LibraryRegistry) {
@@ -251,7 +257,7 @@ pub fn object(input: TokenStream) -> TokenStream {
                 LIBRARY_REGISTRY = Some(registry);
             }
         }
-        
+
         pub fn with_library_registry<F, R>(f: F) -> Option<R>
         where
             F: FnOnce(&::hotline::LibraryRegistry) -> R,
@@ -261,26 +267,26 @@ pub fn object(input: TokenStream) -> TokenStream {
             }
         }
     };
-    
+
     // Generate output
     let output = quote! {
         #struct_item
-        
+
         #impl_item
-        
+
         #trait_impl
-        
+
         #constructor
-        
+
         #(#field_accessors)*
-        
+
         #(#method_wrappers)*
-        
+
         #type_name_fn
-        
+
         #init_function
     };
-    
+
     TokenStream::from(output)
 }
 
@@ -309,7 +315,7 @@ fn type_to_string(ty: &Type) -> String {
                         result.push_str("_");
                     }
                     result.push_str(&segment.ident.to_string());
-                    
+
                     match &segment.arguments {
                         PathArguments::AngleBracketed(args) => {
                             result.push_str("_lt_");
@@ -366,8 +372,7 @@ fn write_signatures(struct_name: &str, signatures: &[String]) {
     // Get the workspace root by looking for Cargo.toml
     let mut current_dir = std::env::current_dir().unwrap();
     loop {
-        if current_dir.join("Cargo.toml").exists() && 
-           current_dir.join("signatures").exists() {
+        if current_dir.join("Cargo.toml").exists() && current_dir.join("signatures").exists() {
             break;
         }
         if !current_dir.pop() {
@@ -384,10 +389,10 @@ fn write_signatures(struct_name: &str, signatures: &[String]) {
             break;
         }
     }
-    
+
     let signatures_dir = current_dir.join("signatures");
     fs::create_dir_all(&signatures_dir).ok();
-    
+
     let sig_file = signatures_dir.join(format!("{}.sig", struct_name));
     let content = signatures.join("\n");
     fs::write(&sig_file, content).ok();
@@ -398,16 +403,13 @@ fn get_rustc_commit_hash() -> String {
     if let Ok(hash) = std::env::var("RUSTC_COMMIT_HASH") {
         return hash;
     }
-    
+
     // Otherwise, get it directly from rustc
     let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
-    let output = Command::new(rustc)
-        .arg("-vV")
-        .output()
-        .expect("Failed to execute rustc");
-    
+    let output = Command::new(rustc).arg("-vV").output().expect("Failed to execute rustc");
+
     let version_info = String::from_utf8(output.stdout).expect("Invalid UTF-8");
-    
+
     // Extract commit hash (first 9 chars)
     version_info
         .lines()

@@ -21,7 +21,7 @@ fn main() -> Result<(), String> {
     let mut event_pump = sdl_context.event_pump()?;
 
     let mut runtime = DirectRuntime::new();
-    
+
     // Build and load Rect first (dependency of WindowManager)
     std::process::Command::new("cargo")
         .args(&["build", "--release", "-p", "rect"])
@@ -68,10 +68,10 @@ fn main() -> Result<(), String> {
     runtime.hot_reload(wm_path, "WindowManager").expect("Failed to load WindowManager library");
 
     // Create window manager instance
-    let window_manager = runtime.create_from_lib("libWindowManager", "WindowManager")
+    let window_manager = runtime
+        .create_from_lib("libWindowManager", "WindowManager")
         .expect("Failed to create WindowManager");
-    
-    
+
     // Create texture once outside the loop
     let mut texture = texture_creator
         .create_texture_streaming(PixelFormatEnum::ARGB8888, 800, 600)
@@ -87,18 +87,33 @@ fn main() -> Result<(), String> {
                 }
                 Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
                     // Pass event to WindowManager
-                    direct_call!(runtime, &window_manager, WindowManager, handle_mouse_down(x as f64, y as f64))
-                        .expect("Failed to handle mouse down");
+                    direct_call!(
+                        runtime,
+                        &window_manager,
+                        WindowManager,
+                        handle_mouse_down(x as f64, y as f64)
+                    )
+                    .expect("Failed to handle mouse down");
                 }
                 Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
-                    // Pass event to WindowManager  
-                    direct_call!(runtime, &window_manager, WindowManager, handle_mouse_up(x as f64, y as f64))
-                        .expect("Failed to handle mouse up");
+                    // Pass event to WindowManager
+                    direct_call!(
+                        runtime,
+                        &window_manager,
+                        WindowManager,
+                        handle_mouse_up(x as f64, y as f64)
+                    )
+                    .expect("Failed to handle mouse up");
                 }
                 Event::MouseMotion { x, y, .. } => {
                     // Pass event to WindowManager
-                    direct_call!(runtime, &window_manager, WindowManager, handle_mouse_motion(x as f64, y as f64))
-                        .expect("Failed to handle mouse motion");
+                    direct_call!(
+                        runtime,
+                        &window_manager,
+                        WindowManager,
+                        handle_mouse_motion(x as f64, y as f64)
+                    )
+                    .expect("Failed to handle mouse motion");
                 }
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {
@@ -107,12 +122,12 @@ fn main() -> Result<(), String> {
                         .args(&["build", "--release", "-p", "rect"])
                         .status()
                         .expect("Failed to build rect");
-                        
+
                     std::process::Command::new("cargo")
                         .args(&["build", "--release", "-p", "HighlightLens"])
                         .status()
                         .expect("Failed to build HighlightLens");
-                        
+
                     std::process::Command::new("cargo")
                         .args(&["build", "--release", "-p", "WindowManager"])
                         .status()

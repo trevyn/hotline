@@ -10,7 +10,7 @@ pub use libloading;
 pub const RUSTC_COMMIT: &str = env!("RUSTC_COMMIT_HASH");
 
 pub mod command;
-pub use command::{LibraryRegistry, CommandHandler, CommandRegistry};
+pub use command::{CommandHandler, CommandRegistry, LibraryRegistry};
 
 /// Macro to safely call a symbol from a library
 /// The Symbol must be kept alive until after the function call
@@ -22,7 +22,7 @@ macro_rules! call_symbol {
                 let result = $body;
                 Ok(result)
             }
-            Err(e) => Err(e)
+            Err(e) => Err(e),
         }
     }};
 }
