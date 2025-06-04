@@ -56,7 +56,7 @@ impl TLVManager {
         
         self.keys.insert(lib_path.to_string(), key);
 
-        // Use our own TLV handler instead of the system's
+        // Use our own TLV handler
         let tlv_get_addr = hotline_tlv_get_addr as *const u8;
 
         // Process each TLV section

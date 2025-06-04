@@ -15,6 +15,8 @@ enum LoadedLibrary {
 pub struct LibraryRegistry {
     libs: Arc<Mutex<HashMap<String, LoadedLibrary>>>,
     use_custom_loader: bool,
+    // Keep old libraries mapped to prevent TLV crashes during hot reload
+    old_libs: Arc<Mutex<Vec<LoadedLibrary>>>,
 }
 
 impl LibraryRegistry {
@@ -22,6 +24,7 @@ impl LibraryRegistry {
         Self { 
             libs: Arc::new(Mutex::new(HashMap::new())),
             use_custom_loader: false,
+            old_libs: Arc::new(Mutex::new(Vec::new())),
         }
     }
     
@@ -29,6 +32,7 @@ impl LibraryRegistry {
         Self { 
             libs: Arc::new(Mutex::new(HashMap::new())),
             use_custom_loader: true,
+            old_libs: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -56,7 +60,13 @@ impl LibraryRegistry {
                     println!("{:.1}ms {}", load_time.as_secs_f64() * 1000.0, lib_path);
                     
                     let mut libs = self.libs.lock().unwrap();
-                    libs.insert(lib_name.clone(), LoadedLibrary::Custom(Arc::new(Mutex::new(loader))));
+                    
+                    // If replacing an existing library, move it to old_libs instead of dropping
+                    // This keeps the old code mapped to avoid TLV crashes
+                    if let Some(old_lib) = libs.insert(lib_name.clone(), LoadedLibrary::Custom(Arc::new(Mutex::new(loader)))) {
+                        let mut old_libs = self.old_libs.lock().unwrap();
+                        old_libs.push(old_lib);
+                    }
                     
                     return Ok(lib_name);
                 }
@@ -85,7 +95,12 @@ impl LibraryRegistry {
         // dlopen timing check removed
         
         let mut libs = self.libs.lock().unwrap();
-        libs.insert(lib_name.clone(), LoadedLibrary::Dlopen(Arc::new(lib)));
+        
+        // If replacing an existing library, move it to old_libs
+        if let Some(old_lib) = libs.insert(lib_name.clone(), LoadedLibrary::Dlopen(Arc::new(lib))) {
+            let mut old_libs = self.old_libs.lock().unwrap();
+            old_libs.push(old_lib);
+        }
         
         Ok(lib_name)
     }
