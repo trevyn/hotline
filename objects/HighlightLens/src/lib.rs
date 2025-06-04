@@ -1,5 +1,5 @@
 hotline::object!({
-    #[derive(Clone)]
+    #[derive(Clone, Default)]
     pub struct HighlightLens {
         #[setter]
         target: Option<Rect>,

@@ -78,7 +78,6 @@ hotline::object!({
             
             let (b, g, r, a) = self.color;
             
-            
             for ch in self.text.chars() {
                 if ch == ' ' {
                     cursor_x += font.space_width() as f64;
