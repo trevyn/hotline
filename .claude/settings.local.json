@@ -21,8 +21,6 @@
       "mcp__ide__getDiagnostics"
     ],
     "deny": [
-      "Bash(./target/release/runtime)",
-      "Bash(./target/release/hotline)"
     ]
   },
   "enableAllProjectMcpServers": false

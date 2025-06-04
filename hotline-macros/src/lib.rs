@@ -47,6 +47,13 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImp
 
     impl<'ast> Visit<'ast> for TypeVisitor {
         fn visit_type(&mut self, ty: &'ast Type) {
+            // Check for Like<T> pattern
+            if let Some(inner_ty) = extract_like_type(ty) {
+                // Recursively visit the inner type
+                self.visit_type(inner_ty);
+                return;
+            }
+            
             if let Type::Path(type_path) = ty {
                 if let Some(ident) = type_path.path.get_ident() {
                     let name = ident.to_string();
@@ -73,6 +80,21 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImp
                     }
                 }
             }
+            
+            // Look for method calls like ObjectType::new()
+            if let syn::Expr::Call(expr_call) = expr {
+                if let syn::Expr::Path(path_expr) = &*expr_call.func {
+                    if path_expr.path.segments.len() == 2 {
+                        let type_name = path_expr.path.segments[0].ident.to_string();
+                        let method_name = path_expr.path.segments[1].ident.to_string();
+                        if method_name == "new" && type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
+                            && type_name != self.current_type && !is_standard_type(&type_name) {
+                            self.types.insert(type_name);
+                        }
+                    }
+                }
+            }
+            
             visit::visit_expr(self, expr);
         }
     }
@@ -130,6 +152,21 @@ fn extract_option_type(ty: &Type) -> Option<&Type> {
     None
 }
 
+fn extract_like_type(ty: &Type) -> Option<&Type> {
+    if let Type::Path(type_path) = ty {
+        if let Some(segment) = type_path.path.segments.last() {
+            if segment.ident == "Like" {
+                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                        return Some(inner_ty);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> proc_macro2::TokenStream {
     if types.is_empty() {
         return quote! {};
@@ -153,7 +190,7 @@ fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> proc_
 
             impl #type_ident {
                 pub fn new() -> Self {
-                    let obj = crate::with_library_registry(|registry| {
+                    let obj = with_library_registry(|registry| {
                         registry.call_constructor(concat!("lib", #type_name), #type_name, ::hotline::RUSTC_COMMIT)
                             .expect(&format!("failed to construct {}", #type_name))
                     }).expect("library registry not initialized");
@@ -229,6 +266,21 @@ fn extract_object_methods_for_wrapper(
                         for field in &fields.named {
                             let field_name = field.ident.as_ref().unwrap();
                             let field_type = &field.ty;
+                            
+                            // Check if field is public (for getter generation)
+                            let is_public = matches!(field.vis, syn::Visibility::Public(_));
+                            
+                            // Generate getter methods for public fields
+                            if is_public && !is_generic_type(field_type) {
+                                let getter_method_name = field_name.to_string();
+                                methods.push((
+                                    getter_method_name,
+                                    vec![],
+                                    vec![],
+                                    field_type.clone(),
+                                    ReceiverType::RefMut,
+                                ));
+                            }
                             
                             // Check if field has #[setter] attribute
                             let has_setter = field.attrs.iter().any(|attr| attr.path().is_ident("setter"));
@@ -438,7 +490,7 @@ fn generate_methods_for_type(
                     quote! {
                         pub fn #method_ident(mut self #(, #param_idents: &#param_types)*) -> Self {
                             // Call the setter via FFI
-                            crate::with_library_registry(|registry| {
+                            with_library_registry(|registry| {
                                 if let Ok(mut guard) = self.0.lock() {
                                     let type_name = guard.type_name();
                                     
@@ -496,7 +548,7 @@ fn generate_methods_for_type(
             // For methods that return Self, return the wrapper type
             quote! {
                 pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> Self {
-                    crate::with_library_registry(|registry| {
+                    with_library_registry(|registry| {
                         if let Ok(mut guard) = self.0.lock() {
                             let type_name = guard.type_name();
 
@@ -531,7 +583,7 @@ fn generate_methods_for_type(
         } else {
             quote! {
                 pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
-                    crate::with_library_registry(|registry| {
+                    with_library_registry(|registry| {
                         if let Ok(mut guard) = self.0.lock() {
                             let type_name = guard.type_name();
 
@@ -1116,6 +1168,10 @@ pub fn object(input: TokenStream) -> TokenStream {
     let typed_wrappers = generate_typed_wrappers(&referenced_types, &rustc_commit);
 
     TokenStream::from(quote! {
+        // Define Like as a type alias template
+        #[allow(dead_code)]
+        type Like<T> = T;
+        
         #output
         #typed_wrappers
     })
@@ -1134,6 +1190,11 @@ fn is_generic_type(ty: &Type) -> bool {
 }
 
 fn type_to_string(ty: &Type) -> String {
+    // Handle Like<T> specially - just return T's string representation
+    if let Some(inner_ty) = extract_like_type(ty) {
+        return type_to_string(inner_ty);
+    }
+    
     match ty {
         Type::Path(type_path) => {
             if let Some(ident) = type_path.path.get_ident() {
@@ -1242,6 +1303,36 @@ fn resolve_self_type(ty: Type, type_name: &str) -> Type {
     
     let mut ty = ty;
     SelfResolver { type_name }.visit_type_mut(&mut ty);
+    ty
+}
+
+fn resolve_like_type(ty: Type) -> Type {
+    use syn::visit_mut::{self, VisitMut};
+    
+    struct LikeResolver;
+    
+    impl VisitMut for LikeResolver {
+        fn visit_type_mut(&mut self, ty: &mut Type) {
+            if let Type::Path(type_path) = ty {
+                if type_path.path.segments.len() == 1 {
+                    let segment = &type_path.path.segments[0];
+                    if segment.ident == "Like" {
+                        if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                            if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                                // Replace Like<T> with T
+                                *ty = inner_ty.clone();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            visit_mut::visit_type_mut(self, ty);
+        }
+    }
+    
+    let mut ty = ty;
+    LikeResolver.visit_type_mut(&mut ty);
     ty
 }
 

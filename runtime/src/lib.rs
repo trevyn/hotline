@@ -295,7 +295,7 @@ impl DirectRuntime {
                     // This is a hack - we'll need to pass the buffer differently
                     return Err("render method needs special handling".into());
                 }
-                "clear_selection" | "stop_dragging" if args.is_empty() => {
+                "clear_selection" | "stop_dragging" | "initialize" if args.is_empty() => {
                     let symbol_name =
                         format!("WindowManager__{}______obj_mut_dyn_Any____to__unit__{}", method, RUSTC_COMMIT);
                     type VoidFn = unsafe extern "Rust" fn(&mut dyn Any);

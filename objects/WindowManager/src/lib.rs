@@ -5,6 +5,7 @@ hotline::object!({
         rects: Vec<Rect>,
         selected: Option<Rect>,
         highlight_lens: Option<HighlightLens>, // HighlightLens for selected rect
+        text_renderer: Option<TextRenderer>, // TextRenderer for displaying text
         dragging: bool,
         drag_offset_x: f64,
         drag_offset_y: f64,
@@ -12,6 +13,16 @@ hotline::object!({
     }
 
     impl WindowManager {
+        pub fn initialize(&mut self) {
+            // Initialize text renderer using builder pattern
+            let text_renderer = TextRenderer::new()
+                .with_text("Hello, Hotline!".to_string())
+                .with_x(20.0)
+                .with_y(20.0)
+                .with_color((255, 255, 0, 255)); // Yellow text
+            self.text_renderer = Some(text_renderer);
+        }
+        
         pub fn add_rect(&mut self, rect: Rect) {
             self.rects.push(rect);
         }
@@ -141,6 +152,11 @@ hotline::object!({
             // Render the highlight lens if we have one (this will render the selected rect with highlight)
             if let Some(ref mut hl_handle) = self.highlight_lens {
                 hl_handle.render(buffer, buffer_width, buffer_height, pitch);
+            }
+            
+            // Render text
+            if let Some(ref mut text_renderer) = self.text_renderer {
+                text_renderer.render(buffer, buffer_width, buffer_height, pitch);
             }
         }
     }

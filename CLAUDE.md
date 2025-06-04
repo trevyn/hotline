@@ -1,5 +1,5 @@
 - always raise errors or panic instead of assuming a default or using ok() to hide or using a fallback
-- crates in the `objects` directory are slim and must not have `build.rs` files or dependencies other than `hotline`
+- crates in the `objects` directory are slim and must not have `build.rs` files or dependencies other than `hotline`, unless they are "Loader" objects
 - use alan kay's idea of inter-object messages as "intent tokens", not data passing
 - this is a real implementation, don't hard-code things that should be generic
 - do not use "get" prefix; e.g. "bounds" method instead of "get_bounds"
