@@ -41,7 +41,7 @@ pub fn generate_core_functions(struct_name: &Ident, rustc_commit: &str, has_defa
 
         #[unsafe(no_mangle)]
         #[allow(non_snake_case)]
-        pub extern "C" fn #init_fn(registry: *const ::hotline::LibraryRegistry) {
+        pub extern "Rust" fn #init_fn(registry: *const ::hotline::LibraryRegistry) {
             unsafe { LIBRARY_REGISTRY = Some(registry); }
         }
 
