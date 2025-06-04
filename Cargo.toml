@@ -1,3 +1,10 @@
 [workspace]
 members = ["runtime", "hotline", "objects/*", "hotline-macros"]
 resolver = "2"
+
+[profile.release]
+opt-level = "z"  # optimize for size
+strip = false  # keep symbols for profiling
+lto = false
+codegen-units = 1
+debug = true  # generate debug symbols

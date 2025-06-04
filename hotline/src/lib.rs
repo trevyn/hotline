@@ -10,6 +10,9 @@ pub use libloading;
 pub const RUSTC_COMMIT: &str = env!("RUSTC_COMMIT_HASH");
 
 pub mod command;
+mod macho_loader;
+mod tlv_support;
+
 pub use command::{CommandHandler, CommandRegistry, LibraryRegistry};
 
 /// Macro to safely call a symbol from a library
@@ -27,12 +30,41 @@ macro_rules! call_symbol {
     }};
 }
 
-// Removed thread_local approach - objects now get LibraryRegistry via init function
+// Thread-local storage for the current library registry
+// Now that TLV support is working, we can use this for object creation
+thread_local! {
+    static CURRENT_REGISTRY: std::cell::RefCell<Option<&'static LibraryRegistry>> = std::cell::RefCell::new(None);
+}
+
+// Set the current thread's library registry
+pub fn set_library_registry(registry: &'static LibraryRegistry) {
+    CURRENT_REGISTRY.with(|r| {
+        // Try to borrow. If we can't (because we're already inside with_library_registry),
+        // just skip - we're already in the right context
+        if let Ok(mut borrowed) = r.try_borrow_mut() {
+            *borrowed = Some(registry);
+        }
+        // If we can't borrow, we're already inside a with_library_registry call,
+        // so the registry is already available
+    });
+}
+
+// Access the current thread's library registry
+pub fn with_library_registry<T, F>(f: F) -> Option<T>
+where
+    F: FnOnce(&'static LibraryRegistry) -> T,
+{
+    CURRENT_REGISTRY.with(|r| {
+        r.borrow().as_ref().map(|registry| f(registry))
+    })
+}
 
 pub trait HotlineObject: Any + Send + Sync {
     fn type_name(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn set_registry(&mut self, registry: &'static LibraryRegistry);
+    fn get_registry(&self) -> Option<&'static LibraryRegistry>;
 }
 
 pub type ObjectHandle = Arc<Mutex<Box<dyn HotlineObject>>>;
@@ -53,22 +85,34 @@ impl<T> Like<T> {
     }
 }
 
-// Global registry access for typed objects
-thread_local! {
-    static LIBRARY_REGISTRY: std::cell::RefCell<Option<&'static LibraryRegistry>> = std::cell::RefCell::new(None);
+// Objects now store their own registry reference - no thread_local needed
+
+// Safe wrapper for registry pointer that implements Send + Sync
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct RegistryPtr(Option<std::ptr::NonNull<LibraryRegistry>>);
+
+unsafe impl Send for RegistryPtr {}
+unsafe impl Sync for RegistryPtr {}
+
+impl RegistryPtr {
+    pub fn new() -> Self {
+        Self(None)
+    }
+    
+    pub fn set(&mut self, registry: &'static LibraryRegistry) {
+        self.0 = std::ptr::NonNull::new(registry as *const _ as *mut _);
+    }
+    
+    pub fn get(&self) -> Option<&'static LibraryRegistry> {
+        self.0.map(|ptr| unsafe { &*ptr.as_ptr() })
+    }
 }
 
-pub fn set_library_registry(registry: &'static LibraryRegistry) {
-    LIBRARY_REGISTRY.with(|r| {
-        *r.borrow_mut() = Some(registry);
-    });
-}
-
-pub fn with_library_registry<F, R>(f: F) -> Option<R>
-where
-    F: FnOnce(&LibraryRegistry) -> R,
-{
-    LIBRARY_REGISTRY.with(|r| r.borrow().map(f))
+impl Default for RegistryPtr {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 use std::marker::PhantomData;

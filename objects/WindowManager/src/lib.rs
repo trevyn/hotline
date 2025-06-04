@@ -1,3 +1,5 @@
+use hotline::HotlineObject;
+
 hotline::object!({
     #[derive(Default)]
     pub struct WindowManager {
@@ -13,13 +15,21 @@ hotline::object!({
 
     impl WindowManager {
         pub fn initialize(&mut self) {
-            // Initialize text renderer using builder pattern
-            let text_renderer = TextRenderer::new()
-                .with_text("Hello, Hotline!".to_string())
-                .with_x(20.0)
-                .with_y(20.0)
-                .with_color((0, 255, 255, 255)); // Yellow text in BGRA format
-            self.text_renderer = Some(text_renderer);
+            // Initialize text renderer using the registry stored on this object
+            if let Some(registry) = self.get_registry() {
+                // Set the registry in thread-local storage for TextRenderer::new()
+                ::hotline::set_library_registry(registry);
+                
+                // Now create text renderer
+                let text_renderer = TextRenderer::new()
+                    .with_text("Hello, Hotline!".to_string())
+                    .with_x(20.0)
+                    .with_y(20.0)
+                    .with_color((0, 255, 255, 255)); // Yellow text in BGRA format
+                self.text_renderer = Some(text_renderer);
+            } else {
+                panic!("WindowManager registry not initialized");
+            }
         }
 
         pub fn add_rect(&mut self, rect: Rect) {

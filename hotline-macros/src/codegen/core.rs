@@ -37,32 +37,6 @@ pub fn generate_core_functions(struct_name: &Ident, rustc_commit: &str, has_defa
                 ))
         }
 
-        static LIBRARY_REGISTRY: ::std::sync::OnceLock<&'static ::hotline::LibraryRegistry> = ::std::sync::OnceLock::new();
-
-        #[unsafe(no_mangle)]
-        #[allow(non_snake_case)]
-        pub extern "Rust" fn #init_fn(registry: *const ::hotline::LibraryRegistry) {
-            // validate the pointer before using it
-            if registry.is_null() {
-                panic!("null LibraryRegistry pointer passed to {}", stringify!(#init_fn));
-            }
-            
-            // SAFETY: caller must ensure:
-            // - registry points to a valid LibraryRegistry
-            // - the LibraryRegistry lives for 'static (program lifetime)
-            // - this function is called at most once per library
-            let registry_ref = unsafe { &*registry };
-            
-            if LIBRARY_REGISTRY.set(registry_ref).is_err() {
-                // already initialized - this is fine, just ignore
-                // (can happen with hot reloading)
-            }
-        }
-
-        pub fn with_library_registry<F, R>(f: F) -> Option<R>
-        where F: FnOnce(&::hotline::LibraryRegistry) -> R,
-        {
-            LIBRARY_REGISTRY.get().map(|&registry| f(registry))
-        }
+        // No static storage - registry is passed as parameter when needed
     }
 }

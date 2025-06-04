@@ -12,6 +12,10 @@ impl DirectRuntime {
     pub fn new() -> Self {
         Self { library_registry: LibraryRegistry::new() }
     }
+    
+    pub fn new_with_custom_loader() -> Self {
+        Self { library_registry: LibraryRegistry::new_with_custom_loader() }
+    }
 
     fn type_name_for_symbol<T: 'static>() -> &'static str {
         // Always use fully qualified type names for unambiguous type safety
@@ -36,22 +40,16 @@ impl DirectRuntime {
         handle.lock().ok()
     }
 
-    pub fn hot_reload(&mut self, lib_path: &str, type_name: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let lib_name = self.library_registry.load(lib_path)?;
-
-        // Explicitly initialize the library with the registry
-        let init_symbol = format!("{}__init__registry__{}", type_name, RUSTC_COMMIT);
-        self.library_registry.with_symbol::<unsafe extern "Rust" fn(*const LibraryRegistry), _, _>(
-            &lib_name,
-            &init_symbol,
-            |symbol| {
-                // SAFETY: we're passing a pointer to our LibraryRegistry which:
-                // - is valid and properly aligned
-                // - will live for the lifetime of this DirectRuntime
-                // - the generated init function validates the pointer isn't null
-                unsafe { (**symbol)(&self.library_registry as *const LibraryRegistry) };
-            },
-        )?;
+    pub fn hot_reload(&mut self, lib_path: &str, _type_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let start = std::time::Instant::now();
+        
+        let _lib_name = self.library_registry.load(lib_path)?;
+        let load_time = start.elapsed();
+        
+        // With the new approach, objects get their registry when created
+        // No need for explicit initialization
+        println!("  - loaded library in {:.1}ms", 
+            load_time.as_secs_f64() * 1000.0);
 
         Ok(())
     }
@@ -62,7 +60,20 @@ impl DirectRuntime {
         lib_name: &str,
         type_name: &str,
     ) -> Result<ObjectHandle, Box<dyn std::error::Error>> {
-        let obj = self.library_registry.call_constructor(lib_name, type_name, RUSTC_COMMIT)?;
+        // Get a pointer to self that we can use as 'static
+        // This is safe because we know the runtime is leaked in main.rs
+        let self_ptr = self as *const DirectRuntime;
+        let lib_registry = unsafe {
+            &(*self_ptr).library_registry as &'static LibraryRegistry
+        };
+        
+        // Set the library registry in thread-local storage before creating objects
+        // This allows constructors to create other objects
+        hotline::set_library_registry(lib_registry);
+        
+        // Create the object
+        let obj = lib_registry.call_constructor(lib_name, type_name, RUSTC_COMMIT)?;
+        
         let handle = self.register(obj);
         Ok(handle)
     }
@@ -151,6 +162,13 @@ impl DirectRuntime {
         method: &str,
         args: Vec<Box<dyn Any>>,
     ) -> Result<Box<dyn Any>, Box<dyn std::error::Error>> {
+        // Set the library registry in thread-local storage before calling methods
+        // This allows objects to create other objects during method calls
+        let self_ptr = self as *const DirectRuntime;
+        let lib_registry = unsafe {
+            &(*self_ptr).library_registry as &'static LibraryRegistry
+        };
+        hotline::set_library_registry(lib_registry);
         // Handle WindowManager methods
         if type_name == "WindowManager" {
             match method {

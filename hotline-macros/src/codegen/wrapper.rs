@@ -45,10 +45,11 @@ fn generate_typed_wrapper(
 
         impl #type_ident {
             pub fn new() -> Self {
-                let obj = with_library_registry(|registry| {
-                    registry.call_constructor(concat!(#LIB_PREFIX, #type_name), #type_name, ::hotline::RUSTC_COMMIT)
-                        .expect(&format!(concat!(#ERR_CONSTRUCT_FAILED, " {}"), #type_name))
-                }).expect(#ERR_REGISTRY_NOT_INIT);
+                // Use thread-local registry to create the object
+                let obj = ::hotline::with_library_registry(|registry| {
+                    registry.call_constructor(concat!("lib", #type_name), #type_name, ::hotline::RUSTC_COMMIT)
+                        .expect(&format!("Failed to construct {}", #type_name))
+                }).expect("Library registry not initialized");
 
                 Self::from_handle(::std::sync::Arc::new(::std::sync::Mutex::new(obj)))
             }

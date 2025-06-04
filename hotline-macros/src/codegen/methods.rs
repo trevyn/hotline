@@ -218,18 +218,22 @@ fn generate_builder_ffi_method(
 
     quote! {
         pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
-            with_library_registry(|registry| {
-                if let Ok(mut guard) = self.0.lock() {
-                    let type_name = guard.type_name().to_string();
-                    let lib_name = format!("lib{}", type_name);
-                    let obj_any = guard.as_any_mut();
+            if let Ok(mut guard) = self.0.lock() {
+                let obj = &mut **guard;
+                let type_name = obj.type_name().to_string();
+                let lib_name = format!("lib{}", type_name);
+                
+                // Get registry from the object using the trait method
+                let registry = obj.get_registry()
+                    .unwrap_or_else(|| panic!("Registry not initialized for {}", type_name));
+                
+                let obj_any = obj.as_any_mut();
 
-                    type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*);
-                    registry.with_symbol::<FnType, _, _>(&lib_name, &#symbol_name,
-                        |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
-                    ).unwrap_or_else(|e| panic!("Method not found: {}", e));
-                }
-            });
+                type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*);
+                registry.with_symbol::<FnType, _, _>(&lib_name, &#symbol_name,
+                    |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
+                ).unwrap_or_else(|e| panic!("Method not found: {}", e));
+            }
             self
         }
     }

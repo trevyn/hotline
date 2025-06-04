@@ -17,6 +17,7 @@ use codegen::process_struct_attributes;
 use codegen::wrapper::generate_typed_wrappers;
 use discovery::find_referenced_object_types;
 use parser::ObjectInput;
+use syn::Fields;
 
 fn get_rustc_commit_hash() -> String {
     if let Ok(hash) = std::env::var("RUSTC_COMMIT_HASH") {
@@ -33,6 +34,21 @@ fn get_rustc_commit_hash() -> String {
         .and_then(|line| line.strip_prefix("commit-hash: "))
         .map(|hash| hash[..9].to_string())
         .expect("Failed to find rustc commit hash")
+}
+
+fn add_registry_field(struct_item: &syn::ItemStruct) -> proc_macro2::TokenStream {
+    let mut modified = struct_item.clone();
+    
+    // Add the registry field to the struct using RegistryPtr to avoid any TLS
+    if let Fields::Named(ref mut fields) = modified.fields {
+        let registry_field: syn::Field = syn::parse_quote! {
+            #[doc(hidden)]
+            __hotline_registry: ::hotline::RegistryPtr
+        };
+        fields.named.push(registry_field);
+    }
+    
+    quote! { #modified }
 }
 
 #[proc_macro]
@@ -103,11 +119,15 @@ pub fn object(input: TokenStream) -> TokenStream {
         generate_typed_wrappers(&find_referenced_object_types(&struct_item, &impl_blocks), &rustc_commit);
 
     let modified_struct = &processed.modified_struct;
+    
+    // Add registry field to the struct
+    let struct_with_registry = add_registry_field(modified_struct);
+    
     let output = quote! {
         #[allow(dead_code)]
         type Like<T> = T;
 
-        #modified_struct
+        #struct_with_registry
         #main_impl
         #(#filtered_impl_blocks)*
         #default_impl
@@ -116,6 +136,12 @@ pub fn object(input: TokenStream) -> TokenStream {
             fn type_name(&self) -> &'static str { stringify!(#struct_name) }
             fn as_any(&self) -> &dyn ::std::any::Any { self }
             fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any { self }
+            fn set_registry(&mut self, registry: &'static ::hotline::LibraryRegistry) {
+                self.__hotline_registry.set(registry);
+            }
+            fn get_registry(&self) -> Option<&'static ::hotline::LibraryRegistry> {
+                self.__hotline_registry.get()
+            }
         }
 
         #setter_builder_impl

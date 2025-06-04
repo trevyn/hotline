@@ -25,7 +25,8 @@ fn main() -> Result<(), String> {
     let texture_creator = canvas.texture_creator();
     let mut event_pump = sdl_context.event_pump()?;
 
-    let mut runtime = DirectRuntime::new();
+    // Leak the runtime to give it 'static lifetime so objects can store references to it
+    let runtime = Box::leak(Box::new(DirectRuntime::new_with_custom_loader()));
 
     // Dynamically discover and load libraries from objects directory
     use std::fs;
@@ -37,57 +38,81 @@ fn main() -> Result<(), String> {
     // First, rebuild all libraries at launch
     println!("rebuilding all libraries at launch...");
     if let Ok(entries) = fs::read_dir(objects_dir) {
-        for entry in entries {
-            if let Ok(entry) = entry {
+        let lib_names: Vec<String> = entries
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
                 let path = entry.path();
-                if path.is_dir() {
-                    if let Some(lib_name) = path.file_name().and_then(|n| n.to_str()) {
-                        println!("building {}...", lib_name);
-                        let output = std::process::Command::new("cargo")
-                            .args(&["build", "--release", "-p", lib_name])
-                            .output()
-                            .expect(&format!("failed to build {}", lib_name));
-
-                        if !output.status.success() {
-                            panic!("failed to build {}: {}", lib_name, String::from_utf8_lossy(&output.stderr));
-                        } else {
-                            println!("successfully built {}", lib_name);
-                        }
-                    }
+                if !path.is_dir() {
+                    return None;
                 }
+                path.file_name()?.to_str().map(|s| s.to_string())
+            })
+            .collect();
+        
+        if !lib_names.is_empty() {
+            println!("building {} libraries in parallel...", lib_names.len());
+            let mut cmd = std::process::Command::new("cargo");
+            cmd.args(&["build", "--release"]);
+            
+            // add all packages
+            for lib_name in &lib_names {
+                cmd.args(&["-p", lib_name]);
+            }
+            
+            // use status() instead of output() to see real-time output
+            let status = cmd.status().expect("failed to build libraries");
+            
+            if !status.success() {
+                panic!("failed to build libraries");
             }
         }
     }
 
+    // Load all libraries
     if let Ok(entries) = fs::read_dir(objects_dir) {
-        for entry in entries {
-            if let Ok(entry) = entry {
+        let libs_to_load: Vec<(String, String)> = entries
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
                 let path = entry.path();
-                if path.is_dir() {
-                    if let Some(lib_name) = path.file_name().and_then(|n| n.to_str()) {
-                        // Construct library path based on OS
-                        #[cfg(target_os = "macos")]
-                        let lib_path = format!("target/release/lib{}.dylib", lib_name);
-                        #[cfg(target_os = "linux")]
-                        let lib_path = format!("target/release/lib{}.so", lib_name);
-                        #[cfg(target_os = "windows")]
-                        let lib_path = format!("target/release/{}.dll", lib_name);
-
-                        // Load library if it exists
-                        if Path::new(&lib_path).exists() {
-                            if let Err(e) = runtime.hot_reload(&lib_path, lib_name) {
-                                eprintln!("Failed to load {} library: {}", lib_name, e);
-                            } else {
-                                println!("Loaded library: {}", lib_name);
-                                loaded_libs.push((lib_name.to_string(), lib_path));
-                            }
-                        } else {
-                            eprintln!("Library not found at {}, skipping", lib_path);
-                        }
-                    }
+                if !path.is_dir() {
+                    return None;
                 }
+                let lib_name = path.file_name()?.to_str()?.to_string();
+                
+                // Construct library path based on OS
+                #[cfg(target_os = "macos")]
+                let lib_path = format!("target/release/lib{}.dylib", lib_name);
+                #[cfg(target_os = "linux")]
+                let lib_path = format!("target/release/lib{}.so", lib_name);
+                #[cfg(target_os = "windows")]
+                let lib_path = format!("target/release/{}.dll", lib_name);
+                
+                if Path::new(&lib_path).exists() {
+                    Some((lib_name, lib_path))
+                } else {
+                    eprintln!("Library not found at {}, skipping", lib_path);
+                    None
+                }
+            })
+            .collect();
+        
+        // Load libraries sequentially (dlopen can be finicky with parallelism)
+        println!("Loading {} libraries...", libs_to_load.len());
+        let start = std::time::Instant::now();
+        
+        for (lib_name, lib_path) in libs_to_load {
+            let lib_start = std::time::Instant::now();
+            if let Err(e) = runtime.hot_reload(&lib_path, &lib_name) {
+                eprintln!("Failed to load {} library: {}", lib_name, e);
+            } else {
+                let elapsed = lib_start.elapsed();
+                println!("Loaded library: {} ({:.1}ms)", lib_name, elapsed.as_secs_f64() * 1000.0);
+                loaded_libs.push((lib_name, lib_path));
             }
         }
+        
+        let total_elapsed = start.elapsed();
+        println!("Total library loading time: {:.1}ms", total_elapsed.as_secs_f64() * 1000.0);
     }
 
     // Store lib paths for hot reload
@@ -149,10 +174,15 @@ fn main() -> Result<(), String> {
                                     file_hashes.insert(lib_name.clone(), new_hash);
 
                                     // Rebuild the specific library
-                                    std::process::Command::new("cargo")
+                                    let status = std::process::Command::new("cargo")
                                         .args(&["build", "--release", "-p", lib_name])
                                         .status()
                                         .expect(&format!("Failed to build {}", lib_name));
+                                    
+                                    if !status.success() {
+                                        eprintln!("Failed to build {}", lib_name);
+                                        continue;
+                                    }
 
                                     // Reload the library
                                     if let Err(e) = runtime.hot_reload(lib_path, lib_name) {
@@ -198,12 +228,18 @@ fn main() -> Result<(), String> {
                 }
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {
-                    // First rebuild all libraries
+                    // Build all libraries in parallel with single cargo invocation
+                    let mut cmd = std::process::Command::new("cargo");
+                    cmd.args(&["build", "--release"]);
+                    
                     for (lib_name, _) in &lib_paths {
-                        std::process::Command::new("cargo")
-                            .args(&["build", "--release", "-p", lib_name])
-                            .status()
-                            .expect(&format!("Failed to build {}", lib_name));
+                        cmd.args(&["-p", lib_name]);
+                    }
+                    
+                    let status = cmd.status().expect("Failed to build libraries");
+                    if !status.success() {
+                        eprintln!("Failed to rebuild libraries");
+                        continue;
                     }
 
                     // Reload all libraries

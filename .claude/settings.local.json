@@ -18,10 +18,14 @@
       "Bash(touch:*)",
       "Bash(sed:*)",
       "Bash(cargo fmt:*)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(otool:*)",
+      "Bash(size:*)",
+      "Bash(./target/release/test_load:*)",
+      "Bash(./target/release/test_symbol:*)",
+      "Bash(./runtime/target/release/test_symbol:*)"
     ],
-    "deny": [
-    ]
+    "deny": []
   },
   "enableAllProjectMcpServers": false
 }

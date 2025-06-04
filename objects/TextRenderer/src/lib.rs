@@ -1,3 +1,5 @@
+use hotline::HotlineObject;
+
 hotline::object!({
     #[derive(Clone, Default)]
     pub struct TextRenderer {
@@ -25,6 +27,11 @@ hotline::object!({
                 return;
             }
 
+            // Ensure registry is available for creating other objects
+            if let Some(registry) = self.get_registry() {
+                ::hotline::set_library_registry(registry);
+            }
+
             // Create loaders via the proxy system
             let mut json_loader = JSONLoader::new();
             let mut png_loader = PNGLoader::new();
@@ -34,7 +41,10 @@ hotline::object!({
                 panic!("Failed to load font JSON: {}", e);
             }
 
-            // Create a Font object
+            // Create a Font object (ensure registry is still set)
+            if let Some(registry) = self.get_registry() {
+                ::hotline::set_library_registry(registry);
+            }
             let mut font = Font::new();
 
             // Parse JSON data into the Font object
