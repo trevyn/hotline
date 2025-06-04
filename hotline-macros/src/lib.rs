@@ -185,14 +185,6 @@ fn is_object_type(name: &str) -> bool {
     name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && !is_standard_type(name)
 }
 
-fn needs_typed_wrapper(ty: &Type) -> bool {
-    if let Type::Path(type_path) = ty {
-        if let Some(ident) = type_path.path.get_ident() {
-            return is_object_type(&ident.to_string());
-        }
-    }
-    false
-}
 
 fn is_generic_type(ty: &Type) -> bool {
     if let Type::Path(type_path) = ty {
@@ -363,9 +355,10 @@ fn generate_ffi_wrapper(
             obj: &mut dyn ::std::any::Any
             #(, #param_list)*
         ) #return_spec {
+            let obj_type_name = ::std::any::type_name_of_val(&*obj);
             let instance = obj.downcast_mut::<#struct_name>()
                 .unwrap_or_else(|| {
-                    panic!(#panic_msg, ::std::any::type_name_of_val(&*obj))
+                    panic!(#panic_msg, obj_type_name)
                 });
             #body
         }
@@ -994,7 +987,7 @@ fn generate_typed_wrapper(
                     pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
                         with_library_registry(|registry| {
                             if let Ok(mut guard) = self.0.lock() {
-                                let type_name = guard.type_name();
+                                let type_name = guard.type_name().to_string();
                                 
                                 let symbol_name = format!(
                                     "{}__{}______obj_mut_dyn_Any____value__ref_{}____to__unit__{}",
@@ -1032,7 +1025,7 @@ fn generate_typed_wrapper(
                     pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
                         with_library_registry(|registry| {
                             if let Ok(mut guard) = self.0.lock() {
-                                let type_name = guard.type_name();
+                                let type_name = guard.type_name().to_string();
                                 
                                 let symbol_name = format!(
                                     "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
@@ -1076,9 +1069,10 @@ fn generate_typed_wrapper(
             if returns_self {
                 method_impls.push(quote! {
                     pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> Self {
+                        let handle_clone = self.0.clone();
                         with_library_registry(|registry| {
                             if let Ok(mut guard) = self.0.lock() {
-                                let type_name = guard.type_name();
+                                let type_name = guard.type_name().to_string();
                                 let lib_name = format!("lib{}", type_name);
                                 let obj_any = guard.as_any_mut();
 
@@ -1090,7 +1084,7 @@ fn generate_typed_wrapper(
                                 ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e));
                                 
                                 drop(guard);
-                                Self::from_handle(self.0.clone())
+                                Self::from_handle(handle_clone)
                             } else {
                                 panic!("Failed to lock object for method {}", stringify!(#method_ident))
                             }
@@ -1102,7 +1096,7 @@ fn generate_typed_wrapper(
                     pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
                         with_library_registry(|registry| {
                             if let Ok(mut guard) = self.0.lock() {
-                                let type_name = guard.type_name();
+                                let type_name = guard.type_name().to_string();
                                 let lib_name = format!("lib{}", type_name);
                                 let obj_any = guard.as_any_mut();
 

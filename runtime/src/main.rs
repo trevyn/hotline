@@ -49,7 +49,7 @@ fn main() -> Result<(), String> {
                             .expect(&format!("failed to build {}", lib_name));
 
                         if !output.status.success() {
-                            eprintln!("failed to build {}: {}", lib_name, String::from_utf8_lossy(&output.stderr));
+                            panic!("failed to build {}: {}", lib_name, String::from_utf8_lossy(&output.stderr));
                         } else {
                             println!("successfully built {}", lib_name);
                         }
