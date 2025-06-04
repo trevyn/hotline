@@ -6,9 +6,13 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use syn::{
-    Fields, FnArg, GenericArgument, ImplItem, ItemImpl, ItemStruct, Pat, PathArguments, ReturnType, Type, braced,
+    Fields, FnArg, ImplItem, ItemImpl, ItemStruct, Pat, ReturnType, Type, braced,
     parse::{Parse, ParseStream},
 };
+
+mod utils;
+use utils::types::*;
+use utils::symbols::SymbolName;
 
 // ===== Core Types =====
 
@@ -38,209 +42,13 @@ impl Parse for ObjectInput {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum ReceiverType {
     Value,
     Ref,
     RefMut,
 }
 
-// ===== Symbol Name Builder =====
-
-#[derive(Clone)]
-struct SymbolName {
-    type_name: String,
-    method_name: String,
-    params: Vec<(String, String)>,
-    return_type: String,
-    rustc_commit: String,
-}
-
-impl SymbolName {
-    fn new(type_name: &str, method_name: &str, rustc_commit: &str) -> Self {
-        Self {
-            type_name: type_name.to_string(),
-            method_name: method_name.to_string(),
-            params: Vec::new(),
-            return_type: "unit".to_string(),
-            rustc_commit: rustc_commit.to_string(),
-        }
-    }
-
-    fn with_params(mut self, params: Vec<(String, String)>) -> Self {
-        self.params = params;
-        self
-    }
-
-    fn with_return_type(mut self, return_type: String) -> Self {
-        self.return_type = return_type;
-        self
-    }
-
-    fn build_method(&self) -> String {
-        let mut parts = vec![
-            self.type_name.clone(),
-            self.method_name.clone(),
-            "____obj_mut_dyn_Any".to_string(),
-        ];
-        
-        for (name, ty) in &self.params {
-            parts.push(format!("__{}__{}", name, ty));
-        }
-        
-        parts.push(format!("__to__{}", self.return_type));
-        parts.push(self.rustc_commit.clone());
-        
-        parts.join("__")
-    }
-
-    fn build_getter(&self) -> String {
-        format!("{}__{}______obj_mut_dyn_Any____to__{}__{}",
-            self.type_name, self.method_name, self.return_type, self.rustc_commit)
-    }
-
-    fn build_setter(&self, field_name: &str, field_type: &str) -> String {
-        format!("{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
-            self.type_name, field_name, field_name, field_type, self.rustc_commit)
-    }
-
-    fn build_constructor(&self) -> String {
-        format!("{}__new____to__Box_lt_dyn_HotlineObject_gt__{}", self.type_name, self.rustc_commit)
-    }
-
-    fn build_type_name_getter(&self) -> String {
-        format!("{}__get_type_name____obj_ref_dyn_Any__to__str__{}", self.type_name, self.rustc_commit)
-    }
-
-    fn build_init(&self) -> String {
-        format!("{}__init__registry__{}", self.type_name, self.rustc_commit)
-    }
-}
-
-// ===== Type Processing =====
-
-fn type_to_string(ty: &Type) -> String {
-    // Handle Like<T> specially
-    if let Some(inner_ty) = extract_like_type(ty) {
-        return type_to_string(inner_ty);
-    }
-    
-    match ty {
-        Type::Path(type_path) => path_to_string(type_path),
-        Type::Reference(type_ref) => {
-            format!("{}ref_{}", 
-                if type_ref.mutability.is_some() { "mut_" } else { "" },
-                type_to_string(&type_ref.elem))
-        }
-        Type::Slice(type_slice) => format!("slice_{}", type_to_string(&type_slice.elem)),
-        Type::Array(type_array) => format!("array_{}", type_to_string(&type_array.elem)),
-        Type::Tuple(type_tuple) if type_tuple.elems.is_empty() => "unit".to_string(),
-        Type::Tuple(type_tuple) => {
-            let elems: Vec<_> = type_tuple.elems.iter()
-                .map(type_to_string)
-                .collect();
-            format!("tuple_{}", elems.join("_comma_"))
-        }
-        _ => panic!("Unsupported type in hotline macro: {:?}", ty),
-    }
-}
-
-fn path_to_string(type_path: &syn::TypePath) -> String {
-    if let Some(ident) = type_path.path.get_ident() {
-        return ident.to_string();
-    }
-    
-    let mut result = String::new();
-    for (i, segment) in type_path.path.segments.iter().enumerate() {
-        if i > 0 {
-            result.push_str("_");
-        }
-        result.push_str(&segment.ident.to_string());
-
-        if let PathArguments::AngleBracketed(args) = &segment.arguments {
-            result.push_str("_lt_");
-            let types: Vec<_> = args.args.iter()
-                .filter_map(|arg| match arg {
-                    GenericArgument::Type(ty) => Some(type_to_string(ty)),
-                    _ => None,
-                })
-                .collect();
-            result.push_str(&types.join("_"));
-            result.push_str("_gt");
-        }
-    }
-    result
-}
-
-fn is_standard_type(name: &str) -> bool {
-    matches!(
-        name,
-        "String" | "Vec" | "Option" | "Result" | "Box" | "Arc" | "Mutex" | 
-        "HashMap" | "BTreeMap" | "HashSet" | "BTreeSet" | "Cell" | "RefCell" | 
-        "Rc" | "Weak" | "PhantomData" | "Pin" | "Future" | "Stream"
-    )
-}
-
-fn is_object_type(name: &str) -> bool {
-    name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && !is_standard_type(name)
-}
-
-
-fn is_generic_type(ty: &Type) -> bool {
-    if let Type::Path(type_path) = ty {
-        type_path.path.segments.iter().any(|seg| 
-            matches!(seg.arguments, PathArguments::AngleBracketed(_)))
-    } else {
-        false
-    }
-}
-
-fn extract_generic_inner_type<'a>(ty: &'a Type, type_name: &str) -> Option<&'a Type> {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            if segment.ident == type_name {
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
-                        return Some(inner_ty);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn extract_option_type(ty: &Type) -> Option<&Type> {
-    extract_generic_inner_type(ty, "Option")
-}
-
-fn extract_like_type(ty: &Type) -> Option<&Type> {
-    extract_generic_inner_type(ty, "Like")
-}
-
-fn resolve_self_type(ty: Type, type_name: &str) -> Type {
-    use syn::visit_mut::{self, VisitMut};
-    
-    struct SelfResolver<'a> {
-        type_name: &'a str,
-    }
-    
-    impl<'a> VisitMut for SelfResolver<'a> {
-        fn visit_type_mut(&mut self, ty: &mut Type) {
-            if let Type::Path(type_path) = ty {
-                if type_path.path.is_ident("Self") {
-                    *ty = syn::parse_str(self.type_name).expect("Failed to parse type name");
-                    return;
-                }
-            }
-            visit_mut::visit_type_mut(self, ty);
-        }
-    }
-    
-    let mut ty = ty;
-    SelfResolver { type_name }.visit_type_mut(&mut ty);
-    ty
-}
 
 // ===== Type Discovery =====
 
@@ -336,6 +144,33 @@ fn find_object_lib_file(type_name: &str) -> std::path::PathBuf {
 
 // ===== Code Generation Helpers =====
 
+fn quote_method_call_with_registry(
+    receiver: proc_macro2::TokenStream,
+    method_name: &str,
+    symbol_name: &str,
+    fn_type: proc_macro2::TokenStream,
+    args: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    quote! {
+        with_library_registry(|registry| {
+            if let Ok(mut guard) = #receiver.lock() {
+                let type_name = guard.type_name().to_string();
+                let lib_name = format!("lib{}", type_name);
+                let obj_any = guard.as_any_mut();
+                
+                type FnType = #fn_type;
+                registry.with_symbol::<FnType, _, _>(
+                    &lib_name,
+                    &#symbol_name,
+                    |fn_ptr| unsafe { (**fn_ptr)(obj_any #args) }
+                ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, #method_name, e))
+            } else {
+                panic!("Failed to lock object for method {}", #method_name)
+            }
+        }).unwrap_or_else(|| panic!("No library registry available for method {}", #method_name))
+    }
+}
+
 fn generate_ffi_wrapper(
     struct_name: &syn::Ident,
     wrapper_name: syn::Ident,
@@ -362,6 +197,33 @@ fn generate_ffi_wrapper(
                 });
             #body
         }
+    }
+}
+
+fn generate_accessor_wrapper(
+    struct_name: &syn::Ident,
+    field_name: &syn::Ident,
+    field_type: &Type,
+    is_getter: bool,
+    rustc_commit: &str,
+) -> proc_macro2::TokenStream {
+    let symbol = SymbolName::new(&struct_name.to_string(), &field_name.to_string(), rustc_commit);
+    let type_str = type_to_string(field_type);
+    
+    if is_getter {
+        let getter_name = quote::format_ident!("{}", symbol.with_return_type(type_str).build_getter());
+        let body = quote! { instance.#field_name.clone() };
+        generate_ffi_wrapper(struct_name, getter_name, vec![], Some(field_type), body)
+    } else {
+        let setter_name = quote::format_ident!("{}", symbol.build_setter(&field_name.to_string(), &type_str));
+        let body = quote! { instance.#field_name = value; };
+        generate_ffi_wrapper(
+            struct_name,
+            setter_name,
+            vec![(quote::format_ident!("value"), field_type)],
+            None,
+            body,
+        )
     }
 }
 
@@ -430,32 +292,25 @@ fn generate_field_accessors(
             let is_public = matches!(field.vis, syn::Visibility::Public(_));
 
             if !is_generic_type(field_type) {
-                let symbol = SymbolName::new(&struct_name.to_string(), &field_name.to_string(), rustc_commit);
-                let type_str = type_to_string(field_type);
-
                 // Getter for public fields
                 if is_public {
-                    let getter_name = quote::format_ident!("{}", symbol.clone().with_return_type(type_str.clone()).build_getter());
-                    let body = quote! { instance.#field_name.clone() };
-                    accessors.push(generate_ffi_wrapper(
+                    accessors.push(generate_accessor_wrapper(
                         struct_name,
-                        getter_name,
-                        vec![],
-                        Some(field_type),
-                        body,
+                        field_name,
+                        field_type,
+                        true,
+                        rustc_commit,
                     ));
                 }
 
                 // Setter for fields with #[setter]
                 if processed.fields_with_setters.contains(&field_name.to_string()) {
-                    let setter_name = quote::format_ident!("{}", symbol.build_setter(&field_name.to_string(), &type_str));
-                    let body = quote! { instance.#field_name = value; };
-                    accessors.push(generate_ffi_wrapper(
+                    accessors.push(generate_accessor_wrapper(
                         struct_name,
-                        setter_name,
-                        vec![(quote::format_ident!("value"), field_type)],
-                        None,
-                        body,
+                        field_name,
+                        field_type,
+                        false,
+                        rustc_commit,
                     ));
                 }
             }
@@ -742,6 +597,189 @@ fn generate_default_impl(
 
 // ===== Type Wrapper Generation =====
 
+#[derive(Debug)]
+struct MethodGenConfig {
+    method_name: String,
+    method_ident: syn::Ident,
+    param_names: Vec<String>,
+    param_idents: Vec<syn::Ident>,
+    param_types: Vec<Type>,
+    return_type: Type,
+    receiver_type: ReceiverType,
+    returns_self: bool,
+    is_builder: bool,
+    needs_option_wrap: bool,
+    setter_name: Option<String>,
+}
+
+impl MethodGenConfig {
+    fn should_skip(&self) -> bool {
+        self.receiver_type == ReceiverType::Value && !self.returns_self
+    }
+    
+    fn is_field_setter(&self) -> bool {
+        self.is_builder && self.setter_name.is_some() && self.method_name.starts_with("with_")
+    }
+}
+
+fn generate_method_impl(config: &MethodGenConfig, type_name: &str, rustc_commit: &str) -> proc_macro2::TokenStream {
+    let MethodGenConfig { 
+        method_ident, param_idents, param_types, return_type, 
+        is_builder, needs_option_wrap, setter_name, .. 
+    } = config;
+    
+    if config.should_skip() {
+        return quote! {};
+    }
+    
+    // Builder pattern methods that return Self
+    if *is_builder && config.returns_self {
+        if *needs_option_wrap {
+            // Handle Option<ObjectType> wrapping case
+            let inner_type_str = if let Type::Reference(type_ref) = &param_types[0] {
+                type_to_string(&*type_ref.elem)
+            } else {
+                type_to_string(&param_types[0])
+            };
+            
+            let setter_method_name = setter_name.as_ref().unwrap();
+            
+            return quote! {
+                pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
+                    with_library_registry(|registry| {
+                        if let Ok(mut guard) = self.0.lock() {
+                            let type_name = guard.type_name().to_string();
+                            
+                            let symbol_name = format!(
+                                "{}__{}______obj_mut_dyn_Any____value__ref_{}____to__unit__{}",
+                                type_name,
+                                #setter_method_name,
+                                #inner_type_str,
+                                #rustc_commit
+                            );
+                            let lib_name = format!("lib{}", type_name);
+                            
+                            let obj_any = guard.as_any_mut();
+                            
+                            type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any, #(#param_types),*);
+                            registry.with_symbol::<FnType, _, _>(
+                                &lib_name,
+                                &symbol_name,
+                                |fn_ptr| unsafe { (**fn_ptr)(obj_any, #(#param_idents),*) }
+                            ).unwrap_or_else(|e| {
+                                panic!("Setter {} not found: {}", #setter_method_name, e);
+                            });
+                        }
+                    });
+                    self
+                }
+            };
+        } else if config.is_field_setter() {
+            // Regular field setter
+            let field_name_str = &setter_name.as_ref().unwrap()[4..];
+            let param_type_str = if param_types.len() == 1 {
+                type_to_string(&param_types[0])
+            } else {
+                panic!("Field setter should have exactly one parameter")
+            };
+            
+            return quote! {
+                pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
+                    with_library_registry(|registry| {
+                        if let Ok(mut guard) = self.0.lock() {
+                            let type_name = guard.type_name().to_string();
+                            
+                            let symbol_name = format!(
+                                "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
+                                type_name,
+                                #field_name_str,
+                                #field_name_str,
+                                #param_type_str,
+                                #rustc_commit
+                            );
+                            let lib_name = format!("lib{}", type_name);
+                            
+                            let obj_any = guard.as_any_mut();
+                            
+                            type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any, #(#param_types)*);
+                            registry.with_symbol::<FnType, _, _>(
+                                &lib_name,
+                                &symbol_name,
+                                |fn_ptr| unsafe { (**fn_ptr)(obj_any, #(#param_idents)*) }
+                            ).unwrap_or_else(|e| {
+                                panic!("Field setter for {} not found: {}", #field_name_str, e);
+                            });
+                        }
+                    });
+                    self
+                }
+            };
+        } else {
+            // Simple builder that just returns self
+            return quote! {
+                pub fn #method_ident(self #(, #param_idents: #param_types)*) -> Self {
+                    self
+                }
+            };
+        }
+    }
+    
+    // Regular methods
+    let param_specs: Vec<_> = config.param_names.iter()
+        .zip(param_types.iter())
+        .map(|(name, ty)| (name.clone(), type_to_string(ty)))
+        .collect();
+    
+    let symbol = SymbolName::new(type_name, &config.method_name, rustc_commit)
+        .with_params(param_specs)
+        .with_return_type(type_to_string(return_type));
+    
+    let symbol_name = symbol.build_method();
+    let fn_type = quote! {
+        unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*) -> #return_type
+    };
+    
+    if config.returns_self {
+        quote! {
+            pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> Self {
+                let handle_clone = self.0.clone();
+                with_library_registry(|registry| {
+                    if let Ok(mut guard) = self.0.lock() {
+                        let type_name = guard.type_name().to_string();
+                        let lib_name = format!("lib{}", type_name);
+                        let obj_any = guard.as_any_mut();
+
+                        type FnType = #fn_type;
+                        let result = registry.with_symbol::<FnType, _, _>(
+                            &lib_name,
+                            &#symbol_name,
+                            |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
+                        ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e));
+                        
+                        drop(guard);
+                        Self::from_handle(handle_clone)
+                    } else {
+                        panic!("Failed to lock object for method {}", stringify!(#method_ident))
+                    }
+                }).unwrap_or_else(|| panic!("No library registry available for method {}", stringify!(#method_ident)))
+            }
+        }
+    } else {
+        let method_body = quote_method_call_with_registry(
+            quote! { self.0 },
+            &method_ident.to_string(),
+            &symbol_name,
+            fn_type,
+            quote! { #(, #param_idents)* }
+        );
+        quote! {
+            pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
+                #method_body
+            }
+        }
+    }
+}
+
 fn extract_object_methods(
     file: &syn::File,
     type_name: &str,
@@ -932,187 +970,51 @@ fn generate_typed_wrapper(
             false
         };
         
-        // Skip methods that take self by value and don't return Self
-        if *receiver_type == ReceiverType::Value && !returns_self {
-            continue;
-        }
+        let is_builder = *receiver_type == ReceiverType::Value && returns_self;
+        let setter_name = if method_name.starts_with("with_") {
+            Some(format!("set_{}", &method_name[5..]))
+        } else {
+            None
+        };
         
-        // Build symbol name
-        let param_specs: Vec<_> = param_names.iter()
-            .zip(param_types.iter())
-            .map(|(name, ty)| (name.clone(), type_to_string(ty)))
-            .collect();
-        
-        let symbol = SymbolName::new(type_name, method_name, rustc_commit)
-            .with_params(param_specs)
-            .with_return_type(type_to_string(return_type));
-        
-        // Builder pattern methods
-        if *receiver_type == ReceiverType::Value && returns_self {
-            let setter_method_name = if method_name.starts_with("with_") {
-                format!("set_{}", &method_name[5..])
-            } else {
-                String::new()
-            };
-            
-            let needs_option_wrap = method_name.starts_with("with_") && 
-                param_types.len() == 1 && {
-                    let inner_type = if let Type::Reference(type_ref) = &param_types[0] {
-                        &*type_ref.elem
-                    } else {
-                        &param_types[0]
-                    };
-                    
-                    if let Type::Path(type_path) = inner_type {
-                        if let Some(ident) = type_path.path.get_ident() {
-                            let type_name = ident.to_string();
-                            type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
-                                && !is_standard_type(&type_name)
-                        } else {
-                            false
-                        }
+        let needs_option_wrap = method_name.starts_with("with_") && 
+            param_types.len() == 1 && {
+                let inner_type = if let Type::Reference(type_ref) = &param_types[0] {
+                    &*type_ref.elem
+                } else {
+                    &param_types[0]
+                };
+                
+                if let Type::Path(type_path) = inner_type {
+                    if let Some(ident) = type_path.path.get_ident() {
+                        let type_name = ident.to_string();
+                        type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
+                            && !is_standard_type(&type_name)
                     } else {
                         false
                     }
-                };
-            
-            if needs_option_wrap {
-                let inner_type_str = if let Type::Reference(type_ref) = &param_types[0] {
-                    type_to_string(&*type_ref.elem)
                 } else {
-                    type_to_string(&param_types[0])
-                };
-                
-                method_impls.push(quote! {
-                    pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
-                        with_library_registry(|registry| {
-                            if let Ok(mut guard) = self.0.lock() {
-                                let type_name = guard.type_name().to_string();
-                                
-                                let symbol_name = format!(
-                                    "{}__{}______obj_mut_dyn_Any____value__ref_{}____to__unit__{}",
-                                    type_name,
-                                    #setter_method_name,
-                                    #inner_type_str,
-                                    #rustc_commit
-                                );
-                                let lib_name = format!("lib{}", type_name);
-                                
-                                let obj_any = guard.as_any_mut();
-                                
-                                type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any, #(#param_types),*);
-                                registry.with_symbol::<FnType, _, _>(
-                                    &lib_name,
-                                    &symbol_name,
-                                    |fn_ptr| unsafe { (**fn_ptr)(obj_any, #(#param_idents),*) }
-                                ).unwrap_or_else(|e| {
-                                    panic!("Setter {} not found: {}", #setter_method_name, e);
-                                });
-                            }
-                        });
-                        self
-                    }
-                });
-            } else if !setter_method_name.is_empty() && method_name.starts_with("with_") {
-                let field_name_str = setter_method_name[4..].to_string();
-                let param_type_str = if param_types.len() == 1 {
-                    type_to_string(&param_types[0])
-                } else {
-                    panic!("Field setter should have exactly one parameter")
-                };
-                
-                method_impls.push(quote! {
-                    pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
-                        with_library_registry(|registry| {
-                            if let Ok(mut guard) = self.0.lock() {
-                                let type_name = guard.type_name().to_string();
-                                
-                                let symbol_name = format!(
-                                    "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
-                                    type_name,
-                                    #field_name_str,
-                                    #field_name_str,
-                                    #param_type_str,
-                                    #rustc_commit
-                                );
-                                let lib_name = format!("lib{}", type_name);
-                                
-                                let obj_any = guard.as_any_mut();
-                                
-                                type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any, #(#param_types)*);
-                                registry.with_symbol::<FnType, _, _>(
-                                    &lib_name,
-                                    &symbol_name,
-                                    |fn_ptr| unsafe { (**fn_ptr)(obj_any, #(#param_idents)*) }
-                                ).unwrap_or_else(|e| {
-                                    panic!("Field setter for {} not found: {}", #field_name_str, e);
-                                });
-                            }
-                        });
-                        self
-                    }
-                });
-            } else {
-                method_impls.push(quote! {
-                    pub fn #method_ident(self #(, #param_idents: #param_types)*) -> Self {
-                        self
-                    }
-                });
-            }
-        } else {
-            // Regular methods
-            let symbol_name = symbol.build_method();
-            let fn_type = quote! {
-                unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*) -> #return_type
+                    false
+                }
             };
-            
-            if returns_self {
-                method_impls.push(quote! {
-                    pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> Self {
-                        let handle_clone = self.0.clone();
-                        with_library_registry(|registry| {
-                            if let Ok(mut guard) = self.0.lock() {
-                                let type_name = guard.type_name().to_string();
-                                let lib_name = format!("lib{}", type_name);
-                                let obj_any = guard.as_any_mut();
-
-                                type FnType = #fn_type;
-                                let result = registry.with_symbol::<FnType, _, _>(
-                                    &lib_name,
-                                    &#symbol_name,
-                                    |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
-                                ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e));
-                                
-                                drop(guard);
-                                Self::from_handle(handle_clone)
-                            } else {
-                                panic!("Failed to lock object for method {}", stringify!(#method_ident))
-                            }
-                        }).unwrap_or_else(|| panic!("No library registry available for method {}", stringify!(#method_ident)))
-                    }
-                });
-            } else {
-                method_impls.push(quote! {
-                    pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
-                        with_library_registry(|registry| {
-                            if let Ok(mut guard) = self.0.lock() {
-                                let type_name = guard.type_name().to_string();
-                                let lib_name = format!("lib{}", type_name);
-                                let obj_any = guard.as_any_mut();
-
-                                type FnType = #fn_type;
-                                registry.with_symbol::<FnType, _, _>(
-                                    &lib_name,
-                                    &#symbol_name,
-                                    |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
-                                ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e))
-                            } else {
-                                panic!("Failed to lock object for method {}", stringify!(#method_ident))
-                            }
-                        }).unwrap_or_else(|| panic!("No library registry available for method {}", stringify!(#method_ident)))
-                    }
-                });
-            }
+        
+        let config = MethodGenConfig {
+            method_name: method_name.clone(),
+            method_ident,
+            param_names: param_names.clone(),
+            param_idents,
+            param_types: param_types.clone(),
+            return_type: return_type.clone(),
+            receiver_type: *receiver_type,
+            returns_self,
+            is_builder,
+            needs_option_wrap,
+            setter_name,
+        };
+        
+        let method_impl = generate_method_impl(&config, type_name, rustc_commit);
+        if !method_impl.is_empty() {
+            method_impls.push(method_impl);
         }
     }
     
