@@ -11,8 +11,8 @@ use syn::{
 };
 
 mod utils;
-use utils::types::*;
 use utils::symbols::SymbolName;
+use utils::types::*;
 
 // ===== Core Types =====
 
@@ -28,7 +28,7 @@ impl Parse for ObjectInput {
 
         let struct_item: ItemStruct =
             content.parse().map_err(|e| syn::Error::new(e.span(), "Expected a struct definition"))?;
-        
+
         let mut impl_blocks = Vec::new();
         while !content.is_empty() {
             impl_blocks.push(content.parse::<ItemImpl>()?);
@@ -49,7 +49,6 @@ enum ReceiverType {
     RefMut,
 }
 
-
 // ===== Type Discovery =====
 
 fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImpl]) -> HashSet<String> {
@@ -66,7 +65,7 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImp
                 self.visit_type(inner_ty);
                 return;
             }
-            
+
             if let Type::Path(type_path) = ty {
                 if let Some(ident) = type_path.path.get_ident() {
                     let name = ident.to_string();
@@ -88,7 +87,7 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImp
                     }
                 }
             }
-            
+
             // ObjectType::new() calls
             if let syn::Expr::Call(expr_call) = expr {
                 if let syn::Expr::Path(path_expr) = &*expr_call.func {
@@ -101,15 +100,12 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImp
                     }
                 }
             }
-            
+
             visit::visit_expr(self, expr);
         }
     }
 
-    let mut visitor = TypeVisitor { 
-        types: HashSet::new(), 
-        current_type: struct_item.ident.to_string() 
-    };
+    let mut visitor = TypeVisitor { types: HashSet::new(), current_type: struct_item.ident.to_string() };
 
     visitor.visit_item_struct(struct_item);
     for impl_block in impl_blocks {
@@ -157,7 +153,7 @@ fn quote_method_call_with_registry(
                 let type_name = guard.type_name().to_string();
                 let lib_name = format!("lib{}", type_name);
                 let obj_any = guard.as_any_mut();
-                
+
                 type FnType = #fn_type;
                 registry.with_symbol::<FnType, _, _>(
                     &lib_name,
@@ -180,9 +176,8 @@ fn generate_ffi_wrapper(
 ) -> proc_macro2::TokenStream {
     let param_list = params.iter().map(|(name, ty)| quote! { #name: #ty });
     let return_spec = return_type.map(|ty| quote! { -> #ty }).unwrap_or_default();
-    let panic_msg = format!("Type mismatch in {}: expected {}, but got {{}}", 
-        wrapper_name, struct_name);
-    
+    let panic_msg = format!("Type mismatch in {}: expected {}, but got {{}}", wrapper_name, struct_name);
+
     quote! {
         #[unsafe(no_mangle)]
         #[allow(non_snake_case)]
@@ -209,7 +204,7 @@ fn generate_accessor_wrapper(
 ) -> proc_macro2::TokenStream {
     let symbol = SymbolName::new(&struct_name.to_string(), &field_name.to_string(), rustc_commit);
     let type_str = type_to_string(field_type);
-    
+
     if is_getter {
         let getter_name = quote::format_ident!("{}", symbol.with_return_type(type_str).build_getter());
         let body = quote! { instance.#field_name.clone() };
@@ -217,13 +212,7 @@ fn generate_accessor_wrapper(
     } else {
         let setter_name = quote::format_ident!("{}", symbol.build_setter(&field_name.to_string(), &type_str));
         let body = quote! { instance.#field_name = value; };
-        generate_ffi_wrapper(
-            struct_name,
-            setter_name,
-            vec![(quote::format_ident!("value"), field_type)],
-            None,
-            body,
-        )
+        generate_ffi_wrapper(struct_name, setter_name, vec![(quote::format_ident!("value"), field_type)], None, body)
     }
 }
 
@@ -239,12 +228,12 @@ fn process_struct_attributes(struct_item: &ItemStruct) -> ProcessedStruct {
     let mut modified_struct = struct_item.clone();
     let mut fields_with_setters = HashSet::new();
     let mut field_defaults = HashMap::new();
-    
+
     if let Fields::Named(fields) = &mut modified_struct.fields {
         for field in &mut fields.named {
             let mut has_setter = false;
             let mut default_value = None;
-            
+
             field.attrs.retain(|attr| {
                 if attr.path().is_ident("setter") {
                     has_setter = true;
@@ -258,24 +247,20 @@ fn process_struct_attributes(struct_item: &ItemStruct) -> ProcessedStruct {
                     true
                 }
             });
-            
+
             if has_setter {
                 if let Some(field_name) = &field.ident {
                     fields_with_setters.insert(field_name.to_string());
                 }
             }
-            
+
             if let (Some(field_name), Some(value)) = (&field.ident, default_value) {
                 field_defaults.insert(field_name.to_string(), value);
             }
         }
     }
-    
-    ProcessedStruct {
-        modified_struct,
-        fields_with_setters,
-        field_defaults,
-    }
+
+    ProcessedStruct { modified_struct, fields_with_setters, field_defaults }
 }
 
 fn generate_field_accessors(
@@ -284,7 +269,7 @@ fn generate_field_accessors(
     rustc_commit: &str,
 ) -> Vec<proc_macro2::TokenStream> {
     let mut accessors = Vec::new();
-    
+
     if let Fields::Named(fields) = &processed.modified_struct.fields {
         for field in &fields.named {
             let field_name = field.ident.as_ref().unwrap();
@@ -294,29 +279,17 @@ fn generate_field_accessors(
             if !is_generic_type(field_type) {
                 // Getter for public fields
                 if is_public {
-                    accessors.push(generate_accessor_wrapper(
-                        struct_name,
-                        field_name,
-                        field_type,
-                        true,
-                        rustc_commit,
-                    ));
+                    accessors.push(generate_accessor_wrapper(struct_name, field_name, field_type, true, rustc_commit));
                 }
 
                 // Setter for fields with #[setter]
                 if processed.fields_with_setters.contains(&field_name.to_string()) {
-                    accessors.push(generate_accessor_wrapper(
-                        struct_name,
-                        field_name,
-                        field_type,
-                        false,
-                        rustc_commit,
-                    ));
+                    accessors.push(generate_accessor_wrapper(struct_name, field_name, field_type, false, rustc_commit));
                 }
             }
         }
     }
-    
+
     accessors
 }
 
@@ -327,7 +300,7 @@ fn generate_method_wrappers(
     rustc_commit: &str,
 ) -> Vec<proc_macro2::TokenStream> {
     let mut wrappers = Vec::new();
-    
+
     // Generate setter method wrappers for Option<ObjectType> fields
     if let Fields::Named(fields) = &processed.modified_struct.fields {
         for field in &fields.named {
@@ -335,7 +308,7 @@ fn generate_method_wrappers(
             if processed.fields_with_setters.contains(&field_name.to_string()) {
                 let field_type = &field.ty;
                 let setter_name = quote::format_ident!("set_{}", field_name);
-                
+
                 if let Some(inner_type) = extract_option_type(field_type) {
                     if let Type::Path(type_path) = inner_type {
                         if let Some(ident) = type_path.path.get_ident() {
@@ -349,7 +322,7 @@ fn generate_method_wrappers(
                                     type_str,
                                     rustc_commit
                                 );
-                                
+
                                 let body = quote! { instance.#setter_name(value) };
                                 wrappers.push(generate_ffi_wrapper(
                                     struct_name,
@@ -365,7 +338,7 @@ fn generate_method_wrappers(
             }
         }
     }
-    
+
     // Generate wrappers for regular methods
     for item in &main_impl.items {
         if let ImplItem::Fn(method) = item {
@@ -374,7 +347,7 @@ fn generate_method_wrappers(
             }
 
             let method_name = &method.sig.ident;
-            
+
             // Check receiver type
             if let Some(FnArg::Receiver(receiver)) = method.sig.inputs.first() {
                 if receiver.reference.is_none() {
@@ -387,7 +360,7 @@ fn generate_method_wrappers(
             // Build parameters
             let mut params = Vec::new();
             let mut param_specs = Vec::new();
-            
+
             for arg in method.sig.inputs.iter().skip(1) {
                 if let FnArg::Typed(typed) = arg {
                     if let Pat::Ident(pat_ident) = &*typed.pat {
@@ -404,35 +377,31 @@ fn generate_method_wrappers(
                 ReturnType::Default => None,
                 ReturnType::Type(_, ty) => Some(resolve_self_type((**ty).clone(), &struct_name.to_string())),
             };
-            
-            let return_type_str = return_type.as_ref()
-                .map(type_to_string)
-                .unwrap_or_else(|| "unit".to_string());
+
+            let return_type_str = return_type.as_ref().map(type_to_string).unwrap_or_else(|| "unit".to_string());
 
             let symbol = SymbolName::new(&struct_name.to_string(), &method_name.to_string(), rustc_commit)
                 .with_params(param_specs)
                 .with_return_type(return_type_str);
-            
+
             let wrapper_name = quote::format_ident!("{}", symbol.build_method());
             let arg_names: Vec<_> = params.iter().map(|(name, _)| name).collect();
             let body = quote! { instance.#method_name(#(#arg_names),*) };
-            
-            wrappers.push(generate_ffi_wrapper(
-                struct_name,
-                wrapper_name,
-                params,
-                return_type.as_ref(),
-                body,
-            ));
+
+            wrappers.push(generate_ffi_wrapper(struct_name, wrapper_name, params, return_type.as_ref(), body));
         }
     }
-    
+
     wrappers
 }
 
-fn generate_core_functions(struct_name: &syn::Ident, rustc_commit: &str, has_default: bool) -> proc_macro2::TokenStream {
+fn generate_core_functions(
+    struct_name: &syn::Ident,
+    rustc_commit: &str,
+    has_default: bool,
+) -> proc_macro2::TokenStream {
     let symbol = SymbolName::new(&struct_name.to_string(), "", rustc_commit);
-    
+
     // Constructor
     let constructor = if has_default {
         let ctor_name = quote::format_ident!("{}", symbol.build_constructor());
@@ -446,7 +415,7 @@ fn generate_core_functions(struct_name: &syn::Ident, rustc_commit: &str, has_def
     } else {
         quote! {}
     };
-    
+
     // Type name getter
     let type_name_fn_name = quote::format_ident!("{}", symbol.build_type_name_getter());
     let type_name_fn = quote! {
@@ -466,7 +435,7 @@ fn generate_core_functions(struct_name: &syn::Ident, rustc_commit: &str, has_def
             }
         }
     };
-    
+
     // Init function
     let init_fn_name = quote::format_ident!("{}", symbol.build_init());
     let init_fn = quote! {
@@ -489,7 +458,7 @@ fn generate_core_functions(struct_name: &syn::Ident, rustc_commit: &str, has_def
             }
         }
     };
-    
+
     quote! {
         #constructor
         #type_name_fn
@@ -497,13 +466,10 @@ fn generate_core_functions(struct_name: &syn::Ident, rustc_commit: &str, has_def
     }
 }
 
-fn generate_setter_builder_methods(
-    struct_name: &syn::Ident,
-    processed: &ProcessedStruct,
-) -> proc_macro2::TokenStream {
+fn generate_setter_builder_methods(struct_name: &syn::Ident, processed: &ProcessedStruct) -> proc_macro2::TokenStream {
     let mut setter_methods = Vec::new();
     let mut builder_methods = Vec::new();
-    
+
     if let Fields::Named(fields) = &processed.modified_struct.fields {
         for field in &fields.named {
             let field_name = field.ident.as_ref().unwrap();
@@ -511,13 +477,14 @@ fn generate_setter_builder_methods(
                 let field_type = &field.ty;
                 let setter_name = quote::format_ident!("set_{}", field_name);
                 let builder_name = quote::format_ident!("with_{}", field_name);
-                
+
                 if let Some(inner_type) = extract_option_type(field_type) {
                     if let Type::Path(type_path) = inner_type {
                         if let Some(ident) = type_path.path.get_ident() {
                             let type_name = ident.to_string();
-                            if type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
-                                && !is_standard_type(&type_name) {
+                            if type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                                && !is_standard_type(&type_name)
+                            {
                                 setter_methods.push(quote! {
                                     pub fn #setter_name(&mut self, value: &#inner_type) {
                                         self.#field_name = Some(value.clone());
@@ -534,7 +501,7 @@ fn generate_setter_builder_methods(
                         }
                     }
                 }
-                
+
                 setter_methods.push(quote! {
                     pub fn #setter_name(&mut self, value: #field_type) {
                         self.#field_name = value;
@@ -549,7 +516,7 @@ fn generate_setter_builder_methods(
             }
         }
     }
-    
+
     if !setter_methods.is_empty() || !builder_methods.is_empty() {
         quote! {
             impl #struct_name {
@@ -562,16 +529,13 @@ fn generate_setter_builder_methods(
     }
 }
 
-fn generate_default_impl(
-    struct_name: &syn::Ident,
-    processed: &ProcessedStruct,
-) -> proc_macro2::TokenStream {
+fn generate_default_impl(struct_name: &syn::Ident, processed: &ProcessedStruct) -> proc_macro2::TokenStream {
     if processed.field_defaults.is_empty() {
         return quote! {};
     }
-    
+
     let mut field_initializers = Vec::new();
-    
+
     if let Fields::Named(fields) = &processed.modified_struct.fields {
         for field in &fields.named {
             let field_name = field.ident.as_ref().unwrap();
@@ -583,7 +547,7 @@ fn generate_default_impl(
             field_initializers.push(field_init);
         }
     }
-    
+
     quote! {
         impl Default for #struct_name {
             fn default() -> Self {
@@ -616,22 +580,28 @@ impl MethodGenConfig {
     fn should_skip(&self) -> bool {
         self.receiver_type == ReceiverType::Value && !self.returns_self
     }
-    
+
     fn is_field_setter(&self) -> bool {
         self.is_builder && self.setter_name.is_some() && self.method_name.starts_with("with_")
     }
 }
 
 fn generate_method_impl(config: &MethodGenConfig, type_name: &str, rustc_commit: &str) -> proc_macro2::TokenStream {
-    let MethodGenConfig { 
-        method_ident, param_idents, param_types, return_type, 
-        is_builder, needs_option_wrap, setter_name, .. 
+    let MethodGenConfig {
+        method_ident,
+        param_idents,
+        param_types,
+        return_type,
+        is_builder,
+        needs_option_wrap,
+        setter_name,
+        ..
     } = config;
-    
+
     if config.should_skip() {
         return quote! {};
     }
-    
+
     // Builder pattern methods that return Self
     if *is_builder && config.returns_self {
         if *needs_option_wrap {
@@ -641,15 +611,15 @@ fn generate_method_impl(config: &MethodGenConfig, type_name: &str, rustc_commit:
             } else {
                 type_to_string(&param_types[0])
             };
-            
+
             let setter_method_name = setter_name.as_ref().unwrap();
-            
+
             return quote! {
                 pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
                     with_library_registry(|registry| {
                         if let Ok(mut guard) = self.0.lock() {
                             let type_name = guard.type_name().to_string();
-                            
+
                             let symbol_name = format!(
                                 "{}__{}______obj_mut_dyn_Any____value__ref_{}____to__unit__{}",
                                 type_name,
@@ -658,9 +628,9 @@ fn generate_method_impl(config: &MethodGenConfig, type_name: &str, rustc_commit:
                                 #rustc_commit
                             );
                             let lib_name = format!("lib{}", type_name);
-                            
+
                             let obj_any = guard.as_any_mut();
-                            
+
                             type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any, #(#param_types),*);
                             registry.with_symbol::<FnType, _, _>(
                                 &lib_name,
@@ -682,13 +652,13 @@ fn generate_method_impl(config: &MethodGenConfig, type_name: &str, rustc_commit:
             } else {
                 panic!("Field setter should have exactly one parameter")
             };
-            
+
             return quote! {
                 pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
                     with_library_registry(|registry| {
                         if let Ok(mut guard) = self.0.lock() {
                             let type_name = guard.type_name().to_string();
-                            
+
                             let symbol_name = format!(
                                 "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
                                 type_name,
@@ -698,9 +668,9 @@ fn generate_method_impl(config: &MethodGenConfig, type_name: &str, rustc_commit:
                                 #rustc_commit
                             );
                             let lib_name = format!("lib{}", type_name);
-                            
+
                             let obj_any = guard.as_any_mut();
-                            
+
                             type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any, #(#param_types)*);
                             registry.with_symbol::<FnType, _, _>(
                                 &lib_name,
@@ -723,22 +693,24 @@ fn generate_method_impl(config: &MethodGenConfig, type_name: &str, rustc_commit:
             };
         }
     }
-    
+
     // Regular methods
-    let param_specs: Vec<_> = config.param_names.iter()
+    let param_specs: Vec<_> = config
+        .param_names
+        .iter()
         .zip(param_types.iter())
         .map(|(name, ty)| (name.clone(), type_to_string(ty)))
         .collect();
-    
+
     let symbol = SymbolName::new(type_name, &config.method_name, rustc_commit)
         .with_params(param_specs)
         .with_return_type(type_to_string(return_type));
-    
+
     let symbol_name = symbol.build_method();
     let fn_type = quote! {
         unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*) -> #return_type
     };
-    
+
     if config.returns_self {
         quote! {
             pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> Self {
@@ -755,7 +727,7 @@ fn generate_method_impl(config: &MethodGenConfig, type_name: &str, rustc_commit:
                             &#symbol_name,
                             |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
                         ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e));
-                        
+
                         drop(guard);
                         Self::from_handle(handle_clone)
                     } else {
@@ -770,7 +742,7 @@ fn generate_method_impl(config: &MethodGenConfig, type_name: &str, rustc_commit:
             &method_ident.to_string(),
             &symbol_name,
             fn_type,
-            quote! { #(, #param_idents)* }
+            quote! { #(, #param_idents)* },
         );
         quote! {
             pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
@@ -784,7 +756,7 @@ fn extract_object_methods(
     file: &syn::File,
     type_name: &str,
 ) -> Option<Vec<(String, Vec<String>, Vec<Type>, Type, ReceiverType)>> {
-    use syn::{Item, FnArg, Pat, ReturnType};
+    use syn::{FnArg, Item, Pat, ReturnType};
 
     for item in &file.items {
         if let Item::Macro(item_macro) = item {
@@ -796,16 +768,16 @@ fn extract_object_methods(
             if is_object_macro {
                 if let Ok(obj_input) = syn::parse2::<ObjectInput>(item_macro.mac.tokens.clone()) {
                     let mut methods = Vec::new();
-                    
+
                     // Process fields for getters and builders
                     if let Fields::Named(fields) = &obj_input.struct_item.fields {
                         for field in &fields.named {
                             let field_name = field.ident.as_ref().unwrap();
                             let field_type = &field.ty;
-                            
+
                             let is_public = matches!(field.vis, syn::Visibility::Public(_));
                             let has_setter = field.attrs.iter().any(|attr| attr.path().is_ident("setter"));
-                            
+
                             if is_public && !is_generic_type(field_type) {
                                 methods.push((
                                     field_name.to_string(),
@@ -815,11 +787,11 @@ fn extract_object_methods(
                                     ReceiverType::RefMut,
                                 ));
                             }
-                            
+
                             if has_setter {
                                 let builder_method_name = format!("with_{}", field_name);
                                 let return_type: Type = syn::parse_str(type_name).expect("Failed to parse type name");
-                                
+
                                 if let Some(inner_type) = extract_option_type(field_type) {
                                     if let Type::Path(type_path) = inner_type {
                                         if let Some(ident) = type_path.path.get_ident() {
@@ -838,7 +810,7 @@ fn extract_object_methods(
                                         }
                                     }
                                 }
-                                
+
                                 methods.push((
                                     builder_method_name,
                                     vec![field_name.to_string()],
@@ -849,34 +821,35 @@ fn extract_object_methods(
                             }
                         }
                     }
-                    
+
                     // Find main impl block
                     let main_impl = obj_input.impl_blocks.iter().find(|impl_block| {
-                        impl_block.trait_.is_none() && 
-                        if let Type::Path(type_path) = &*impl_block.self_ty {
-                            type_path.path.get_ident().map(|i| i.to_string()) == Some(type_name.to_string())
-                        } else {
-                            false
-                        }
+                        impl_block.trait_.is_none()
+                            && if let Type::Path(type_path) = &*impl_block.self_ty {
+                                type_path.path.get_ident().map(|i| i.to_string()) == Some(type_name.to_string())
+                            } else {
+                                false
+                            }
                     });
-                    
+
                     if let Some(main_impl) = main_impl {
                         for impl_item in &main_impl.items {
                             if let ImplItem::Fn(method) = impl_item {
                                 if matches!(method.vis, syn::Visibility::Public(_)) {
                                     let method_name = method.sig.ident.to_string();
 
-                                    let receiver_type = if let Some(FnArg::Receiver(receiver)) = method.sig.inputs.first() {
-                                        if receiver.reference.is_none() {
-                                            ReceiverType::Value
-                                        } else if receiver.mutability.is_some() {
-                                            ReceiverType::RefMut
+                                    let receiver_type =
+                                        if let Some(FnArg::Receiver(receiver)) = method.sig.inputs.first() {
+                                            if receiver.reference.is_none() {
+                                                ReceiverType::Value
+                                            } else if receiver.mutability.is_some() {
+                                                ReceiverType::RefMut
+                                            } else {
+                                                ReceiverType::Ref
+                                            }
                                         } else {
-                                            ReceiverType::Ref
-                                        }
-                                    } else {
-                                        continue;
-                                    };
+                                            continue;
+                                        };
 
                                     let mut param_names = Vec::new();
                                     let mut param_types = Vec::new();
@@ -915,7 +888,7 @@ fn generate_typed_wrapper(
     rustc_commit: &str,
 ) -> proc_macro2::TokenStream {
     let type_ident = quote::format_ident!("{}", type_name);
-    
+
     // Base wrapper struct
     let wrapper_struct = quote! {
         #[derive(Clone)]
@@ -927,7 +900,7 @@ fn generate_typed_wrapper(
                     registry.call_constructor(concat!("lib", #type_name), #type_name, ::hotline::RUSTC_COMMIT)
                         .expect(&format!("failed to construct {}", #type_name))
                 }).expect("library registry not initialized");
-                
+
                 Self::from_handle(::std::sync::Arc::new(::std::sync::Mutex::new(obj)))
             }
 
@@ -954,50 +927,37 @@ fn generate_typed_wrapper(
             }
         }
     };
-    
+
     // Method implementations
     let mut method_impls = Vec::new();
-    
+
     for (method_name, param_names, param_types, return_type, receiver_type) in methods {
         let method_ident = quote::format_ident!("{}", method_name);
-        let param_idents: Vec<_> = param_names.iter()
-            .map(|name| quote::format_ident!("{}", name))
-            .collect();
-        
-        let returns_self = if let Type::Path(type_path) = return_type {
-            type_path.path.is_ident(type_name)
-        } else {
-            false
-        };
-        
+        let param_idents: Vec<_> = param_names.iter().map(|name| quote::format_ident!("{}", name)).collect();
+
+        let returns_self =
+            if let Type::Path(type_path) = return_type { type_path.path.is_ident(type_name) } else { false };
+
         let is_builder = *receiver_type == ReceiverType::Value && returns_self;
-        let setter_name = if method_name.starts_with("with_") {
-            Some(format!("set_{}", &method_name[5..]))
-        } else {
-            None
-        };
-        
-        let needs_option_wrap = method_name.starts_with("with_") && 
-            param_types.len() == 1 && {
-                let inner_type = if let Type::Reference(type_ref) = &param_types[0] {
-                    &*type_ref.elem
-                } else {
-                    &param_types[0]
-                };
-                
-                if let Type::Path(type_path) = inner_type {
-                    if let Some(ident) = type_path.path.get_ident() {
-                        let type_name = ident.to_string();
-                        type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
-                            && !is_standard_type(&type_name)
-                    } else {
-                        false
-                    }
+        let setter_name =
+            if method_name.starts_with("with_") { Some(format!("set_{}", &method_name[5..])) } else { None };
+
+        let needs_option_wrap = method_name.starts_with("with_") && param_types.len() == 1 && {
+            let inner_type =
+                if let Type::Reference(type_ref) = &param_types[0] { &*type_ref.elem } else { &param_types[0] };
+
+            if let Type::Path(type_path) = inner_type {
+                if let Some(ident) = type_path.path.get_ident() {
+                    let type_name = ident.to_string();
+                    type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && !is_standard_type(&type_name)
                 } else {
                     false
                 }
-            };
-        
+            } else {
+                false
+            }
+        };
+
         let config = MethodGenConfig {
             method_name: method_name.clone(),
             method_ident,
@@ -1011,16 +971,16 @@ fn generate_typed_wrapper(
             needs_option_wrap,
             setter_name,
         };
-        
+
         let method_impl = generate_method_impl(&config, type_name, rustc_commit);
         if !method_impl.is_empty() {
             method_impls.push(method_impl);
         }
     }
-    
+
     quote! {
         #wrapper_struct
-        
+
         impl #type_ident {
             #(#method_impls)*
         }
@@ -1029,13 +989,13 @@ fn generate_typed_wrapper(
 
 fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> proc_macro2::TokenStream {
     let mut wrappers = Vec::new();
-    
+
     for type_name in types {
         let lib_path = find_object_lib_file(type_name);
         if !lib_path.exists() {
             continue;
         }
-        
+
         if let Ok(content) = fs::read_to_string(&lib_path) {
             if let Ok(file) = syn::parse_file(&content) {
                 if let Some(methods) = extract_object_methods(&file, type_name) {
@@ -1044,7 +1004,7 @@ fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> proc_
             }
         }
     }
-    
+
     quote! { #(#wrappers)* }
 }
 
@@ -1073,29 +1033,28 @@ pub fn object(input: TokenStream) -> TokenStream {
     let ObjectInput { struct_item, impl_blocks } = syn::parse_macro_input!(input as ObjectInput);
     let struct_name = &struct_item.ident;
     let rustc_commit = get_rustc_commit_hash();
-    
+
     // Process struct attributes
     let processed = process_struct_attributes(&struct_item);
-    
+
     // Find main impl block
-    let (main_impl, other_impl_blocks): (Vec<_>, Vec<_>) = impl_blocks.iter()
-        .partition(|impl_block| {
-            impl_block.trait_.is_none() && 
-            if let Type::Path(type_path) = &*impl_block.self_ty {
+    let (main_impl, other_impl_blocks): (Vec<_>, Vec<_>) = impl_blocks.iter().partition(|impl_block| {
+        impl_block.trait_.is_none()
+            && if let Type::Path(type_path) = &*impl_block.self_ty {
                 type_path.path.is_ident(struct_name)
             } else {
                 false
             }
-        });
-    
-    let main_impl = main_impl.into_iter().next()
-        .expect("Expected at least one impl block for the struct itself");
-    
+    });
+
+    let main_impl = main_impl.into_iter().next().expect("Expected at least one impl block for the struct itself");
+
     // Check for Default
     let struct_attrs = &struct_item.attrs;
-    let has_derive_default = struct_attrs.iter()
+    let has_derive_default = struct_attrs
+        .iter()
         .any(|attr| attr.path().is_ident("derive") && attr.to_token_stream().to_string().contains("Default"));
-    
+
     let has_impl_default = other_impl_blocks.iter().any(|impl_block| {
         if let Some((_, trait_path, _)) = &impl_block.trait_ {
             trait_path.segments.last().map(|seg| seg.ident == "Default").unwrap_or(false)
@@ -1103,23 +1062,26 @@ pub fn object(input: TokenStream) -> TokenStream {
             false
         }
     });
-    
+
     let should_generate_default = !has_derive_default && !has_impl_default && !processed.field_defaults.is_empty();
     let has_default = has_derive_default || has_impl_default || !processed.field_defaults.is_empty();
-    
+
     // Filter out manual Default if we're generating one
     let filtered_other_impl_blocks: Vec<_> = if should_generate_default {
-        other_impl_blocks.into_iter().filter(|impl_block| {
-            if let Some((_, trait_path, _)) = &impl_block.trait_ {
-                !trait_path.segments.last().map(|seg| seg.ident == "Default").unwrap_or(false)
-            } else {
-                true
-            }
-        }).collect()
+        other_impl_blocks
+            .into_iter()
+            .filter(|impl_block| {
+                if let Some((_, trait_path, _)) = &impl_block.trait_ {
+                    !trait_path.segments.last().map(|seg| seg.ident == "Default").unwrap_or(false)
+                } else {
+                    true
+                }
+            })
+            .collect()
     } else {
         other_impl_blocks
     };
-    
+
     // Generate components
     let field_accessors = generate_field_accessors(struct_name, &processed, &rustc_commit);
     let method_wrappers = generate_method_wrappers(struct_name, main_impl, &processed, &rustc_commit);
@@ -1130,7 +1092,7 @@ pub fn object(input: TokenStream) -> TokenStream {
     } else {
         quote! {}
     };
-    
+
     // HotlineObject trait implementation
     let trait_impl = quote! {
         impl ::hotline::HotlineObject for #struct_name {
@@ -1147,17 +1109,17 @@ pub fn object(input: TokenStream) -> TokenStream {
             }
         }
     };
-    
+
     // Find referenced types and generate wrappers
     let referenced_types = find_referenced_object_types(&struct_item, &impl_blocks);
     let typed_wrappers = generate_typed_wrappers(&referenced_types, &rustc_commit);
-    
+
     // Assemble output
     let modified_struct = &processed.modified_struct;
     let output = quote! {
         #[allow(dead_code)]
         type Like<T> = T;
-        
+
         #modified_struct
         #main_impl
         #(#filtered_other_impl_blocks)*
@@ -1169,6 +1131,6 @@ pub fn object(input: TokenStream) -> TokenStream {
         #core_functions
         #typed_wrappers
     };
-    
+
     TokenStream::from(output)
 }
