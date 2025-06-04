@@ -4,7 +4,7 @@ name = "Rect"
 version = "0.1.0"
 
 [lib]
-crate-type = ["rlib", "dylib"]
+crate-type = ["dylib"]
 
 [dependencies]
 hotline = {path = "../../hotline"}
