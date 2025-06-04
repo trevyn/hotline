@@ -35,7 +35,7 @@ hotline::object!({
             self.glyphs.clear();
             Ok(())
         }
-        
+
         pub fn visit_field(&mut self, key: &str, value: &str) -> Result<(), String> {
             match key {
                 "size" => self.size = value.parse().map_err(|_| "invalid size")?,
@@ -45,11 +45,11 @@ hotline::object!({
             }
             Ok(())
         }
-        
+
         pub fn visit_array_start(&mut self, key: &str) -> bool {
             key == "glyphs"
         }
-        
+
         pub fn visit_object_start(&mut self) -> Result<(), String> {
             // Clear temporary glyph fields
             self.current_chr = None;
@@ -62,7 +62,7 @@ hotline::object!({
             self.current_adv = None;
             Ok(())
         }
-        
+
         pub fn visit_object_field(&mut self, key: &str, value: &str) -> Result<(), String> {
             match key {
                 "chr" => self.current_chr = value.chars().next(),
@@ -77,34 +77,38 @@ hotline::object!({
             }
             Ok(())
         }
-        
+
         pub fn visit_object_end(&mut self) -> Result<(), String> {
             // Build and insert glyph if we have all required fields
-            if let (Some(chr), Some(x), Some(y), Some(w), Some(h), Some(off_x), Some(off_y), Some(adv)) = 
-                (self.current_chr, self.current_x, self.current_y, self.current_w, self.current_h, 
-                 self.current_off_x, self.current_off_y, self.current_adv) {
-                self.glyphs.insert(chr, Glyph {
-                    x, y, width: w, height: h, offset_x: off_x, offset_y: off_y, advance: adv
-                });
+            if let (Some(chr), Some(x), Some(y), Some(w), Some(h), Some(off_x), Some(off_y), Some(adv)) = (
+                self.current_chr,
+                self.current_x,
+                self.current_y,
+                self.current_w,
+                self.current_h,
+                self.current_off_x,
+                self.current_off_y,
+                self.current_adv,
+            ) {
+                self.glyphs
+                    .insert(chr, Glyph { x, y, width: w, height: h, offset_x: off_x, offset_y: off_y, advance: adv });
             }
             Ok(())
         }
-        
+
         pub fn visit_array_end(&mut self, _key: &str) -> Result<(), String> {
             Ok(())
         }
-        
+
         pub fn visit_end(&mut self) -> Result<(), String> {
             Ok(())
         }
-        
+
         // Font-specific methods
         pub fn glyph(&mut self, chr: char) -> Option<(u32, u32, u32, u32, i32, i32, u32)> {
-            self.glyphs.get(&chr).map(|g| {
-                (g.x, g.y, g.width, g.height, g.offset_x, g.offset_y, g.advance)
-            })
+            self.glyphs.get(&chr).map(|g| (g.x, g.y, g.width, g.height, g.offset_x, g.offset_y, g.advance))
         }
-        
+
         pub fn has_glyph(&mut self, chr: char) -> bool {
             self.glyphs.contains_key(&chr)
         }

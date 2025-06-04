@@ -11,20 +11,20 @@ hotline::object!({
             self.loaded_data = Some(value);
             Ok(())
         }
-        
+
         pub fn parse_json(&mut self, json_str: &str) -> Result<(), String> {
             let value = serde_json::from_str(json_str).map_err(|e| format!("Failed to parse JSON: {}", e))?;
             self.loaded_data = Some(value);
             Ok(())
         }
-        
+
         // Parse into any object that has visitor methods (using Font as template)
         pub fn parse_into(&mut self, target: &mut Like<Font>) -> Result<(), String> {
             let data = self.loaded_data.as_ref().ok_or("no data loaded")?;
-            
+
             // Call visit_start
             target.visit_start()?;
-            
+
             // Parse top-level object
             if let Some(obj) = data.as_object() {
                 for (key, value) in obj {
@@ -49,12 +49,12 @@ hotline::object!({
                     }
                 }
             }
-            
+
             target.visit_end()?;
-            
+
             Ok(())
         }
-        
+
         fn value_to_string(&self, value: &serde_json::Value) -> Option<String> {
             match value {
                 serde_json::Value::String(s) => Some(s.clone()),

@@ -118,10 +118,9 @@ fn main() -> Result<(), String> {
     // Create window manager instance
     let window_manager =
         runtime.create_from_lib("libWindowManager", "WindowManager").expect("Failed to create WindowManager");
-    
+
     // Initialize window manager (which sets up the text renderer)
-    direct_call!(runtime, &window_manager, WindowManager, initialize())
-        .expect("Failed to initialize WindowManager");
+    direct_call!(runtime, &window_manager, WindowManager, initialize()).expect("Failed to initialize WindowManager");
 
     // Create texture once outside the loop
     let mut texture =

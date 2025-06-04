@@ -1,11 +1,10 @@
-
 hotline::object!({
     #[derive(Default)]
     pub struct WindowManager {
         rects: Vec<Rect>,
         selected: Option<Rect>,
         highlight_lens: Option<HighlightLens>, // HighlightLens for selected rect
-        text_renderer: Option<TextRenderer>, // TextRenderer for displaying text
+        text_renderer: Option<TextRenderer>,   // TextRenderer for displaying text
         dragging: bool,
         drag_offset_x: f64,
         drag_offset_y: f64,
@@ -22,7 +21,7 @@ hotline::object!({
                 .with_color((0, 255, 255, 255)); // Yellow text in BGRA format
             self.text_renderer = Some(text_renderer);
         }
-        
+
         pub fn add_rect(&mut self, rect: Rect) {
             self.rects.push(rect);
         }
@@ -153,7 +152,7 @@ hotline::object!({
             if let Some(ref mut hl_handle) = self.highlight_lens {
                 hl_handle.render(buffer, buffer_width, buffer_height, pitch);
             }
-            
+
             // Render text
             if let Some(ref mut text_renderer) = self.text_renderer {
                 text_renderer.render(buffer, buffer_width, buffer_height, pitch);
