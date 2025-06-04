@@ -6,3 +6,4 @@
 - runtime/main should not call any specific objects other than WindowManager
 - when working with macros, remember that you can use cargo-expand
 - adjust the `object` macro if it would help make things cleaner
+- when dealing with symbols, be very attentive to the number of underscores

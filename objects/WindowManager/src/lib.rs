@@ -19,7 +19,7 @@ hotline::object!({
                 .with_text("Hello, Hotline!".to_string())
                 .with_x(20.0)
                 .with_y(20.0)
-                .with_color((255, 255, 0, 255)); // Yellow text
+                .with_color((0, 255, 255, 255)); // Yellow text in BGRA format
             self.text_renderer = Some(text_renderer);
         }
         
@@ -97,7 +97,7 @@ hotline::object!({
                 self.dragging = true;
 
                 // Create HighlightLens for selected rect
-                self.highlight_lens = Some(HighlightLens::new().with_target(rect_handle));
+                self.highlight_lens = Some(HighlightLens::new().with_target(rect_handle.clone()));
             } else {
                 // No hit - start rect creation
                 self.drag_start = Some((x, y));

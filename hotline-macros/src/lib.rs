@@ -451,17 +451,54 @@ fn generate_methods_for_type(
                 String::new()
             };
             
-            // Check if a setter exists by looking for it in the methods list
-            let has_setter = !setter_method_name.is_empty() && methods.iter().any(|(name, _, _, _, recv)| {
-                name == &setter_method_name && *recv == ReceiverType::RefMut
-            });
+            // For builder methods (with_X), we assume there's always a corresponding setter
+            // since the macro generates setters for all fields with #[setter]
+            let has_setter = !setter_method_name.is_empty() && method_name.starts_with("with_");
             
             let method_impl = if has_setter {
-                let setter_ident = quote::format_ident!("{}", setter_method_name);
+                // For field setters, we need the mangled type string
+                // We know there's exactly one parameter for field setters
+                let param_type_str = if param_types.len() == 1 {
+                    type_to_string(&param_types[0])
+                } else {
+                    panic!("Field setter should have exactly one parameter")
+                };
+                
+                // Extract field name from setter_method_name (set_X -> X)  
+                let field_name_str = setter_method_name[4..].to_string(); // Remove "set_" prefix
+                
                 quote! {
                     pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
-                        // Call the setter method on self
-                        self.#setter_ident(#(#param_idents),*);
+                        // Call the field setter via FFI
+                        with_library_registry(|registry| {
+                            if let Ok(mut guard) = self.0.lock() {
+                                let type_name = guard.type_name();
+                                
+                                // Build the field setter symbol name
+                                // Format: {struct}__set_{field}____obj_mut_dyn_Any__{field}_{type}__to__unit__{commit}
+                                // Note: single underscore between field and type to match actual symbol
+                                let symbol_name = format!(
+                                    "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
+                                    type_name,
+                                    #field_name_str,
+                                    #field_name_str,
+                                    #param_type_str,
+                                    #rustc_commit
+                                );
+                                let lib_name = format!("lib{}", type_name);
+                                
+                                let obj_any = guard.as_any_mut();
+                                
+                                type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any, #(#param_types)*);
+                                registry.with_symbol::<FnType, _, _>(
+                                    &lib_name,
+                                    &symbol_name,
+                                    |fn_ptr| unsafe { (**fn_ptr)(obj_any, #(#param_idents)*) }
+                                ).unwrap_or_else(|e| {
+                                    panic!("Field setter for {} not found: {}", #field_name_str, e);
+                                });
+                            }
+                        });
                         self
                     }
                 }
@@ -703,49 +740,46 @@ pub fn object(input: TokenStream) -> TokenStream {
 
     if let Fields::Named(fields) = &modified_struct.fields {
         for field in &fields.named {
-            // Only generate accessors for public fields
-            let is_public = matches!(field.vis, syn::Visibility::Public(_));
-            if !is_public {
-                continue;
-            }
-
             let field_name = field.ident.as_ref().unwrap();
             let field_type = &field.ty;
+            let is_public = matches!(field.vis, syn::Visibility::Public(_));
 
             // Only generate accessors for simple types
             if !is_generic_type(field_type) {
                 let type_str = type_to_string(field_type);
 
-                // Getter (always generated for public fields)
-                let getter_fn_name = quote::format_ident!(
-                    "{}__get_{}____obj_ref_dyn_Any__to__{}__{}",
-                    struct_name,
-                    field_name,
-                    type_str,
-                    rustc_commit
-                );
+                // Getter (only generated for public fields)
+                if is_public {
+                    let getter_fn_name = quote::format_ident!(
+                        "{}__{}______obj_mut_dyn_Any____to__{}__{}",
+                        struct_name,
+                        field_name,
+                        type_str,
+                        rustc_commit
+                    );
 
-                field_accessors.push(quote! {
-                    #[unsafe(no_mangle)]
-                    #[allow(non_snake_case)]
-                    pub extern "Rust" fn #getter_fn_name(obj: &dyn ::std::any::Any) -> #field_type {
-                        let instance = match obj.downcast_ref::<#struct_name>() {
-                            Some(inst) => inst,
-                            None => {
-                                let type_name: &'static str = ::std::any::type_name_of_val(obj);
-                                panic!(
-                                    "Type mismatch in getter {}: expected {}, but got {}",
-                                    stringify!(#field_name),
-                                    stringify!(#struct_name),
-                                    type_name
-                                )
-                            }
-                        };
-                        instance.#field_name.clone()
-                    }
-                });
+                    field_accessors.push(quote! {
+                        #[unsafe(no_mangle)]
+                        #[allow(non_snake_case)]
+                        pub extern "Rust" fn #getter_fn_name(obj: &mut dyn ::std::any::Any) -> #field_type {
+                            let instance = match obj.downcast_mut::<#struct_name>() {
+                                Some(inst) => inst,
+                                None => {
+                                    let type_name: &'static str = ::std::any::type_name_of_val(&*obj);
+                                    panic!(
+                                        "Type mismatch in getter {}: expected {}, but got {}",
+                                        stringify!(#field_name),
+                                        stringify!(#struct_name),
+                                        type_name
+                                    )
+                                }
+                            };
+                            instance.#field_name.clone()
+                        }
+                    });
+                }
 
-                // Setter (only generated if field has #[setter] attribute)
+                // Setter (generated for any field with #[setter] attribute, regardless of visibility)
                 if fields_with_setters.contains(&field_name.to_string()) {
                     let setter_fn_name = quote::format_ident!(
                         "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
