@@ -181,6 +181,19 @@ fn is_standard_type(name: &str) -> bool {
     )
 }
 
+fn is_object_type(name: &str) -> bool {
+    name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && !is_standard_type(name)
+}
+
+fn needs_typed_wrapper(ty: &Type) -> bool {
+    if let Type::Path(type_path) = ty {
+        if let Some(ident) = type_path.path.get_ident() {
+            return is_object_type(&ident.to_string());
+        }
+    }
+    false
+}
+
 fn is_generic_type(ty: &Type) -> bool {
     if let Type::Path(type_path) = ty {
         type_path.path.segments.iter().any(|seg| 
@@ -190,10 +203,10 @@ fn is_generic_type(ty: &Type) -> bool {
     }
 }
 
-fn extract_option_type(ty: &Type) -> Option<&Type> {
+fn extract_generic_inner_type<'a>(ty: &'a Type, type_name: &str) -> Option<&'a Type> {
     if let Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
-            if segment.ident == "Option" {
+            if segment.ident == type_name {
                 if let PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                         return Some(inner_ty);
@@ -205,19 +218,12 @@ fn extract_option_type(ty: &Type) -> Option<&Type> {
     None
 }
 
+fn extract_option_type(ty: &Type) -> Option<&Type> {
+    extract_generic_inner_type(ty, "Option")
+}
+
 fn extract_like_type(ty: &Type) -> Option<&Type> {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            if segment.ident == "Like" {
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
-                        return Some(inner_ty);
-                    }
-                }
-            }
-        }
-    }
-    None
+    extract_generic_inner_type(ty, "Like")
 }
 
 fn resolve_self_type(ty: Type, type_name: &str) -> Type {
@@ -264,11 +270,7 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImp
             if let Type::Path(type_path) = ty {
                 if let Some(ident) = type_path.path.get_ident() {
                     let name = ident.to_string();
-                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                        && name != self.current_type
-                        && name != "Self"
-                        && !is_standard_type(&name)
-                    {
+                    if is_object_type(&name) && name != self.current_type && name != "Self" {
                         self.types.insert(name);
                     }
                 }
@@ -281,7 +283,7 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImp
             if let syn::Expr::Lit(expr_lit) = expr {
                 if let syn::Lit::Str(lit_str) = &expr_lit.lit {
                     let value = lit_str.value();
-                    if value.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && value != self.current_type {
+                    if is_object_type(&value) && value != self.current_type {
                         self.types.insert(value);
                     }
                 }
@@ -293,8 +295,7 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImp
                     if path_expr.path.segments.len() == 2 {
                         let type_name = path_expr.path.segments[0].ident.to_string();
                         let method_name = path_expr.path.segments[1].ident.to_string();
-                        if method_name == "new" && type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
-                            && type_name != self.current_type && !is_standard_type(&type_name) {
+                        if method_name == "new" && is_object_type(&type_name) && type_name != self.current_type {
                             self.types.insert(type_name);
                         }
                     }
@@ -352,6 +353,8 @@ fn generate_ffi_wrapper(
 ) -> proc_macro2::TokenStream {
     let param_list = params.iter().map(|(name, ty)| quote! { #name: #ty });
     let return_spec = return_type.map(|ty| quote! { -> #ty }).unwrap_or_default();
+    let panic_msg = format!("Type mismatch in {}: expected {}, but got {{}}", 
+        wrapper_name, struct_name);
     
     quote! {
         #[unsafe(no_mangle)]
@@ -360,18 +363,10 @@ fn generate_ffi_wrapper(
             obj: &mut dyn ::std::any::Any
             #(, #param_list)*
         ) #return_spec {
-            let instance = match obj.downcast_mut::<#struct_name>() {
-                Some(inst) => inst,
-                None => {
-                    let type_name: &'static str = ::std::any::type_name_of_val(&*obj);
-                    panic!(
-                        "Type mismatch in {}: expected {}, but got {}",
-                        stringify!(#wrapper_name),
-                        stringify!(#struct_name),
-                        type_name
-                    )
-                }
-            };
+            let instance = obj.downcast_mut::<#struct_name>()
+                .unwrap_or_else(|| {
+                    panic!(#panic_msg, ::std::any::type_name_of_val(&*obj))
+                });
             #body
         }
     }
@@ -497,8 +492,7 @@ fn generate_method_wrappers(
                     if let Type::Path(type_path) = inner_type {
                         if let Some(ident) = type_path.path.get_ident() {
                             let type_name = ident.to_string();
-                            if type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
-                                && !is_standard_type(&type_name) {
+                            if is_object_type(&type_name) {
                                 let type_str = type_to_string(inner_type);
                                 let wrapper_fn_name = quote::format_ident!(
                                     "{}__{}______obj_mut_dyn_Any____value__ref_{}____to__unit__{}",
@@ -799,8 +793,7 @@ fn extract_object_methods(
                                     if let Type::Path(type_path) = inner_type {
                                         if let Some(ident) = type_path.path.get_ident() {
                                             let inner_type_name = ident.to_string();
-                                            if inner_type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
-                                                && !is_standard_type(&inner_type_name) {
+                                            if is_object_type(&inner_type_name) {
                                                 let ref_type: Type = syn::parse_quote! { &#inner_type };
                                                 methods.push((
                                                     builder_method_name,
