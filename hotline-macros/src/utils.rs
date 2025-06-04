@@ -93,27 +93,27 @@ pub mod types {
         }
     }
 
-    pub fn extract_generic_inner_type<'a>(ty: &'a Type, type_name: &str) -> Option<&'a Type> {
-        if let Type::Path(type_path) = ty {
-            if let Some(segment) = type_path.path.segments.last() {
-                if segment.ident == type_name {
-                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                        if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
-                            return Some(inner_ty);
-                        }
-                    }
-                }
+    pub fn extract_generic_inner<'a>(ty: &'a Type, type_name: &str) -> Option<&'a Type> {
+        match ty {
+            Type::Path(tp) => {
+                tp.path.segments.last().filter(|seg| seg.ident == type_name).and_then(|seg| match &seg.arguments {
+                    PathArguments::AngleBracketed(args) => args.args.first().and_then(|arg| match arg {
+                        GenericArgument::Type(inner) => Some(inner),
+                        _ => None,
+                    }),
+                    _ => None,
+                })
             }
+            _ => None,
         }
-        None
     }
 
     pub fn extract_option_type(ty: &Type) -> Option<&Type> {
-        extract_generic_inner_type(ty, "Option")
+        extract_generic_inner(ty, "Option")
     }
 
     pub fn extract_like_type(ty: &Type) -> Option<&Type> {
-        extract_generic_inner_type(ty, "Like")
+        extract_generic_inner(ty, "Like")
     }
 
     pub fn resolve_self_type(ty: Type, type_name: &str) -> Type {

@@ -67,15 +67,11 @@ pub fn object(input: TokenStream) -> TokenStream {
     let has_derive_default = struct_item
         .attrs
         .iter()
-        .any(|attr| attr.path().is_ident("derive") && attr.to_token_stream().to_string().contains("Default"));
+        .any(|a| a.path().is_ident("derive") && a.to_token_stream().to_string().contains("Default"));
 
-    let has_impl_default = other_impl_blocks.iter().any(|impl_block| {
-        impl_block
-            .trait_
-            .as_ref()
-            .map(|(_, path, _)| path.segments.last().map(|seg| seg.ident == "Default").unwrap_or(false))
-            .unwrap_or(false)
-    });
+    let has_impl_default = other_impl_blocks
+        .iter()
+        .any(|ib| ib.trait_.as_ref().and_then(|(_, p, _)| p.segments.last()).map_or(false, |s| s.ident == "Default"));
 
     let should_generate_default = !has_derive_default && !has_impl_default && !processed.field_defaults.is_empty();
     let has_default = has_derive_default || has_impl_default || !processed.field_defaults.is_empty();

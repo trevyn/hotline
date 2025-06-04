@@ -126,6 +126,36 @@ pub struct MethodGenConfig {
 }
 
 impl MethodGenConfig {
+    pub fn from_method(method: &(String, Vec<String>, Vec<Type>, Type, ReceiverType), type_name: &str) -> Self {
+        let (method_name, param_names, param_types, return_type, receiver_type) = method;
+        let returns_self = matches!(return_type, Type::Path(tp) if tp.path.is_ident(type_name));
+        let is_builder = *receiver_type == ReceiverType::Value && returns_self;
+
+        let needs_option_wrap = method_name.starts_with(WITH_PREFIX) && param_types.len() == 1 && {
+            let inner = match &param_types[0] {
+                Type::Reference(tr) => &*tr.elem,
+                t => t,
+            };
+            matches!(inner, Type::Path(tp) if tp.path.get_ident()
+                .map(|i| is_object_type(&i.to_string()))
+                .unwrap_or(false))
+        };
+
+        Self {
+            method_name: method_name.clone(),
+            method_ident: format_ident!("{}", method_name),
+            param_names: param_names.clone(),
+            param_idents: param_names.iter().map(|n| format_ident!("{}", n)).collect(),
+            param_types: param_types.clone(),
+            return_type: return_type.clone(),
+            receiver_type: *receiver_type,
+            returns_self,
+            is_builder,
+            needs_option_wrap,
+            setter_name: method_name.strip_prefix(WITH_PREFIX).map(|s| format!("{}{}", SET_PREFIX, s)),
+        }
+    }
+
     pub fn should_skip(&self) -> bool {
         self.receiver_type == ReceiverType::Value && !self.returns_self
     }

@@ -67,31 +67,17 @@ pub fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[Ite
 }
 
 pub fn find_object_lib_file(type_name: &str) -> PathBuf {
-    let workspace_dir = std::env::current_dir()
+    let find_workspace = |start: PathBuf| -> Option<PathBuf> {
+        start.ancestors().find(|d| d.join("Cargo.toml").exists() && d.join("objects").exists()).map(PathBuf::from)
+    };
+
+    let workspace = std::env::current_dir()
         .ok()
-        .and_then(|mut dir| {
-            loop {
-                if dir.join("Cargo.toml").exists() && dir.join("objects").exists() {
-                    return Some(dir);
-                }
-                if !dir.pop() {
-                    break;
-                }
-            }
-            None
-        })
-        .or_else(|| {
-            std::env::var("OUT_DIR").ok().and_then(|out_dir| {
-                std::path::Path::new(&out_dir)
-                    .ancestors()
-                    .find(|p| p.ends_with("target"))
-                    .and_then(|target| target.parent())
-                    .map(|p| p.to_path_buf())
-            })
-        })
+        .and_then(find_workspace)
+        .or_else(|| std::env::var("OUT_DIR").ok().and_then(|s| find_workspace(s.into())))
         .unwrap_or_else(|| std::env::current_dir().unwrap());
 
-    workspace_dir.join("objects").join(type_name).join("src").join("lib.rs")
+    workspace.join("objects").join(type_name).join("src").join("lib.rs")
 }
 
 pub fn extract_object_methods(

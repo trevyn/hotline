@@ -4,9 +4,8 @@ use std::fs;
 use syn::Type;
 
 use crate::codegen::methods::{MethodGenConfig, generate_method_impl};
-use crate::constants::{ERR_CONSTRUCT_FAILED, ERR_REGISTRY_NOT_INIT, LIB_PREFIX, SET_PREFIX, WITH_PREFIX};
+use crate::constants::{ERR_CONSTRUCT_FAILED, ERR_REGISTRY_NOT_INIT, LIB_PREFIX};
 use crate::discovery::{ReceiverType, extract_object_methods, find_object_lib_file};
-use crate::utils::types::is_object_type;
 
 pub fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> proc_macro2::TokenStream {
     let wrappers: Vec<_> = types
@@ -33,38 +32,8 @@ fn generate_typed_wrapper(
 
     let method_impls: Vec<_> = methods
         .iter()
-        .filter_map(|(method_name, param_names, param_types, return_type, receiver_type)| {
-            let method_ident = format_ident!("{}", method_name);
-            let param_idents: Vec<_> = param_names.iter().map(|name| format_ident!("{}", name)).collect();
-
-            let returns_self = matches!(return_type, Type::Path(tp) if tp.path.is_ident(type_name));
-            let is_builder = *receiver_type == ReceiverType::Value && returns_self;
-            let setter_name = method_name.strip_prefix(WITH_PREFIX).map(|s| format!("{}{}", SET_PREFIX, s));
-
-            let needs_option_wrap = method_name.starts_with(WITH_PREFIX) && param_types.len() == 1 && {
-                let inner = match &param_types[0] {
-                    Type::Reference(tr) => &*tr.elem,
-                    t => t,
-                };
-                matches!(inner, Type::Path(tp) if tp.path.get_ident()
-                    .map(|i| is_object_type(&i.to_string()))
-                    .unwrap_or(false))
-            };
-
-            let config = MethodGenConfig {
-                method_name: method_name.clone(),
-                method_ident,
-                param_names: param_names.clone(),
-                param_idents,
-                param_types: param_types.clone(),
-                return_type: return_type.clone(),
-                receiver_type: *receiver_type,
-                returns_self,
-                is_builder,
-                needs_option_wrap,
-                setter_name,
-            };
-
+        .filter_map(|method| {
+            let config = MethodGenConfig::from_method(method, type_name);
             let impl_tokens = generate_method_impl(&config, type_name, rustc_commit);
             (!impl_tokens.is_empty()).then_some(impl_tokens)
         })
