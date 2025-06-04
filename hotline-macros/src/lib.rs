@@ -8,6 +8,7 @@ use std::process::Command;
 use syn::{
     Fields, FnArg, ImplItem, ItemImpl, ItemStruct, Pat, ReturnType, Type, braced,
     parse::{Parse, ParseStream},
+    visit::{self, Visit},
 };
 
 mod utils;
@@ -52,8 +53,6 @@ enum ReceiverType {
 // ===== Type Discovery =====
 
 fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImpl]) -> HashSet<String> {
-    use syn::visit::{self, Visit};
-
     struct TypeVisitor {
         types: HashSet<String>,
         current_type: String,
@@ -78,29 +77,27 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImp
         }
 
         fn visit_expr(&mut self, expr: &'ast syn::Expr) {
-            // String literals that might be object names
-            if let syn::Expr::Lit(expr_lit) = expr {
-                if let syn::Lit::Str(lit_str) = &expr_lit.lit {
-                    let value = lit_str.value();
-                    if is_object_type(&value) && value != self.current_type {
-                        self.types.insert(value);
-                    }
-                }
-            }
-
-            // ObjectType::new() calls
-            if let syn::Expr::Call(expr_call) = expr {
-                if let syn::Expr::Path(path_expr) = &*expr_call.func {
-                    if path_expr.path.segments.len() == 2 {
-                        let type_name = path_expr.path.segments[0].ident.to_string();
-                        let method_name = path_expr.path.segments[1].ident.to_string();
-                        if method_name == "new" && is_object_type(&type_name) && type_name != self.current_type {
-                            self.types.insert(type_name);
+            match expr {
+                syn::Expr::Lit(expr_lit) => {
+                    if let syn::Lit::Str(lit_str) = &expr_lit.lit {
+                        let value = lit_str.value();
+                        if is_object_type(&value) && value != self.current_type {
+                            self.types.insert(value);
                         }
                     }
                 }
+                syn::Expr::Call(expr_call) => {
+                    if let syn::Expr::Path(path_expr) = &*expr_call.func {
+                        if path_expr.path.segments.len() == 2 && path_expr.path.segments[1].ident == "new" {
+                            let type_name = path_expr.path.segments[0].ident.to_string();
+                            if is_object_type(&type_name) && type_name != self.current_type {
+                                self.types.insert(type_name);
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
-
             visit::visit_expr(self, expr);
         }
     }
@@ -108,34 +105,37 @@ fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[ItemImp
     let mut visitor = TypeVisitor { types: HashSet::new(), current_type: struct_item.ident.to_string() };
 
     visitor.visit_item_struct(struct_item);
-    for impl_block in impl_blocks {
-        visitor.visit_item_impl(impl_block);
-    }
+    impl_blocks.iter().for_each(|block| visitor.visit_item_impl(block));
 
     visitor.types
 }
 
 fn find_object_lib_file(type_name: &str) -> std::path::PathBuf {
-    let mut current_dir = std::env::current_dir().unwrap();
-    loop {
-        if current_dir.join("Cargo.toml").exists() && current_dir.join("objects").exists() {
-            break;
-        }
-        if !current_dir.pop() {
-            current_dir = std::env::current_dir().unwrap();
-            if let Ok(out_dir) = std::env::var("OUT_DIR") {
-                let out_path = Path::new(&out_dir);
-                if let Some(target_dir) = out_path.ancestors().find(|p| p.ends_with("target")) {
-                    if let Some(workspace) = target_dir.parent() {
-                        current_dir = workspace.to_path_buf();
-                    }
+    let workspace_dir = std::env::current_dir()
+        .ok()
+        .and_then(|mut dir| {
+            loop {
+                if dir.join("Cargo.toml").exists() && dir.join("objects").exists() {
+                    return Some(dir);
+                }
+                if !dir.pop() {
+                    break;
                 }
             }
-            break;
-        }
-    }
+            None
+        })
+        .or_else(|| {
+            std::env::var("OUT_DIR").ok().and_then(|out_dir| {
+                Path::new(&out_dir)
+                    .ancestors()
+                    .find(|p| p.ends_with("target"))
+                    .and_then(|target| target.parent())
+                    .map(|p| p.to_path_buf())
+            })
+        })
+        .unwrap_or_else(|| std::env::current_dir().unwrap());
 
-    current_dir.join("objects").join(type_name).join("src").join("lib.rs")
+    workspace_dir.join("objects").join(type_name).join("src").join("lib.rs")
 }
 
 // ===== Code Generation Helpers =====
@@ -187,9 +187,7 @@ fn generate_ffi_wrapper(
         ) #return_spec {
             let obj_type_name = ::std::any::type_name_of_val(&*obj);
             let instance = obj.downcast_mut::<#struct_name>()
-                .unwrap_or_else(|| {
-                    panic!(#panic_msg, obj_type_name)
-                });
+                .unwrap_or_else(|| panic!(#panic_msg, obj_type_name));
             #body
         }
     }
@@ -205,15 +203,16 @@ fn generate_accessor_wrapper(
     let symbol = SymbolName::new(&struct_name.to_string(), &field_name.to_string(), rustc_commit);
     let type_str = type_to_string(field_type);
 
-    if is_getter {
-        let getter_name = quote::format_ident!("{}", symbol.with_return_type(type_str).build_getter());
-        let body = quote! { instance.#field_name.clone() };
-        generate_ffi_wrapper(struct_name, getter_name, vec![], Some(field_type), body)
+    let (wrapper_name, params, return_type, body) = if is_getter {
+        let name = quote::format_ident!("{}", symbol.with_return_type(type_str).build_getter());
+        (name, vec![], Some(field_type), quote! { instance.#field_name.clone() })
     } else {
-        let setter_name = quote::format_ident!("{}", symbol.build_setter(&field_name.to_string(), &type_str));
-        let body = quote! { instance.#field_name = value; };
-        generate_ffi_wrapper(struct_name, setter_name, vec![(quote::format_ident!("value"), field_type)], None, body)
-    }
+        let name = quote::format_ident!("{}", symbol.build_setter(&field_name.to_string(), &type_str));
+        let value_ident = quote::format_ident!("value");
+        (name, vec![(value_ident, field_type)], None, quote! { instance.#field_name = value; })
+    };
+
+    generate_ffi_wrapper(struct_name, wrapper_name, params, return_type, body)
 }
 
 // ===== Component Generators =====
@@ -230,34 +229,23 @@ fn process_struct_attributes(struct_item: &ItemStruct) -> ProcessedStruct {
     let mut field_defaults = HashMap::new();
 
     if let Fields::Named(fields) = &mut modified_struct.fields {
-        for field in &mut fields.named {
-            let mut has_setter = false;
-            let mut default_value = None;
+        fields.named.iter_mut().for_each(|field| {
+            let field_name = field.ident.as_ref().unwrap().to_string();
 
-            field.attrs.retain(|attr| {
-                if attr.path().is_ident("setter") {
-                    has_setter = true;
+            field.attrs.retain(|attr| match attr.path() {
+                p if p.is_ident("setter") => {
+                    fields_with_setters.insert(field_name.clone());
                     false
-                } else if attr.path().is_ident("default") {
+                }
+                p if p.is_ident("default") => {
                     if let Ok(value) = attr.parse_args::<syn::Expr>() {
-                        default_value = Some(value);
+                        field_defaults.insert(field_name.clone(), value);
                     }
                     false
-                } else {
-                    true
                 }
+                _ => true,
             });
-
-            if has_setter {
-                if let Some(field_name) = &field.ident {
-                    fields_with_setters.insert(field_name.to_string());
-                }
-            }
-
-            if let (Some(field_name), Some(value)) = (&field.ident, default_value) {
-                field_defaults.insert(field_name.to_string(), value);
-            }
-        }
+        });
     }
 
     ProcessedStruct { modified_struct, fields_with_setters, field_defaults }
@@ -268,29 +256,36 @@ fn generate_field_accessors(
     processed: &ProcessedStruct,
     rustc_commit: &str,
 ) -> Vec<proc_macro2::TokenStream> {
-    let mut accessors = Vec::new();
-
     if let Fields::Named(fields) = &processed.modified_struct.fields {
-        for field in &fields.named {
-            let field_name = field.ident.as_ref().unwrap();
-            let field_type = &field.ty;
-            let is_public = matches!(field.vis, syn::Visibility::Public(_));
+        fields
+            .named
+            .iter()
+            .filter_map(|field| {
+                let field_name = field.ident.as_ref()?;
+                let field_type = &field.ty;
 
-            if !is_generic_type(field_type) {
-                // Getter for public fields
+                if is_generic_type(field_type) {
+                    return None;
+                }
+
+                let is_public = matches!(field.vis, syn::Visibility::Public(_));
+                let has_setter = processed.fields_with_setters.contains(&field_name.to_string());
+
+                let mut accessors = vec![];
                 if is_public {
                     accessors.push(generate_accessor_wrapper(struct_name, field_name, field_type, true, rustc_commit));
                 }
-
-                // Setter for fields with #[setter]
-                if processed.fields_with_setters.contains(&field_name.to_string()) {
+                if has_setter {
                     accessors.push(generate_accessor_wrapper(struct_name, field_name, field_type, false, rustc_commit));
                 }
-            }
-        }
-    }
 
-    accessors
+                Some(accessors)
+            })
+            .flatten()
+            .collect()
+    } else {
+        vec![]
+    }
 }
 
 fn generate_method_wrappers(
@@ -301,96 +296,90 @@ fn generate_method_wrappers(
 ) -> Vec<proc_macro2::TokenStream> {
     let mut wrappers = Vec::new();
 
-    // Generate setter method wrappers for Option<ObjectType> fields
+    // Generate setter wrappers for Option<ObjectType> fields
     if let Fields::Named(fields) = &processed.modified_struct.fields {
-        for field in &fields.named {
-            let field_name = field.ident.as_ref().unwrap();
-            if processed.fields_with_setters.contains(&field_name.to_string()) {
-                let field_type = &field.ty;
-                let setter_name = quote::format_ident!("set_{}", field_name);
-
-                if let Some(inner_type) = extract_option_type(field_type) {
-                    if let Type::Path(type_path) = inner_type {
-                        if let Some(ident) = type_path.path.get_ident() {
-                            let type_name = ident.to_string();
-                            if is_object_type(&type_name) {
-                                let type_str = type_to_string(inner_type);
-                                let wrapper_fn_name = quote::format_ident!(
-                                    "{}__{}______obj_mut_dyn_Any____value__ref_{}____to__unit__{}",
-                                    struct_name,
-                                    setter_name,
-                                    type_str,
-                                    rustc_commit
-                                );
-
-                                let body = quote! { instance.#setter_name(value) };
-                                wrappers.push(generate_ffi_wrapper(
-                                    struct_name,
-                                    wrapper_fn_name,
-                                    vec![(quote::format_ident!("value"), &syn::parse_quote! { &#inner_type })],
-                                    None,
-                                    body,
-                                ));
-                            }
-                        }
-                    }
-                }
+        wrappers.extend(fields.named.iter().filter_map(|field| {
+            let field_name = field.ident.as_ref()?;
+            if !processed.fields_with_setters.contains(&field_name.to_string()) {
+                return None;
             }
-        }
+
+            extract_option_type(&field.ty)
+                .and_then(|inner| match inner {
+                    Type::Path(tp) => tp.path.get_ident().map(|i| (inner, i.to_string())),
+                    _ => None,
+                })
+                .filter(|(_, name)| is_object_type(name))
+                .map(|(inner_type, _)| {
+                    let setter = quote::format_ident!("set_{}", field_name);
+                    let type_str = type_to_string(inner_type);
+                    let wrapper_name = quote::format_ident!(
+                        "{}__{}______obj_mut_dyn_Any____value__ref_{}____to__unit__{}",
+                        struct_name,
+                        setter,
+                        type_str,
+                        rustc_commit
+                    );
+                    generate_ffi_wrapper(
+                        struct_name,
+                        wrapper_name,
+                        vec![(quote::format_ident!("value"), &syn::parse_quote! { &#inner_type })],
+                        None,
+                        quote! { instance.#setter(value) },
+                    )
+                })
+        }));
     }
 
-    // Generate wrappers for regular methods
-    for item in &main_impl.items {
-        if let ImplItem::Fn(method) = item {
-            if !matches!(method.vis, syn::Visibility::Public(_)) {
-                continue;
+    // Generate method wrappers
+    wrappers.extend(main_impl.items.iter().filter_map(|item| match item {
+        ImplItem::Fn(method) if matches!(method.vis, syn::Visibility::Public(_)) => {
+            // Check receiver
+            match method.sig.inputs.first()? {
+                FnArg::Receiver(r) if r.reference.is_some() => {}
+                _ => return None,
             }
 
             let method_name = &method.sig.ident;
+            let params: Vec<_> = method
+                .sig
+                .inputs
+                .iter()
+                .skip(1)
+                .filter_map(|arg| match arg {
+                    FnArg::Typed(typed) => match &*typed.pat {
+                        Pat::Ident(pat_ident) => Some((pat_ident.ident.clone(), &*typed.ty)),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect();
 
-            // Check receiver type
-            if let Some(FnArg::Receiver(receiver)) = method.sig.inputs.first() {
-                if receiver.reference.is_none() {
-                    continue; // Skip methods that take self by value
-                }
-            } else {
-                continue; // Skip methods without self
-            }
+            let param_specs: Vec<_> = params.iter().map(|(name, ty)| (name.to_string(), type_to_string(ty))).collect();
 
-            // Build parameters
-            let mut params = Vec::new();
-            let mut param_specs = Vec::new();
-
-            for arg in method.sig.inputs.iter().skip(1) {
-                if let FnArg::Typed(typed) = arg {
-                    if let Pat::Ident(pat_ident) = &*typed.pat {
-                        let arg_name = pat_ident.ident.clone();
-                        let arg_type = &*typed.ty;
-                        params.push((arg_name.clone(), arg_type));
-                        param_specs.push((arg_name.to_string(), type_to_string(arg_type)));
-                    }
-                }
-            }
-
-            // Handle return type
             let return_type = match &method.sig.output {
                 ReturnType::Default => None,
                 ReturnType::Type(_, ty) => Some(resolve_self_type((**ty).clone(), &struct_name.to_string())),
             };
 
-            let return_type_str = return_type.as_ref().map(type_to_string).unwrap_or_else(|| "unit".to_string());
-
             let symbol = SymbolName::new(&struct_name.to_string(), &method_name.to_string(), rustc_commit)
                 .with_params(param_specs)
-                .with_return_type(return_type_str);
+                .with_return_type(return_type.as_ref().map(type_to_string).unwrap_or_else(|| "unit".to_string()));
 
             let wrapper_name = quote::format_ident!("{}", symbol.build_method());
-            let arg_names: Vec<_> = params.iter().map(|(name, _)| name).collect();
-            let body = quote! { instance.#method_name(#(#arg_names),*) };
+            let arg_names: Vec<_> = params.iter().map(|(name, _)| name.clone()).collect();
+            let param_vec: Vec<_> = params.clone();
 
-            wrappers.push(generate_ffi_wrapper(struct_name, wrapper_name, params, return_type.as_ref(), body));
+            Some(generate_ffi_wrapper(
+                struct_name,
+                wrapper_name,
+                param_vec,
+                return_type.as_ref(),
+                quote! { instance.#method_name(#(#arg_names),*) },
+            ))
         }
-    }
+        _ => None,
+    }));
 
     wrappers
 }
@@ -401,128 +390,96 @@ fn generate_core_functions(
     has_default: bool,
 ) -> proc_macro2::TokenStream {
     let symbol = SymbolName::new(&struct_name.to_string(), "", rustc_commit);
+    let type_name_fn = quote::format_ident!("{}", symbol.build_type_name_getter());
+    let init_fn = quote::format_ident!("{}", symbol.build_init());
 
-    // Constructor
-    let constructor = if has_default {
-        let ctor_name = quote::format_ident!("{}", symbol.build_constructor());
-        quote! {
-            #[unsafe(no_mangle)]
-            #[allow(non_snake_case)]
-            pub extern "Rust" fn #ctor_name() -> Box<dyn ::hotline::HotlineObject> {
-                Box::new(<#struct_name as Default>::default()) as Box<dyn ::hotline::HotlineObject>
-            }
-        }
-    } else {
-        quote! {}
-    };
-
-    // Type name getter
-    let type_name_fn_name = quote::format_ident!("{}", symbol.build_type_name_getter());
-    let type_name_fn = quote! {
-        #[unsafe(no_mangle)]
-        #[allow(non_snake_case)]
-        pub extern "Rust" fn #type_name_fn_name(obj: &dyn ::std::any::Any) -> &'static str {
-            match obj.downcast_ref::<#struct_name>() {
-                Some(_) => stringify!(#struct_name),
-                None => {
-                    let type_name: &'static str = ::std::any::type_name_of_val(obj);
-                    panic!(
-                        "Type mismatch in type_name getter: expected {}, but got {}",
-                        stringify!(#struct_name),
-                        type_name
-                    )
+    let constructor = has_default
+        .then(|| {
+            let ctor_name = quote::format_ident!("{}", symbol.build_constructor());
+            quote! {
+                #[unsafe(no_mangle)]
+                #[allow(non_snake_case)]
+                pub extern "Rust" fn #ctor_name() -> Box<dyn ::hotline::HotlineObject> {
+                    Box::new(<#struct_name as Default>::default()) as Box<dyn ::hotline::HotlineObject>
                 }
             }
-        }
-    };
+        })
+        .unwrap_or_default();
 
-    // Init function
-    let init_fn_name = quote::format_ident!("{}", symbol.build_init());
-    let init_fn = quote! {
+    quote! {
+        #constructor
+
+        #[unsafe(no_mangle)]
+        #[allow(non_snake_case)]
+        pub extern "Rust" fn #type_name_fn(obj: &dyn ::std::any::Any) -> &'static str {
+            obj.downcast_ref::<#struct_name>()
+                .map(|_| stringify!(#struct_name))
+                .unwrap_or_else(|| panic!(
+                    "Type mismatch in type_name getter: expected {}, but got {}",
+                    stringify!(#struct_name),
+                    ::std::any::type_name_of_val(obj)
+                ))
+        }
+
         static mut LIBRARY_REGISTRY: Option<*const ::hotline::LibraryRegistry> = None;
 
         #[unsafe(no_mangle)]
         #[allow(non_snake_case)]
-        pub extern "C" fn #init_fn_name(registry: *const ::hotline::LibraryRegistry) {
-            unsafe {
-                LIBRARY_REGISTRY = Some(registry);
-            }
+        pub extern "C" fn #init_fn(registry: *const ::hotline::LibraryRegistry) {
+            unsafe { LIBRARY_REGISTRY = Some(registry); }
         }
 
         pub fn with_library_registry<F, R>(f: F) -> Option<R>
-        where
-            F: FnOnce(&::hotline::LibraryRegistry) -> R,
+        where F: FnOnce(&::hotline::LibraryRegistry) -> R,
         {
-            unsafe {
-                LIBRARY_REGISTRY.and_then(|ptr| ptr.as_ref()).map(f)
-            }
+            unsafe { LIBRARY_REGISTRY.and_then(|ptr| ptr.as_ref()).map(f) }
         }
-    };
-
-    quote! {
-        #constructor
-        #type_name_fn
-        #init_fn
     }
 }
 
 fn generate_setter_builder_methods(struct_name: &syn::Ident, processed: &ProcessedStruct) -> proc_macro2::TokenStream {
-    let mut setter_methods = Vec::new();
-    let mut builder_methods = Vec::new();
-
     if let Fields::Named(fields) = &processed.modified_struct.fields {
-        for field in &fields.named {
-            let field_name = field.ident.as_ref().unwrap();
-            if processed.fields_with_setters.contains(&field_name.to_string()) {
-                let field_type = &field.ty;
-                let setter_name = quote::format_ident!("set_{}", field_name);
-                let builder_name = quote::format_ident!("with_{}", field_name);
-
-                if let Some(inner_type) = extract_option_type(field_type) {
-                    if let Type::Path(type_path) = inner_type {
-                        if let Some(ident) = type_path.path.get_ident() {
-                            let type_name = ident.to_string();
-                            if type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                                && !is_standard_type(&type_name)
-                            {
-                                setter_methods.push(quote! {
-                                    pub fn #setter_name(&mut self, value: &#inner_type) {
-                                        self.#field_name = Some(value.clone());
-                                    }
-                                });
-                                builder_methods.push(quote! {
-                                    pub fn #builder_name(mut self, value: &#inner_type) -> Self {
-                                        self.#field_name = Some(value.clone());
-                                        self
-                                    }
-                                });
-                                continue;
-                            }
-                        }
-                    }
+        let methods: Vec<_> = fields
+            .named
+            .iter()
+            .filter_map(|field| {
+                let field_name = field.ident.as_ref()?;
+                if !processed.fields_with_setters.contains(&field_name.to_string()) {
+                    return None;
                 }
 
-                setter_methods.push(quote! {
-                    pub fn #setter_name(&mut self, value: #field_type) {
-                        self.#field_name = value;
+                let field_type = &field.ty;
+                let setter = quote::format_ident!("set_{}", field_name);
+                let builder = quote::format_ident!("with_{}", field_name);
+
+                let (param_type, value_expr) = extract_option_type(field_type)
+                    .and_then(|inner| match inner {
+                        Type::Path(tp) => tp
+                            .path
+                            .get_ident()
+                            .filter(|i| is_object_type(&i.to_string()))
+                            .map(|_| (quote! { &#inner }, quote! { Some(value.clone()) })),
+                        _ => None,
+                    })
+                    .unwrap_or((quote! { #field_type }, quote! { value }));
+
+                Some(quote! {
+                    pub fn #setter(&mut self, value: #param_type) {
+                        self.#field_name = #value_expr;
                     }
-                });
-                builder_methods.push(quote! {
-                    pub fn #builder_name(mut self, value: #field_type) -> Self {
-                        self.#field_name = value;
+
+                    pub fn #builder(mut self, value: #param_type) -> Self {
+                        self.#field_name = #value_expr;
                         self
                     }
-                });
-            }
-        }
-    }
+                })
+            })
+            .collect();
 
-    if !setter_methods.is_empty() || !builder_methods.is_empty() {
-        quote! {
-            impl #struct_name {
-                #(#setter_methods)*
-                #(#builder_methods)*
-            }
+        if !methods.is_empty() {
+            quote! { impl #struct_name { #(#methods)* } }
+        } else {
+            quote! {}
         }
     } else {
         quote! {}
@@ -534,28 +491,30 @@ fn generate_default_impl(struct_name: &syn::Ident, processed: &ProcessedStruct) 
         return quote! {};
     }
 
-    let mut field_initializers = Vec::new();
-
     if let Fields::Named(fields) = &processed.modified_struct.fields {
-        for field in &fields.named {
-            let field_name = field.ident.as_ref().unwrap();
-            let field_init = if let Some(default_expr) = processed.field_defaults.get(&field_name.to_string()) {
-                quote! { #field_name: #default_expr }
-            } else {
-                quote! { #field_name: Default::default() }
-            };
-            field_initializers.push(field_init);
-        }
-    }
+        let field_inits: Vec<_> = fields
+            .named
+            .iter()
+            .filter_map(|field| {
+                let field_name = field.ident.as_ref()?;
+                let init = processed
+                    .field_defaults
+                    .get(&field_name.to_string())
+                    .map(|expr| quote! { #field_name: #expr })
+                    .unwrap_or_else(|| quote! { #field_name: Default::default() });
+                Some(init)
+            })
+            .collect();
 
-    quote! {
-        impl Default for #struct_name {
-            fn default() -> Self {
-                Self {
-                    #(#field_initializers),*
+        quote! {
+            impl Default for #struct_name {
+                fn default() -> Self {
+                    Self { #(#field_inits),* }
                 }
             }
         }
+    } else {
+        quote! {}
     }
 }
 
@@ -587,111 +546,59 @@ impl MethodGenConfig {
 }
 
 fn generate_method_impl(config: &MethodGenConfig, type_name: &str, rustc_commit: &str) -> proc_macro2::TokenStream {
-    let MethodGenConfig {
-        method_ident,
-        param_idents,
-        param_types,
-        return_type,
-        is_builder,
-        needs_option_wrap,
-        setter_name,
-        ..
-    } = config;
+    let MethodGenConfig { method_ident, param_idents, param_types, return_type, .. } = config;
 
     if config.should_skip() {
         return quote! {};
     }
 
-    // Builder pattern methods that return Self
-    if *is_builder && config.returns_self {
-        if *needs_option_wrap {
-            // Handle Option<ObjectType> wrapping case
-            let inner_type_str = if let Type::Reference(type_ref) = &param_types[0] {
-                type_to_string(&*type_ref.elem)
-            } else {
-                type_to_string(&param_types[0])
+    // Simple builder that returns self without doing anything
+    if config.is_builder && config.returns_self && !config.needs_option_wrap && !config.is_field_setter() {
+        return quote! {
+            pub fn #method_ident(self #(, #param_idents: #param_types)*) -> Self { self }
+        };
+    }
+
+    // Builder methods that need FFI calls
+    if config.is_builder && config.returns_self {
+        let symbol_name = if config.needs_option_wrap {
+            let inner_type_str = match &param_types[0] {
+                Type::Reference(tr) => type_to_string(&*tr.elem),
+                t => type_to_string(t),
             };
-
-            let setter_method_name = setter_name.as_ref().unwrap();
-
-            return quote! {
-                pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
-                    with_library_registry(|registry| {
-                        if let Ok(mut guard) = self.0.lock() {
-                            let type_name = guard.type_name().to_string();
-
-                            let symbol_name = format!(
-                                "{}__{}______obj_mut_dyn_Any____value__ref_{}____to__unit__{}",
-                                type_name,
-                                #setter_method_name,
-                                #inner_type_str,
-                                #rustc_commit
-                            );
-                            let lib_name = format!("lib{}", type_name);
-
-                            let obj_any = guard.as_any_mut();
-
-                            type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any, #(#param_types),*);
-                            registry.with_symbol::<FnType, _, _>(
-                                &lib_name,
-                                &symbol_name,
-                                |fn_ptr| unsafe { (**fn_ptr)(obj_any, #(#param_idents),*) }
-                            ).unwrap_or_else(|e| {
-                                panic!("Setter {} not found: {}", #setter_method_name, e);
-                            });
-                        }
-                    });
-                    self
-                }
-            };
-        } else if config.is_field_setter() {
-            // Regular field setter
-            let field_name_str = &setter_name.as_ref().unwrap()[4..];
-            let param_type_str = if param_types.len() == 1 {
-                type_to_string(&param_types[0])
-            } else {
-                panic!("Field setter should have exactly one parameter")
-            };
-
-            return quote! {
-                pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
-                    with_library_registry(|registry| {
-                        if let Ok(mut guard) = self.0.lock() {
-                            let type_name = guard.type_name().to_string();
-
-                            let symbol_name = format!(
-                                "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
-                                type_name,
-                                #field_name_str,
-                                #field_name_str,
-                                #param_type_str,
-                                #rustc_commit
-                            );
-                            let lib_name = format!("lib{}", type_name);
-
-                            let obj_any = guard.as_any_mut();
-
-                            type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any, #(#param_types)*);
-                            registry.with_symbol::<FnType, _, _>(
-                                &lib_name,
-                                &symbol_name,
-                                |fn_ptr| unsafe { (**fn_ptr)(obj_any, #(#param_idents)*) }
-                            ).unwrap_or_else(|e| {
-                                panic!("Field setter for {} not found: {}", #field_name_str, e);
-                            });
-                        }
-                    });
-                    self
-                }
-            };
+            format!(
+                "{}__{}______obj_mut_dyn_Any____value__ref_{}____to__unit__{}",
+                type_name,
+                config.setter_name.as_ref().unwrap(),
+                inner_type_str,
+                rustc_commit
+            )
         } else {
-            // Simple builder that just returns self
-            return quote! {
-                pub fn #method_ident(self #(, #param_idents: #param_types)*) -> Self {
-                    self
-                }
-            };
-        }
+            let field_name = &config.setter_name.as_ref().unwrap()[4..];
+            let param_type_str = type_to_string(&param_types[0]);
+            format!(
+                "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
+                type_name, field_name, field_name, param_type_str, rustc_commit
+            )
+        };
+
+        return quote! {
+            pub fn #method_ident(mut self #(, #param_idents: #param_types)*) -> Self {
+                with_library_registry(|registry| {
+                    if let Ok(mut guard) = self.0.lock() {
+                        let type_name = guard.type_name().to_string();
+                        let lib_name = format!("lib{}", type_name);
+                        let obj_any = guard.as_any_mut();
+
+                        type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*);
+                        registry.with_symbol::<FnType, _, _>(&lib_name, &#symbol_name,
+                            |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
+                        ).unwrap_or_else(|e| panic!("Method not found: {}", e));
+                    }
+                });
+                self
+            }
+        };
     }
 
     // Regular methods
@@ -711,39 +618,23 @@ fn generate_method_impl(config: &MethodGenConfig, type_name: &str, rustc_commit:
         unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*) -> #return_type
     };
 
+    let method_body = quote_method_call_with_registry(
+        quote! { self.0 },
+        &method_ident.to_string(),
+        &symbol_name,
+        fn_type,
+        quote! { #(, #param_idents)* },
+    );
+
     if config.returns_self {
         quote! {
             pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> Self {
                 let handle_clone = self.0.clone();
-                with_library_registry(|registry| {
-                    if let Ok(mut guard) = self.0.lock() {
-                        let type_name = guard.type_name().to_string();
-                        let lib_name = format!("lib{}", type_name);
-                        let obj_any = guard.as_any_mut();
-
-                        type FnType = #fn_type;
-                        let result = registry.with_symbol::<FnType, _, _>(
-                            &lib_name,
-                            &#symbol_name,
-                            |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
-                        ).unwrap_or_else(|e| panic!("Target object {} doesn't have {} method: {}", type_name, stringify!(#method_ident), e));
-
-                        drop(guard);
-                        Self::from_handle(handle_clone)
-                    } else {
-                        panic!("Failed to lock object for method {}", stringify!(#method_ident))
-                    }
-                }).unwrap_or_else(|| panic!("No library registry available for method {}", stringify!(#method_ident)))
+                #method_body;
+                Self::from_handle(handle_clone)
             }
         }
     } else {
-        let method_body = quote_method_call_with_registry(
-            quote! { self.0 },
-            &method_ident.to_string(),
-            &symbol_name,
-            fn_type,
-            quote! { #(, #param_idents)* },
-        );
         quote! {
             pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
                 #method_body
@@ -756,130 +647,120 @@ fn extract_object_methods(
     file: &syn::File,
     type_name: &str,
 ) -> Option<Vec<(String, Vec<String>, Vec<Type>, Type, ReceiverType)>> {
-    use syn::{FnArg, Item, Pat, ReturnType};
+    file.items.iter().find_map(|item| match item {
+        syn::Item::Macro(item_macro) if is_object_macro(&item_macro.mac.path) => {
+            syn::parse2::<ObjectInput>(item_macro.mac.tokens.clone())
+                .ok()
+                .map(|obj_input| extract_methods_from_object(&obj_input, type_name))
+        }
+        _ => None,
+    })
+}
 
-    for item in &file.items {
-        if let Item::Macro(item_macro) = item {
-            let is_object_macro = item_macro.mac.path.is_ident("object")
-                || (item_macro.mac.path.segments.len() == 2
-                    && item_macro.mac.path.segments[0].ident == "hotline"
-                    && item_macro.mac.path.segments[1].ident == "object");
+fn is_object_macro(path: &syn::Path) -> bool {
+    path.is_ident("object")
+        || (path.segments.len() == 2 && path.segments[0].ident == "hotline" && path.segments[1].ident == "object")
+}
 
-            if is_object_macro {
-                if let Ok(obj_input) = syn::parse2::<ObjectInput>(item_macro.mac.tokens.clone()) {
-                    let mut methods = Vec::new();
+fn extract_methods_from_object(
+    obj_input: &ObjectInput,
+    type_name: &str,
+) -> Vec<(String, Vec<String>, Vec<Type>, Type, ReceiverType)> {
+    let mut methods = Vec::new();
+    let return_type: Type = syn::parse_str(type_name).unwrap();
 
-                    // Process fields for getters and builders
-                    if let Fields::Named(fields) = &obj_input.struct_item.fields {
-                        for field in &fields.named {
-                            let field_name = field.ident.as_ref().unwrap();
-                            let field_type = &field.ty;
+    // Extract field getters and builders
+    if let Fields::Named(fields) = &obj_input.struct_item.fields {
+        for field in &fields.named {
+            let field_name = field.ident.as_ref().unwrap();
+            let field_type = &field.ty;
 
-                            let is_public = matches!(field.vis, syn::Visibility::Public(_));
-                            let has_setter = field.attrs.iter().any(|attr| attr.path().is_ident("setter"));
+            if matches!(field.vis, syn::Visibility::Public(_)) && !is_generic_type(field_type) {
+                methods.push((field_name.to_string(), vec![], vec![], field_type.clone(), ReceiverType::RefMut));
+            }
 
-                            if is_public && !is_generic_type(field_type) {
-                                methods.push((
-                                    field_name.to_string(),
-                                    vec![],
-                                    vec![],
-                                    field_type.clone(),
-                                    ReceiverType::RefMut,
-                                ));
-                            }
-
-                            if has_setter {
-                                let builder_method_name = format!("with_{}", field_name);
-                                let return_type: Type = syn::parse_str(type_name).expect("Failed to parse type name");
-
-                                if let Some(inner_type) = extract_option_type(field_type) {
-                                    if let Type::Path(type_path) = inner_type {
-                                        if let Some(ident) = type_path.path.get_ident() {
-                                            let inner_type_name = ident.to_string();
-                                            if is_object_type(&inner_type_name) {
-                                                let ref_type: Type = syn::parse_quote! { &#inner_type };
-                                                methods.push((
-                                                    builder_method_name,
-                                                    vec![field_name.to_string()],
-                                                    vec![ref_type],
-                                                    return_type,
-                                                    ReceiverType::Value,
-                                                ));
-                                                continue;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                methods.push((
-                                    builder_method_name,
-                                    vec![field_name.to_string()],
-                                    vec![field_type.clone()],
-                                    return_type,
-                                    ReceiverType::Value,
-                                ));
-                            }
+            if field.attrs.iter().any(|attr| attr.path().is_ident("setter")) {
+                let builder_name = format!("with_{}", field_name);
+                let param_vec = extract_option_type(field_type)
+                    .and_then(|inner| match inner {
+                        Type::Path(tp)
+                            if tp.path.get_ident().map(|i| is_object_type(&i.to_string())).unwrap_or(false) =>
+                        {
+                            Some(vec![syn::parse_quote! { &#inner }])
                         }
-                    }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| vec![field_type.clone()]);
 
-                    // Find main impl block
-                    let main_impl = obj_input.impl_blocks.iter().find(|impl_block| {
-                        impl_block.trait_.is_none()
-                            && if let Type::Path(type_path) = &*impl_block.self_ty {
-                                type_path.path.get_ident().map(|i| i.to_string()) == Some(type_name.to_string())
-                            } else {
-                                false
-                            }
-                    });
-
-                    if let Some(main_impl) = main_impl {
-                        for impl_item in &main_impl.items {
-                            if let ImplItem::Fn(method) = impl_item {
-                                if matches!(method.vis, syn::Visibility::Public(_)) {
-                                    let method_name = method.sig.ident.to_string();
-
-                                    let receiver_type =
-                                        if let Some(FnArg::Receiver(receiver)) = method.sig.inputs.first() {
-                                            if receiver.reference.is_none() {
-                                                ReceiverType::Value
-                                            } else if receiver.mutability.is_some() {
-                                                ReceiverType::RefMut
-                                            } else {
-                                                ReceiverType::Ref
-                                            }
-                                        } else {
-                                            continue;
-                                        };
-
-                                    let mut param_names = Vec::new();
-                                    let mut param_types = Vec::new();
-
-                                    for arg in method.sig.inputs.iter().skip(1) {
-                                        if let FnArg::Typed(typed) = arg {
-                                            if let Pat::Ident(pat_ident) = &*typed.pat {
-                                                param_names.push(pat_ident.ident.to_string());
-                                                param_types.push((*typed.ty).clone());
-                                            }
-                                        }
-                                    }
-
-                                    let return_type = match &method.sig.output {
-                                        ReturnType::Default => syn::parse_quote! { () },
-                                        ReturnType::Type(_, ty) => resolve_self_type((**ty).clone(), type_name),
-                                    };
-
-                                    methods.push((method_name, param_names, param_types, return_type, receiver_type));
-                                }
-                            }
-                        }
-                    }
-
-                    return Some(methods);
-                }
+                methods.push((
+                    builder_name,
+                    vec![field_name.to_string()],
+                    param_vec,
+                    return_type.clone(),
+                    ReceiverType::Value,
+                ));
             }
         }
     }
-    None
+
+    // Extract impl methods
+    if let Some(main_impl) = find_main_impl(&obj_input.impl_blocks, type_name) {
+        methods.extend(extract_impl_methods(main_impl, type_name));
+    }
+
+    methods
+}
+
+fn find_main_impl<'a>(impl_blocks: &'a [ItemImpl], type_name: &str) -> Option<&'a ItemImpl> {
+    impl_blocks.iter().find(|impl_block| {
+        impl_block.trait_.is_none()
+            && match &*impl_block.self_ty {
+                Type::Path(tp) => tp.path.get_ident().map(|i| i.to_string() == type_name).unwrap_or(false),
+                _ => false,
+            }
+    })
+}
+
+fn extract_impl_methods(
+    main_impl: &ItemImpl,
+    type_name: &str,
+) -> Vec<(String, Vec<String>, Vec<Type>, Type, ReceiverType)> {
+    main_impl
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ImplItem::Fn(method) if matches!(method.vis, syn::Visibility::Public(_)) => {
+                let receiver_type = match method.sig.inputs.first()? {
+                    FnArg::Receiver(r) if r.reference.is_none() => ReceiverType::Value,
+                    FnArg::Receiver(r) if r.mutability.is_some() => ReceiverType::RefMut,
+                    FnArg::Receiver(_) => ReceiverType::Ref,
+                    _ => return None,
+                };
+
+                let (param_names, param_types): (Vec<_>, Vec<_>) = method
+                    .sig
+                    .inputs
+                    .iter()
+                    .skip(1)
+                    .filter_map(|arg| match arg {
+                        FnArg::Typed(typed) => match &*typed.pat {
+                            Pat::Ident(pat_ident) => Some((pat_ident.ident.to_string(), (*typed.ty).clone())),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .unzip();
+
+                let return_type = match &method.sig.output {
+                    ReturnType::Default => syn::parse_quote! { () },
+                    ReturnType::Type(_, ty) => resolve_self_type((**ty).clone(), type_name),
+                };
+
+                Some((method.sig.ident.to_string(), param_names, param_types, return_type, receiver_type))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn generate_typed_wrapper(
@@ -889,8 +770,46 @@ fn generate_typed_wrapper(
 ) -> proc_macro2::TokenStream {
     let type_ident = quote::format_ident!("{}", type_name);
 
-    // Base wrapper struct
-    let wrapper_struct = quote! {
+    let method_impls: Vec<_> = methods
+        .iter()
+        .filter_map(|(method_name, param_names, param_types, return_type, receiver_type)| {
+            let method_ident = quote::format_ident!("{}", method_name);
+            let param_idents: Vec<_> = param_names.iter().map(|name| quote::format_ident!("{}", name)).collect();
+
+            let returns_self = matches!(return_type, Type::Path(tp) if tp.path.is_ident(type_name));
+            let is_builder = *receiver_type == ReceiverType::Value && returns_self;
+            let setter_name = method_name.strip_prefix("with_").map(|s| format!("set_{}", s));
+
+            let needs_option_wrap = method_name.starts_with("with_") && param_types.len() == 1 && {
+                let inner = match &param_types[0] {
+                    Type::Reference(tr) => &*tr.elem,
+                    t => t,
+                };
+                matches!(inner, Type::Path(tp) if tp.path.get_ident()
+                    .map(|i| is_object_type(&i.to_string()))
+                    .unwrap_or(false))
+            };
+
+            let config = MethodGenConfig {
+                method_name: method_name.clone(),
+                method_ident,
+                param_names: param_names.clone(),
+                param_idents,
+                param_types: param_types.clone(),
+                return_type: return_type.clone(),
+                receiver_type: *receiver_type,
+                returns_self,
+                is_builder,
+                needs_option_wrap,
+                setter_name,
+            };
+
+            let impl_tokens = generate_method_impl(&config, type_name, rustc_commit);
+            (!impl_tokens.is_empty()).then_some(impl_tokens)
+        })
+        .collect();
+
+    quote! {
         #[derive(Clone)]
         pub struct #type_ident(::hotline::ObjectHandle);
 
@@ -911,99 +830,33 @@ fn generate_typed_wrapper(
             pub fn handle(&self) -> &::hotline::ObjectHandle {
                 &self.0
             }
+
+            #(#method_impls)*
         }
 
         impl ::std::ops::Deref for #type_ident {
             type Target = ::hotline::ObjectHandle;
-
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
+            fn deref(&self) -> &Self::Target { &self.0 }
         }
 
         impl ::std::ops::DerefMut for #type_ident {
-            fn deref_mut(&mut self) -> &mut Self::Target {
-                &mut self.0
-            }
-        }
-    };
-
-    // Method implementations
-    let mut method_impls = Vec::new();
-
-    for (method_name, param_names, param_types, return_type, receiver_type) in methods {
-        let method_ident = quote::format_ident!("{}", method_name);
-        let param_idents: Vec<_> = param_names.iter().map(|name| quote::format_ident!("{}", name)).collect();
-
-        let returns_self =
-            if let Type::Path(type_path) = return_type { type_path.path.is_ident(type_name) } else { false };
-
-        let is_builder = *receiver_type == ReceiverType::Value && returns_self;
-        let setter_name =
-            if method_name.starts_with("with_") { Some(format!("set_{}", &method_name[5..])) } else { None };
-
-        let needs_option_wrap = method_name.starts_with("with_") && param_types.len() == 1 && {
-            let inner_type =
-                if let Type::Reference(type_ref) = &param_types[0] { &*type_ref.elem } else { &param_types[0] };
-
-            if let Type::Path(type_path) = inner_type {
-                if let Some(ident) = type_path.path.get_ident() {
-                    let type_name = ident.to_string();
-                    type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && !is_standard_type(&type_name)
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        };
-
-        let config = MethodGenConfig {
-            method_name: method_name.clone(),
-            method_ident,
-            param_names: param_names.clone(),
-            param_idents,
-            param_types: param_types.clone(),
-            return_type: return_type.clone(),
-            receiver_type: *receiver_type,
-            returns_self,
-            is_builder,
-            needs_option_wrap,
-            setter_name,
-        };
-
-        let method_impl = generate_method_impl(&config, type_name, rustc_commit);
-        if !method_impl.is_empty() {
-            method_impls.push(method_impl);
-        }
-    }
-
-    quote! {
-        #wrapper_struct
-
-        impl #type_ident {
-            #(#method_impls)*
+            fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
         }
     }
 }
 
 fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> proc_macro2::TokenStream {
-    let mut wrappers = Vec::new();
-
-    for type_name in types {
-        let lib_path = find_object_lib_file(type_name);
-        if !lib_path.exists() {
-            continue;
-        }
-
-        if let Ok(content) = fs::read_to_string(&lib_path) {
-            if let Ok(file) = syn::parse_file(&content) {
-                if let Some(methods) = extract_object_methods(&file, type_name) {
-                    wrappers.push(generate_typed_wrapper(type_name, &methods, rustc_commit));
-                }
-            }
-        }
-    }
+    let wrappers: Vec<_> = types
+        .iter()
+        .filter_map(|type_name| {
+            let lib_path = find_object_lib_file(type_name);
+            fs::read_to_string(&lib_path)
+                .ok()
+                .and_then(|content| syn::parse_file(&content).ok())
+                .and_then(|file| extract_object_methods(&file, type_name))
+                .map(|methods| generate_typed_wrapper(type_name, &methods, rustc_commit))
+        })
+        .collect();
 
     quote! { #(#wrappers)* }
 }
@@ -1034,87 +887,70 @@ pub fn object(input: TokenStream) -> TokenStream {
     let struct_name = &struct_item.ident;
     let rustc_commit = get_rustc_commit_hash();
 
-    // Process struct attributes
     let processed = process_struct_attributes(&struct_item);
 
-    // Find main impl block
-    let (main_impl, other_impl_blocks): (Vec<_>, Vec<_>) = impl_blocks.iter().partition(|impl_block| {
-        impl_block.trait_.is_none()
-            && if let Type::Path(type_path) = &*impl_block.self_ty {
-                type_path.path.is_ident(struct_name)
+    // Partition impl blocks
+    let (main_impl, other_impl_blocks) = {
+        let mut main = None;
+        let mut others = Vec::new();
+
+        for impl_block in &impl_blocks {
+            if impl_block.trait_.is_none()
+                && matches!(&*impl_block.self_ty,
+                Type::Path(tp) if tp.path.is_ident(struct_name))
+            {
+                main = Some(impl_block);
             } else {
-                false
+                others.push(impl_block);
             }
-    });
+        }
 
-    let main_impl = main_impl.into_iter().next().expect("Expected at least one impl block for the struct itself");
+        (main.expect("Expected impl block for struct"), others)
+    };
 
-    // Check for Default
-    let struct_attrs = &struct_item.attrs;
-    let has_derive_default = struct_attrs
+    // Check for Default trait
+    let has_derive_default = struct_item
+        .attrs
         .iter()
         .any(|attr| attr.path().is_ident("derive") && attr.to_token_stream().to_string().contains("Default"));
 
     let has_impl_default = other_impl_blocks.iter().any(|impl_block| {
-        if let Some((_, trait_path, _)) = &impl_block.trait_ {
-            trait_path.segments.last().map(|seg| seg.ident == "Default").unwrap_or(false)
-        } else {
-            false
-        }
+        impl_block
+            .trait_
+            .as_ref()
+            .map(|(_, path, _)| path.segments.last().map(|seg| seg.ident == "Default").unwrap_or(false))
+            .unwrap_or(false)
     });
 
     let should_generate_default = !has_derive_default && !has_impl_default && !processed.field_defaults.is_empty();
     let has_default = has_derive_default || has_impl_default || !processed.field_defaults.is_empty();
 
-    // Filter out manual Default if we're generating one
-    let filtered_other_impl_blocks: Vec<_> = if should_generate_default {
+    // Filter impl blocks if generating Default
+    let filtered_impl_blocks: Vec<_> = if should_generate_default {
         other_impl_blocks
             .into_iter()
-            .filter(|impl_block| {
-                if let Some((_, trait_path, _)) = &impl_block.trait_ {
-                    !trait_path.segments.last().map(|seg| seg.ident == "Default").unwrap_or(false)
-                } else {
-                    true
-                }
+            .filter(|&impl_block| {
+                !impl_block
+                    .trait_
+                    .as_ref()
+                    .map(|(_, path, _)| path.segments.last().map(|seg| seg.ident == "Default").unwrap_or(false))
+                    .unwrap_or(false)
             })
             .collect()
     } else {
         other_impl_blocks
     };
 
-    // Generate components
+    // Generate all components
     let field_accessors = generate_field_accessors(struct_name, &processed, &rustc_commit);
     let method_wrappers = generate_method_wrappers(struct_name, main_impl, &processed, &rustc_commit);
     let core_functions = generate_core_functions(struct_name, &rustc_commit, has_default);
     let setter_builder_impl = generate_setter_builder_methods(struct_name, &processed);
-    let default_impl = if should_generate_default {
-        generate_default_impl(struct_name, &processed)
-    } else {
-        quote! {}
-    };
+    let default_impl =
+        should_generate_default.then(|| generate_default_impl(struct_name, &processed)).unwrap_or_default();
+    let typed_wrappers =
+        generate_typed_wrappers(&find_referenced_object_types(&struct_item, &impl_blocks), &rustc_commit);
 
-    // HotlineObject trait implementation
-    let trait_impl = quote! {
-        impl ::hotline::HotlineObject for #struct_name {
-            fn type_name(&self) -> &'static str {
-                stringify!(#struct_name)
-            }
-
-            fn as_any(&self) -> &dyn ::std::any::Any {
-                self
-            }
-
-            fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any {
-                self
-            }
-        }
-    };
-
-    // Find referenced types and generate wrappers
-    let referenced_types = find_referenced_object_types(&struct_item, &impl_blocks);
-    let typed_wrappers = generate_typed_wrappers(&referenced_types, &rustc_commit);
-
-    // Assemble output
     let modified_struct = &processed.modified_struct;
     let output = quote! {
         #[allow(dead_code)]
@@ -1122,9 +958,15 @@ pub fn object(input: TokenStream) -> TokenStream {
 
         #modified_struct
         #main_impl
-        #(#filtered_other_impl_blocks)*
+        #(#filtered_impl_blocks)*
         #default_impl
-        #trait_impl
+
+        impl ::hotline::HotlineObject for #struct_name {
+            fn type_name(&self) -> &'static str { stringify!(#struct_name) }
+            fn as_any(&self) -> &dyn ::std::any::Any { self }
+            fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any { self }
+        }
+
         #setter_builder_impl
         #(#field_accessors)*
         #(#method_wrappers)*
