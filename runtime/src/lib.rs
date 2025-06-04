@@ -45,6 +45,10 @@ impl DirectRuntime {
             &lib_name,
             &init_symbol,
             |symbol| {
+                // SAFETY: we're passing a pointer to our LibraryRegistry which:
+                // - is valid and properly aligned
+                // - will live for the lifetime of this DirectRuntime
+                // - the generated init function validates the pointer isn't null
                 unsafe { (**symbol)(&self.library_registry as *const LibraryRegistry) };
             },
         )?;
