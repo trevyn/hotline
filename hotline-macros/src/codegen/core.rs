@@ -7,7 +7,6 @@ use crate::utils::symbols::SymbolName;
 pub fn generate_core_functions(struct_name: &Ident, rustc_commit: &str, has_default: bool) -> proc_macro2::TokenStream {
     let symbol = SymbolName::new(&struct_name.to_string(), "", rustc_commit);
     let type_name_fn = format_ident!("{}", symbol.build_type_name_getter());
-    let init_fn = format_ident!("{}", symbol.build_init());
 
     let constructor = has_default
         .then(|| {

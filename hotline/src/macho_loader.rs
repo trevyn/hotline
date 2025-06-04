@@ -197,24 +197,19 @@ struct DyldChainedStartsInSegment {
 }
 
 // pointer formats
-const DYLD_CHAINED_PTR_64: u16 = 2;
-const DYLD_CHAINED_PTR_64_OFFSET: u16 = 6;
-const DYLD_CHAINED_PTR_ARM64E: u16 = 1;
-const DYLD_CHAINED_PTR_ARM64E_USERLAND: u16 = 5;
+const _DYLD_CHAINED_PTR_64: u16 = 2;
+const _DYLD_CHAINED_PTR_64_OFFSET: u16 = 6;
+const _DYLD_CHAINED_PTR_ARM64E: u16 = 1;
+const _DYLD_CHAINED_PTR_ARM64E_USERLAND: u16 = 5;
 
 const VM_PROT_READ: i32 = 0x01;
 const VM_PROT_WRITE: i32 = 0x02;
 const VM_PROT_EXECUTE: i32 = 0x04;
 
 // section types
-const S_REGULAR: u32 = 0x0;
-const S_ZEROFILL: u32 = 0x1;
 const S_SYMBOL_STUBS: u32 = 0x8;
 const S_LAZY_SYMBOL_POINTERS: u32 = 0x7;
-const S_NON_LAZY_SYMBOL_POINTERS: u32 = 0x6;
 const S_THREAD_LOCAL_VARIABLES: u32 = 0x13;
-const S_THREAD_LOCAL_REGULAR: u32 = 0x11;
-const S_THREAD_LOCAL_ZEROFILL: u32 = 0x12;
 const S_MOD_INIT_FUNC_POINTERS: u32 = 0x9;
 
 pub struct MachoLoader {
@@ -240,13 +235,8 @@ unsafe impl Send for MachoLoader {}
 unsafe impl Sync for MachoLoader {}
 
 struct SegmentInfo {
-    name: String,
+    _name: String,
     vmaddr: u64,
-    vmsize: u64,
-    fileoff: u64,
-    filesize: u64,
-    maxprot: i32,
-    initprot: i32,
 }
 
 struct DysymtabInfo {
@@ -304,8 +294,7 @@ impl MachoLoader {
         // calculate slide - difference between where we loaded vs where linked
         self.slide = addr as i64 - self.base_vmaddr as i64;
         
-        println!("[*] Allocated at {:p}, base_vmaddr: 0x{:x}, slide: 0x{:x}", 
-            addr, self.base_vmaddr, self.slide);
+        // Allocated memory
         
         // process all load commands
         unsafe { self.process_load_commands()? };
@@ -323,7 +312,7 @@ impl MachoLoader {
         if let Some(base) = self.base_addr {
             let tlv_sections = unsafe { find_tlv_sections(base.as_ptr(), &self.file_data)? };
             if !tlv_sections.is_empty() {
-                println!("[*] Setting up thread-local variables");
+                // Setting up thread-local variables
                 unsafe { self.tlv_manager.setup_tlvs(
                     self.lib_path.as_ref().unwrap(),
                     base.as_ptr(),
@@ -406,7 +395,7 @@ impl MachoLoader {
         let header = unsafe { &*(self.file_data.as_ptr() as *const MachHeader64) };
         let mut cmd_ptr = unsafe { self.file_data.as_ptr().add(std::mem::size_of::<MachHeader64>()) };
         
-        println!("[*] Processing {} load commands", header.ncmds);
+        // Processing load commands
         
         // first pass: collect imports
         let mut cmd_ptr_tmp = cmd_ptr;
@@ -424,29 +413,29 @@ impl MachoLoader {
         }
         
         // second pass: process everything else
-        for i in 0..header.ncmds {
+        for _i in 0..header.ncmds {
             let cmd = unsafe { &*(cmd_ptr as *const LoadCommand) };
             
             match cmd.cmd {
                 LC_SEGMENT_64 => unsafe { self.process_segment(cmd_ptr as *const SegmentCommand64)? },
                 LC_SYMTAB => unsafe { self.process_symtab(cmd_ptr as *const SymtabCommand)? },
                 LC_DYSYMTAB => {
-                    println!("[*] Processing LC_DYSYMTAB at cmd {} - size: {}", i, cmd.cmdsize);
+                    // Processing LC_DYSYMTAB
                     unsafe { self.process_dysymtab(cmd_ptr as *const DysymtabCommand)? };
                 },
                 LC_LOAD_DYLIB | LC_LOAD_WEAK_DYLIB | LC_REEXPORT_DYLIB | LC_LAZY_LOAD_DYLIB => {
                     // already processed
                 }
                 LC_DYLD_CHAINED_FIXUPS => {
-                    println!("[!] Found LC_DYLD_CHAINED_FIXUPS at cmd {} - size: {}", i, cmd.cmdsize);
+                    // Found LC_DYLD_CHAINED_FIXUPS
                     unsafe { self.process_chained_fixups(cmd_ptr as *const LinkeditDataCommand)? };
                 }
                 LC_DYLD_INFO_ONLY => {
-                    println!("[!] Found LC_DYLD_INFO_ONLY at cmd {} - size: {}", i, cmd.cmdsize);
+                    // Found LC_DYLD_INFO_ONLY
                     unsafe { self.process_dyld_info(cmd_ptr as *const DyldInfoCommand)? };
                 }
                 LC_DYLD_EXPORTS_TRIE => {
-                    println!("[!] Found LC_DYLD_EXPORTS_TRIE at cmd {} - size: {}", i, cmd.cmdsize);
+                    // Found LC_DYLD_EXPORTS_TRIE
                 }
                 LC_ID_DYLIB => {
                     // this dylib's ID - can skip
@@ -456,7 +445,7 @@ impl MachoLoader {
                     // these are informational - can skip
                 }
                 _ => {
-                    println!("[?] Unknown load command: 0x{:x} at cmd {} - size: {}", cmd.cmd, i, cmd.cmdsize);
+                    // Unknown load command
                 }
             }
             
@@ -470,8 +459,7 @@ impl MachoLoader {
         let segment = unsafe { &*segment };
         let segname = std::str::from_utf8(&segment.segname)?.trim_end_matches('\0');
         
-        println!("[*] Loading segment: {} at 0x{:x} (file: 0x{:x}, size: 0x{:x})", 
-            segname, segment.vmaddr, segment.fileoff, segment.filesize);
+        // Loading segment
         
         // copy segment data
         if segment.filesize > 0 {
@@ -487,37 +475,34 @@ impl MachoLoader {
         let mut section_ptr = unsafe { (segment as *const SegmentCommand64).add(1) as *const Section64 };
         for _ in 0..segment.nsects {
             let section = unsafe { &*section_ptr };
-            let sectname = std::str::from_utf8(&section.sectname)?.trim_end_matches('\0');
+            let _sectname = std::str::from_utf8(&section.sectname)?.trim_end_matches('\0');
             let section_type = section.flags & 0xff;
             
             // check for thread local variable sections
             if section_type == S_THREAD_LOCAL_VARIABLES {
-                println!("  [*] Found __thread_vars section: {} at 0x{:x}", sectname, section.addr);
+                // Found __thread_vars section
                 // we'll process these after all segments are loaded
             }
             
             // check for stub sections
             if section_type == S_SYMBOL_STUBS {
                 let stub_size = section.reserved2; // size of each stub
-                let stub_count = if stub_size > 0 { section.size / stub_size as u64 } else { 0 };
-                println!("  [*] Found __stubs section: {} at 0x{:x}, size: 0x{:x} ({} stubs of {} bytes each)", 
-                    sectname, section.addr, section.size, stub_count, stub_size);
+                let _stub_count = if stub_size > 0 { section.size / stub_size as u64 } else { 0 };
+                // Found __stubs section
             }
             
             // check for lazy symbol pointers
             if section_type == S_LAZY_SYMBOL_POINTERS {
-                let ptr_count = section.size / 8; // 64-bit pointers
-                let indirect_offset = section.reserved1 as usize; // offset into indirect symbol table
-                println!("  [*] Found __la_symbol_ptr section: {} at 0x{:x}, size: 0x{:x} ({} pointers, indirect offset: {})", 
-                    sectname, section.addr, section.size, ptr_count, indirect_offset);
+                let _ptr_count = section.size / 8; // 64-bit pointers
+                let _indirect_offset = section.reserved1 as usize; // offset into indirect symbol table
+                // Found __la_symbol_ptr section
                 
                 // we'll process these properly after indirect symbols are loaded
             }
             
             // check for module initializers
             if section_type == S_MOD_INIT_FUNC_POINTERS {
-                println!("  [*] Found __mod_init_func section: {} at 0x{:x}, size: 0x{:x}", 
-                    sectname, section.addr, section.size);
+                // Found __mod_init_func section
             }
             
             section_ptr = unsafe { section_ptr.add(1) };
@@ -539,8 +524,7 @@ impl MachoLoader {
             prot |= libc::PROT_EXEC;
         }
         
-        println!("  [*] Setting protection for {} - mach-o: 0x{:x}, posix: 0x{:x}", 
-            segname, segment.initprot, prot);
+        // Setting protection
         
         let result = unsafe {
             libc::mprotect(
@@ -555,25 +539,22 @@ impl MachoLoader {
         }
         
         self.segments.push(SegmentInfo {
-            name: segname.to_string(),
+            _name: segname.to_string(),
             vmaddr: segment.vmaddr,
-            vmsize: segment.vmsize,
-            fileoff: segment.fileoff,
-            filesize: segment.filesize,
-            maxprot: segment.maxprot,
-            initprot: segment.initprot,
         });
         
         Ok(())
     }
     
+    // TODO: Implement module initializers support if needed
+    #[allow(dead_code)]
     unsafe fn run_initializers(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("[*] Running module initializers...");
+        // Running module initializers
         
         let base = self.base_addr.ok_or("base_addr not initialized")?;
         
         // iterate through all segments to find __mod_init_func sections
-        let mut init_count = 0;
+        let mut _init_count = 0;
         let header_ptr = base.as_ptr() as *const MachHeader64;
         let header = unsafe { &*header_ptr };
         
@@ -597,18 +578,17 @@ impl MachoLoader {
                         let init_ptr = unsafe { base.as_ptr().add(offset) as *const *const () };
                         let init_count_in_section = section.size as usize / std::mem::size_of::<*const ()>();
                         
-                        println!("  [*] Running {} initializers from section at 0x{:x}", 
-                            init_count_in_section, section.addr);
+                        // Running initializers from section
                         
                         for i in 0..init_count_in_section {
                             let init_func = unsafe { *init_ptr.add(i) };
                             if !init_func.is_null() {
-                                println!("    - Running initializer {} at {:p}", i, init_func);
+                                // Running initializer
                                 // call initializer with no arguments for now
                                 // real dyld passes (argc, argv, envp, apple, vars)
                                 let func: extern "C" fn() = unsafe { std::mem::transmute(init_func) };
                                 func();
-                                init_count += 1;
+                                _init_count += 1;
                             }
                         }
                     }
@@ -620,7 +600,7 @@ impl MachoLoader {
             cmd_ptr = unsafe { cmd_ptr.add(cmd.cmdsize as usize) };
         }
         
-        println!("  [*] Ran {} initializers", init_count);
+        // Ran initializers
         Ok(())
     }
     
@@ -668,8 +648,7 @@ impl MachoLoader {
     
     unsafe fn process_dysymtab(&mut self, dysymtab: *const DysymtabCommand) -> Result<(), Box<dyn std::error::Error>> {
         let dysymtab = unsafe { &*dysymtab };
-        println!("[*] Processing LC_DYSYMTAB:");
-        println!("    - indirect symbols: offset 0x{:x}, count {}", dysymtab.indirectsymoff, dysymtab.nindirectsyms);
+        // Processing LC_DYSYMTAB
         
         // store dysymtab info for later use
         self.dysymtab = Some(DysymtabInfo {
@@ -691,7 +670,7 @@ impl MachoLoader {
                     )
                 };
                 
-                println!("[*] Processing indirect symbol table: {} entries", indirect_syms.len());
+                // Processing indirect symbol table
                 
                 // store for later use when processing stubs
                 self.indirect_symbols = Some(indirect_syms.to_vec());
@@ -734,7 +713,7 @@ impl MachoLoader {
                         let ptr_count = section.size / 8;
                         let indirect_offset = section.reserved1 as usize;
                         
-                        println!("[*] Binding {} lazy pointers for section at 0x{:x}", ptr_count, section.addr);
+                        // Binding lazy pointers for section
                         
                         // get pointer to lazy symbol pointers in memory
                         let offset = (section.addr - self.base_vmaddr) as usize;
@@ -774,10 +753,10 @@ impl MachoLoader {
                                                 let ptr = la_ptr_base.add(i as usize);
                                                 *ptr = addr as u64;
                                             }
-                                            println!("  - Bound lazy[{}] {} to 0x{:x}", i, name, addr);
+                                            // Bound lazy pointer
                                         }
-                                        Err(e) => {
-                                            println!("  - Failed to bind lazy[{}] {}: {}", i, name, e);
+                                        Err(_e) => {
+                                            // Failed to bind lazy pointer
                                         }
                                     }
                                 }
@@ -800,7 +779,7 @@ impl MachoLoader {
         let name_ptr = unsafe { (dylib_cmd as *const u8).add(name_offset) };
         let name = unsafe { std::ffi::CStr::from_ptr(name_ptr as *const i8) }.to_string_lossy().into_owned();
         
-        println!("[*] Import dylib[{}]: {}", self.imports.len(), name);
+        // Import dylib
         self.imports.push(name);
         
         Ok(())
@@ -808,26 +787,26 @@ impl MachoLoader {
     
     unsafe fn process_dyld_info(&mut self, cmd: *const DyldInfoCommand) -> Result<(), Box<dyn std::error::Error>> {
         let cmd = unsafe { &*cmd };
-        println!("[*] Processing LC_DYLD_INFO_ONLY:");
+        // Processing LC_DYLD_INFO_ONLY
         
         if cmd.rebase_size > 0 {
-            println!("    - rebase info: offset 0x{:x}, size 0x{:x}", cmd.rebase_off, cmd.rebase_size);
+            // rebase info
             unsafe { self.process_rebase_info(cmd.rebase_off, cmd.rebase_size)? };
         }
         if cmd.bind_size > 0 {
-            println!("    - bind info: offset 0x{:x}, size 0x{:x}", cmd.bind_off, cmd.bind_size);
+            // bind info
             unsafe { self.process_bind_info(cmd.bind_off, cmd.bind_size, false)? };
         }
         if cmd.weak_bind_size > 0 {
-            println!("    - weak bind info: offset 0x{:x}, size 0x{:x}", cmd.weak_bind_off, cmd.weak_bind_size);
+            // weak bind info
         }
         if cmd.lazy_bind_size > 0 {
-            println!("    - lazy bind info: offset 0x{:x}, size 0x{:x}", cmd.lazy_bind_off, cmd.lazy_bind_size);
+            // lazy bind info
             // process lazy binding eagerly to avoid needing dyld_stub_binder
             unsafe { self.process_bind_info(cmd.lazy_bind_off, cmd.lazy_bind_size, true)? };
         }
         if cmd.export_size > 0 {
-            println!("    - export info: offset 0x{:x}, size 0x{:x}", cmd.export_off, cmd.export_size);
+            // export info
         }
         
         Ok(())
@@ -835,23 +814,19 @@ impl MachoLoader {
     
     unsafe fn process_chained_fixups(&mut self, cmd: *const LinkeditDataCommand) -> Result<(), Box<dyn std::error::Error>> {
         let cmd = unsafe { &*cmd };
-        println!("[*] Processing chained fixups - dataoff: 0x{:x}, datasize: 0x{:x}", cmd.dataoff, cmd.datasize);
+        // Processing chained fixups
         
         // get the fixups header
         let header_ptr = unsafe { self.file_data.as_ptr().add(cmd.dataoff as usize) as *const DyldChainedFixupsHeader };
         let header = unsafe { &*header_ptr };
         
-        println!("    - fixups_version: {}", header.fixups_version);
-        println!("    - starts_offset: 0x{:x}", header.starts_offset);
-        println!("    - imports_offset: 0x{:x}", header.imports_offset);
-        println!("    - imports_count: {}", header.imports_count);
-        println!("    - imports_format: {}", header.imports_format);
+        // fixups header info
         
         // get chain starts
         let starts_ptr = unsafe { (header_ptr as *const u8).add(header.starts_offset as usize) as *const DyldChainedStartsInImage };
         let starts = unsafe { &*starts_ptr };
         
-        println!("    - segment count: {}", starts.seg_count);
+        // segment count
         
         // get segment offsets array
         let seg_offsets = unsafe {
@@ -862,33 +837,22 @@ impl MachoLoader {
         };
         
         // process each segment's fixup chains
-        for (i, &offset) in seg_offsets.iter().enumerate() {
+        for (_i, &offset) in seg_offsets.iter().enumerate() {
             if offset == 0 {
-                println!("    - segment {} has no fixups", i);
+                // segment has no fixups
                 continue;
             }
             
             let seg_starts_ptr = unsafe { 
                 (starts_ptr as *const u8).add(offset as usize) as *const DyldChainedStartsInSegment 
             };
-            let seg_starts = unsafe { &*seg_starts_ptr };
+            let _seg_starts = unsafe { &*seg_starts_ptr };
             
-            println!("    - segment {} fixups:", i);
-            println!("      - page_size: 0x{:x}", seg_starts.page_size);
-            println!("      - pointer_format: {} ({})", seg_starts.pointer_format, 
-                match seg_starts.pointer_format {
-                    DYLD_CHAINED_PTR_64 => "DYLD_CHAINED_PTR_64",
-                    DYLD_CHAINED_PTR_64_OFFSET => "DYLD_CHAINED_PTR_64_OFFSET",
-                    DYLD_CHAINED_PTR_ARM64E => "DYLD_CHAINED_PTR_ARM64E",
-                    DYLD_CHAINED_PTR_ARM64E_USERLAND => "DYLD_CHAINED_PTR_ARM64E_USERLAND",
-                    _ => "unknown",
-                });
-            println!("      - segment_offset: 0x{:x}", seg_starts.segment_offset);
-            println!("      - page_count: {}", seg_starts.page_count);
+            // segment fixups info
         }
         
         // TODO: actually process the fixup chains and apply relocations
-        println!("[!] Chained fixups parsed but not yet applied");
+        // TODO: apply chained fixups
         
         Ok(())
     }
@@ -910,7 +874,7 @@ impl MachoLoader {
         const _REBASE_TYPE_TEXT_PCREL32: u8 = 3;
         
         if self.slide == 0 {
-            println!("    [*] No slide, skipping rebase");
+            // No slide, skipping rebase
             return Ok(());
         }
         
@@ -921,9 +885,9 @@ impl MachoLoader {
         let mut segment_index = 0;
         let mut segment_offset = 0u64;
         let mut _rebase_type = REBASE_TYPE_POINTER;
-        let mut rebase_count = 0;
+        let mut _rebase_count = 0;
         
-        println!("    [*] Processing rebase info with slide: 0x{:x}", self.slide);
+        // Processing rebase info
         
         while p < data.len() {
             let opcode = data[p];
@@ -962,7 +926,7 @@ impl MachoLoader {
                             let old_value = unsafe { *ptr };
                             let new_value = old_value.wrapping_add(self.slide as u64);
                             unsafe { *ptr = new_value };
-                            rebase_count += 1;
+                            _rebase_count += 1;
                         }
                         segment_offset += 8; // pointer size
                     }
@@ -978,7 +942,7 @@ impl MachoLoader {
                             let old_value = unsafe { *ptr };
                             let new_value = old_value.wrapping_add(self.slide as u64);
                             unsafe { *ptr = new_value };
-                            rebase_count += 1;
+                            _rebase_count += 1;
                         }
                         segment_offset += 8; // pointer size
                     }
@@ -991,7 +955,7 @@ impl MachoLoader {
                         let old_value = unsafe { *ptr };
                         let new_value = old_value.wrapping_add(self.slide as u64);
                         unsafe { *ptr = new_value };
-                        rebase_count += 1;
+                        _rebase_count += 1;
                     }
                     let (offset, consumed) = self.read_uleb128(&data[p..]);
                     segment_offset += offset + 8; // add offset + pointer size
@@ -1011,7 +975,7 @@ impl MachoLoader {
                             let old_value = unsafe { *ptr };
                             let new_value = old_value.wrapping_add(self.slide as u64);
                             unsafe { *ptr = new_value };
-                            rebase_count += 1;
+                            _rebase_count += 1;
                         }
                         segment_offset += skip + 8; // skip + pointer size
                     }
@@ -1022,11 +986,11 @@ impl MachoLoader {
             }
         }
         
-        println!("    [*] Applied {} rebases", rebase_count);
+        // Applied rebases
         Ok(())
     }
     
-    unsafe fn process_bind_info(&mut self, offset: u32, size: u32, is_lazy: bool) -> Result<(), Box<dyn std::error::Error>> {
+    unsafe fn process_bind_info(&mut self, offset: u32, size: u32, _is_lazy: bool) -> Result<(), Box<dyn std::error::Error>> {
         // bind opcodes
         const BIND_OPCODE_DONE: u8 = 0x00;
         const BIND_OPCODE_SET_DYLIB_ORDINAL_IMM: u8 = 0x10;
@@ -1055,9 +1019,9 @@ impl MachoLoader {
         let mut segment_offset = 0u64;
         let mut _bind_type = BIND_TYPE_POINTER;
         let mut _addend = 0i64;
-        let mut bind_count = 0;
+        let mut _bind_count = 0;
         
-        println!("    [*] Processing {} bind info", if is_lazy { "lazy" } else { "regular" });
+        // Processing bind info
         
         while p < data.len() {
             let opcode = data[p];
@@ -1128,19 +1092,14 @@ impl MachoLoader {
                         let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
                         
-                        // extra debug for lazy binds
-                        if is_lazy {
-                            println!("      - LAZY bind {} to 0x{:x}: writing to {:p} (seg[{}] '{}' + 0x{:x})", 
-                                symbol_name, symbol_addr, ptr, segment_index, seg.name, segment_offset);
-                        }
+                        // Binding symbol
                         
                         unsafe { *ptr = symbol_addr as u64 };
                         
-                        println!("      - bound {} from {} to 0x{:x} at seg[{}]+0x{:x}", 
-                            symbol_name, lib_name, symbol_addr, segment_index, segment_offset);
+                        // Bound symbol
                     }
                     
-                    bind_count += 1;
+                    _bind_count += 1;
                     segment_offset += 8; // pointer size
                 }
                 BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB => {
@@ -1160,11 +1119,10 @@ impl MachoLoader {
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
                         unsafe { *ptr = symbol_addr as u64 };
                         
-                        println!("      - bound {} from {} to 0x{:x} at seg[{}]+0x{:x}", 
-                            symbol_name, lib_name, symbol_addr, segment_index, segment_offset);
+                        // Bound symbol
                     }
                     
-                    bind_count += 1;
+                    _bind_count += 1;
                     let (offset, consumed) = self.read_uleb128(&data[p..]);
                     segment_offset += offset + 8;
                     p += consumed;
@@ -1186,11 +1144,10 @@ impl MachoLoader {
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
                         unsafe { *ptr = symbol_addr as u64 };
                         
-                        println!("      - bound {} from {} to 0x{:x} at seg[{}]+0x{:x}", 
-                            symbol_name, lib_name, symbol_addr, segment_index, segment_offset);
+                        // Bound symbol
                     }
                     
-                    bind_count += 1;
+                    _bind_count += 1;
                     segment_offset += (immediate as u64 + 1) * 8;
                 }
                 BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB => {
@@ -1199,7 +1156,7 @@ impl MachoLoader {
                     let (skip, consumed) = self.read_uleb128(&data[p..]);
                     p += consumed;
                     
-                    for i in 0..count {
+                    for _i in 0..count {
                         let lib_name = if lib_ordinal > 0 && lib_ordinal <= self.imports.len() {
                             &self.imports[lib_ordinal - 1]  // ordinals are 1-indexed
                         } else {
@@ -1216,11 +1173,10 @@ impl MachoLoader {
                             let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
                             unsafe { *ptr = symbol_addr as u64 };
                             
-                            println!("      - bound[{}] {} from {} to 0x{:x} at seg[{}]+0x{:x}", 
-                                i, symbol_name, lib_name, symbol_addr, segment_index, segment_offset);
+                            // Bound symbol
                         }
                         
-                        bind_count += 1;
+                        _bind_count += 1;
                         segment_offset += skip + 8;
                     }
                 }
@@ -1230,7 +1186,7 @@ impl MachoLoader {
             }
         }
         
-        println!("    [*] Found {} bindings to resolve", bind_count);
+        // Processed bindings
         Ok(())
     }
     
@@ -1280,7 +1236,7 @@ impl MachoLoader {
     }
     
     fn resolve_external_symbol(&self, symbol: &str, lib_name: &str) -> Result<usize, Box<dyn std::error::Error>> {
-        println!("        [?] Attempting to resolve {} from {}", symbol, lib_name);
+        // Resolving symbol
         
         // for now, use dlsym to resolve symbols from system libraries
         // in a full implementation, we'd parse the export trie of the target library
@@ -1290,7 +1246,7 @@ impl MachoLoader {
             // special case for __tlv_bootstrap - we don't use the system's version
             if symbol == "__tlv_bootstrap" {
                 // We handle TLVs ourselves, so we don't need to resolve this
-                println!("        [*] Skipping __tlv_bootstrap (using hotline TLV implementation)");
+                // Skipping __tlv_bootstrap (using hotline TLV implementation)
                 // Return a dummy address - it shouldn't be called since we update the thunks
                 return Ok(0x1000);
             }
@@ -1299,7 +1255,7 @@ impl MachoLoader {
             if symbol == "dyld_stub_binder" {
                 // dyld_stub_binder is needed for lazy binding, but since we process
                 // lazy binds eagerly, we can skip it
-                println!("        [*] Skipping dyld_stub_binder (lazy binds processed eagerly)");
+                // Skipping dyld_stub_binder (lazy binds processed eagerly)
                 // return a dummy address - it shouldn't be called
                 return Ok(0x1000);
             }
@@ -1310,7 +1266,7 @@ impl MachoLoader {
             let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
             
             if !addr.is_null() {
-                println!("        [*] Resolved _{} from {} at {:p}", symbol, lib_name, addr);
+                // Resolved symbol
                 return Ok(addr as usize);
             }
             
@@ -1319,7 +1275,7 @@ impl MachoLoader {
             let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
             
             if !addr.is_null() {
-                println!("        [*] Resolved {} from {} at {:p}", symbol, lib_name, addr);
+                // Resolved symbol
                 return Ok(addr as usize);
             }
             
@@ -1330,7 +1286,7 @@ impl MachoLoader {
                 let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
                 
                 if !addr.is_null() {
-                    println!("        [*] Resolved {} (as {}) from {} at {:p}", symbol, unprefixed, lib_name, addr);
+                    // Resolved symbol
                     return Ok(addr as usize);
                 }
             }
@@ -1353,8 +1309,6 @@ impl MachoLoader {
     }
     
     pub unsafe fn get_symbol(&self, name: &str) -> Option<*const u8> {
-        println!("[?] Looking up symbol: {}", name);
-        
         match self.base_addr {
             Some(base) => {
                 // Try with underscore prefix first (standard macOS symbol naming)
@@ -1366,25 +1320,15 @@ impl MachoLoader {
                     Some(&addr) => {
                         let offset = (addr - self.base_vmaddr) as usize;
                         let final_addr = unsafe { base.as_ptr().add(offset) as *const u8 };
-                        println!("    [*] Found symbol {} - n_value: 0x{:x}, base_vmaddr: 0x{:x}, offset: 0x{:x}, final: {:p}",
-                            name, addr, self.base_vmaddr, offset, final_addr);
                         Some(final_addr)
                     }
                     None => {
-                        println!("    [!] Symbol {} not found in symbol table", name);
-                        println!("    [*] Available symbols: {} total", self.symbols.len());
-                        // debug symbol names
-                        for (sym, _) in self.symbols.iter().take(10) {
-                            println!("        - {}", sym);
-                        }
+                        // Symbol not found in symbol table
                         None
                     }
                 }
             },
-            None => {
-                println!("    [!] No base address set");
-                None
-            },
+            None => None,
         }
     }
     

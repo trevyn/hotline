@@ -66,14 +66,14 @@ pub fn quote_method_call_with_registry(
     fn_type: proc_macro2::TokenStream,
     args: proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
-    use crate::constants::{ERR_LOCK_FAILED, ERR_METHOD_NOT_FOUND, ERR_NO_REGISTRY, LIB_PREFIX};
+    use crate::constants::{ERR_LOCK_FAILED, ERR_METHOD_NOT_FOUND, ERR_NO_REGISTRY};
 
     quote! {
         {
             if let Ok(mut guard) = #receiver.lock() {
                 let obj = &mut **guard;
                 let type_name = obj.type_name().to_string();
-                let lib_name = format!(concat!(#LIB_PREFIX, "{}"), type_name);
+                let lib_name = format!("lib{}", type_name);
                 
                 // Get registry from the object using the trait method
                 let registry = obj.get_registry()

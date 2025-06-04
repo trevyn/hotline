@@ -4,7 +4,6 @@ use std::fs;
 use syn::Type;
 
 use crate::codegen::methods::{MethodGenConfig, generate_method_impl};
-use crate::constants::{ERR_CONSTRUCT_FAILED, ERR_REGISTRY_NOT_INIT, LIB_PREFIX};
 use crate::discovery::{ReceiverType, extract_object_methods, find_object_lib_file};
 
 pub fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> proc_macro2::TokenStream {

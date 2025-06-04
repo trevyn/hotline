@@ -1,6 +1,5 @@
 // Test calling a symbol from a custom loaded library
 use runtime::DirectRuntime;
-use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let use_dlopen = std::env::args().nth(1).as_deref() == Some("--dlopen");

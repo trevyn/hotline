@@ -48,8 +48,7 @@ impl DirectRuntime {
         
         // With the new approach, objects get their registry when created
         // No need for explicit initialization
-        println!("  - loaded library in {:.1}ms", 
-            load_time.as_secs_f64() * 1000.0);
+        let _ = load_time; // Library loaded
 
         Ok(())
     }
@@ -110,7 +109,7 @@ impl DirectRuntime {
         let symbol_name =
             format!("{}__get_{}____obj_ref_dyn_Any__to__{}__{}", type_name, method, type_str, RUSTC_COMMIT);
 
-        println!("Looking for getter symbol: {}", symbol_name);
+        // Looking for getter symbol
         type GetterFn<T> = unsafe extern "Rust" fn(&dyn Any) -> T;
 
         self.library_registry
@@ -136,13 +135,13 @@ impl DirectRuntime {
             "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
             type_name, field_name, field_name, value_type, RUSTC_COMMIT
         );
-        println!("Looking for setter symbol: {} in library: {}", symbol_name, lib_name);
+        // Looking for setter symbol
         type SetterFn<T> = unsafe extern "Rust" fn(&mut dyn Any, T);
 
         let mut obj_guard = self.get_object_mut(handle).ok_or("object not found")?;
         let obj = obj_guard.as_any_mut();
 
-        println!("Calling setter {}::{} with value {:?}", type_name, method, value);
+        // Calling setter
 
         self.library_registry
             .with_symbol::<SetterFn<T>, _, _>(lib_name, &symbol_name, |setter_fn| {

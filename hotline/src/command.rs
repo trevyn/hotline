@@ -53,9 +53,7 @@ impl LibraryRegistry {
                     }
                     
                     let load_time = load_start.elapsed();
-                    println!("    - custom loader took {:.1}ms for {}", load_time.as_secs_f64() * 1000.0, lib_path);
-                    
-                    println!("[*] Custom loader successfully loaded library");
+                    println!("{:.1}ms {}", load_time.as_secs_f64() * 1000.0, lib_path);
                     
                     let mut libs = self.libs.lock().unwrap();
                     libs.insert(lib_name.clone(), LoadedLibrary::Custom(Arc::new(Mutex::new(loader))));
@@ -82,11 +80,9 @@ impl LibraryRegistry {
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let lib = unsafe { Library::new(lib_path)? };
         
-        let dlopen_time = dlopen_start.elapsed();
+        let _dlopen_time = dlopen_start.elapsed();
         
-        if dlopen_time.as_secs_f64() > 0.01 {  // if > 10ms, something's weird
-            println!("    - raw dlopen took {:.1}ms for {}", dlopen_time.as_secs_f64() * 1000.0, lib_path);
-        }
+        // dlopen timing check removed
         
         let mut libs = self.libs.lock().unwrap();
         libs.insert(lib_name.clone(), LoadedLibrary::Dlopen(Arc::new(lib)));
@@ -191,12 +187,8 @@ impl LibraryRegistry {
                 unsafe {
                     let addr = loader.get_symbol(&constructor_symbol)
                         .ok_or_else(|| format!("symbol '{}' not found", constructor_symbol))?;
-                    println!("[DEBUG] About to call constructor at address: {:p}", addr);
                     let func: ConstructorFn = std::mem::transmute(addr);
-                    println!("[DEBUG] Transmuted to function pointer, calling now...");
-                    let result = func();
-                    println!("[DEBUG] Constructor returned successfully!");
-                    result
+                    func()
                 }
             }
         };

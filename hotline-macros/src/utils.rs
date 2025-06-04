@@ -207,8 +207,5 @@ pub mod symbols {
             format!("{}__get_type_name____obj_ref_dyn_Any__to__str__{}", self.type_name, self.rustc_commit)
         }
 
-        pub fn build_init(&self) -> String {
-            format!("{}__init__registry__{}", self.type_name, self.rustc_commit)
-        }
     }
 }

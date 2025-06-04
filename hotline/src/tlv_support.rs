@@ -1,11 +1,10 @@
-use std::ptr;
 use std::slice;
 use std::collections::HashMap;
 use libc::{pthread_key_t, pthread_key_create, pthread_getspecific, pthread_setspecific};
 
 // Runtime TLV thunk structure for 64-bit (matches dyld's TLV_Thunkv2)
 #[repr(C)]
-struct TLVThunkv2 {
+pub struct TLVThunkv2 {
     func: *const u8,
     key: u32,
     offset: u32,
@@ -39,14 +38,14 @@ impl TLVManager {
         &mut self,
         lib_path: &str,
         base_addr: *mut u8,
-        slide: i64,
+        _slide: i64,
         tlv_sections: Vec<TLVSectionInfo>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if tlv_sections.is_empty() {
             return Ok(());
         }
 
-        println!("[*] Setting up TLVs for {}", lib_path);
+        // Setting up TLVs
 
         // Allocate pthread key for this library
         let mut key: pthread_key_t = 0;
@@ -56,12 +55,9 @@ impl TLVManager {
         }
         
         self.keys.insert(lib_path.to_string(), key);
-        println!("  [*] Allocated pthread key: {}", key);
 
         // Use our own TLV handler instead of the system's
         let tlv_get_addr = hotline_tlv_get_addr as *const u8;
-        
-        println!("  [*] Using hotline_tlv_get_addr at {:p}", tlv_get_addr);
 
         // Process each TLV section
         for section in &tlv_sections {
@@ -71,8 +67,6 @@ impl TLVManager {
             let thunks_ptr = unsafe { base_addr.add(section.thunks_addr as usize) };
             let thunk_count = section.thunks_size / std::mem::size_of::<TLVThunkv2>() as u64;
             
-            println!("  [*] Processing {} TLV thunks at {:p} (vmaddr: {:#x}, slide: {:#x})", 
-                thunk_count, thunks_ptr, section.thunks_addr, slide);
 
             // Initial content location (if not zero-fill)
             let initial_content_ptr = if !section.all_zero_fill && section.initial_content_size > 0 {
@@ -90,23 +84,13 @@ impl TLVManager {
                 offset: usize, // 64-bit on disk  
             }
             let disk_thunks = unsafe { slice::from_raw_parts(thunks_ptr as *const DiskThunk, thunk_count as usize) };
-            let mut updated_count = 0;
-            
-            // First check what we actually have in memory
-            let first_24_bytes = unsafe { slice::from_raw_parts(thunks_ptr, 24) };
-            println!("    [*] First 24 bytes at thunk location: {:02x?}", first_24_bytes);
             
             // Now reinterpret as runtime TLVThunkv2 format for writing
             let thunks = unsafe { slice::from_raw_parts_mut(thunks_ptr as *mut TLVThunkv2, thunk_count as usize) };
             
-            for (i, (disk_thunk, thunkv2)) in disk_thunks.iter().zip(thunks.iter_mut()).enumerate() {
+            for (disk_thunk, thunkv2) in disk_thunks.iter().zip(thunks.iter_mut()) {
                 // Since we're manually loading, we always need to set up the thunks
                 // The func pointer in the file is just a placeholder that would normally be relocated
-                
-                println!("    [*] Thunk {}: file func = {:p}, key = {:#x}, offset = {:#x}", 
-                    i, disk_thunk.func, disk_thunk.key, disk_thunk.offset);
-                
-                updated_count += 1;
                 
                 // Update the thunk with our TLV info
                 thunkv2.func = tlv_get_addr as *const u8;
@@ -126,22 +110,19 @@ impl TLVManager {
                     thunkv2.initial_content_size = section.initial_content_size as u32;
                 }
                 
-                println!("      Updated to: key={}, offset={:#x}, delta={}, size={}", 
-                    thunkv2.key, thunkv2.offset, thunkv2.initial_content_delta, thunkv2.initial_content_size);
             }
-            
-            println!("  [*] Updated {} TLV thunks", updated_count);
         }
 
         Ok(())
     }
 
     // Clean up when library is unloaded
+    #[allow(dead_code)]
     pub fn cleanup(&mut self, lib_path: &str) {
-        if let Some(key) = self.keys.remove(lib_path) {
+        if let Some(_key) = self.keys.remove(lib_path) {
             // pthread_key_delete is not safe to call if threads might still have values
             // Let the OS clean up when the process exits
-            println!("[*] Would cleanup TLV key {} for {}", key, lib_path);
+            // Would cleanup TLV key
         }
     }
 }
@@ -154,8 +135,6 @@ impl TLVManager {
 #[unsafe(no_mangle)]
 #[cfg(target_arch = "aarch64")]
 pub unsafe extern "C" fn hotline_tlv_get_addr(thunk: *const TLVThunkv2) -> *mut u8 {
-    println!("[TLV] hotline_tlv_get_addr called with thunk at {:p}", thunk);
-    
     if thunk.is_null() {
         panic!("hotline_tlv_get_addr called with null thunk");
     }
@@ -163,8 +142,6 @@ pub unsafe extern "C" fn hotline_tlv_get_addr(thunk: *const TLVThunkv2) -> *mut 
     let thunk = unsafe { &*thunk };
     let key = thunk.key;
     let offset = thunk.offset;
-    
-    println!("[TLV] Thunk: key={}, offset={:#x}, size={}", key, offset, thunk.initial_content_size);
     
     // Get the thread's TLV allocation for this key
     let allocation = unsafe { pthread_getspecific(key as pthread_key_t) as *mut u8 };
@@ -334,10 +311,7 @@ pub unsafe fn find_tlv_sections(
         section.initial_content_size = initial_content_size;
         section.all_zero_fill = all_zero_fill;
         
-        println!("[TLV] Found TLV section: thunks at {:#x} (size {:#x}), content at {:#x} (size {:#x}), zero_fill: {}", 
-            section.thunks_addr, section.thunks_size, 
-            section.initial_content_addr, section.initial_content_size, 
-            section.all_zero_fill);
+        // Found TLV section
     }
     
     Ok(tlv_sections)

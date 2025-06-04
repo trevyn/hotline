@@ -36,7 +36,7 @@ fn main() -> Result<(), String> {
     let mut loaded_libs = Vec::new();
 
     // First, rebuild all libraries at launch
-    println!("rebuilding all libraries at launch...");
+    // Rebuilding all libraries at launch
     if let Ok(entries) = fs::read_dir(objects_dir) {
         let lib_names: Vec<String> = entries
             .filter_map(|entry| {
@@ -50,7 +50,7 @@ fn main() -> Result<(), String> {
             .collect();
         
         if !lib_names.is_empty() {
-            println!("building {} libraries in parallel...", lib_names.len());
+            // Building libraries in parallel
             let mut cmd = std::process::Command::new("cargo");
             cmd.args(&["build", "--release"]);
             
@@ -97,22 +97,19 @@ fn main() -> Result<(), String> {
             .collect();
         
         // Load libraries sequentially (dlopen can be finicky with parallelism)
-        println!("Loading {} libraries...", libs_to_load.len());
+        // Loading libraries
         let start = std::time::Instant::now();
         
         for (lib_name, lib_path) in libs_to_load {
-            let lib_start = std::time::Instant::now();
             if let Err(e) = runtime.hot_reload(&lib_path, &lib_name) {
                 eprintln!("Failed to load {} library: {}", lib_name, e);
             } else {
-                let elapsed = lib_start.elapsed();
-                println!("Loaded library: {} ({:.1}ms)", lib_name, elapsed.as_secs_f64() * 1000.0);
                 loaded_libs.push((lib_name, lib_path));
             }
         }
         
         let total_elapsed = start.elapsed();
-        println!("Total library loading time: {:.1}ms", total_elapsed.as_secs_f64() * 1000.0);
+        println!("Total loading time: {:.1}ms", total_elapsed.as_secs_f64() * 1000.0);
     }
 
     // Store lib paths for hot reload
@@ -130,7 +127,7 @@ fn main() -> Result<(), String> {
             watcher
                 .watch(Path::new(&lib_rs_path), RecursiveMode::NonRecursive)
                 .expect(&format!("Failed to watch {}", lib_rs_path));
-            println!("Watching {} for changes", lib_rs_path);
+            // Watching for changes
 
             // Compute initial hash
             if let Ok(contents) = std::fs::read(&lib_rs_path) {
@@ -168,7 +165,7 @@ fn main() -> Result<(), String> {
                                 let old_hash = file_hashes.get(lib_name).copied().unwrap_or(0);
 
                                 if new_hash != old_hash {
-                                    println!("Detected change in {}, rebuilding and reloading...", lib_name);
+                                    // Detected change, rebuilding and reloading
 
                                     // Update hash
                                     file_hashes.insert(lib_name.clone(), new_hash);
@@ -188,7 +185,7 @@ fn main() -> Result<(), String> {
                                     if let Err(e) = runtime.hot_reload(lib_path, lib_name) {
                                         eprintln!("Failed to reload {} lib: {}", lib_name, e);
                                     } else {
-                                        println!("Successfully reloaded {}", lib_name);
+                                        // Successfully reloaded
                                     }
                                 }
                             }
