@@ -12,7 +12,7 @@ impl DirectRuntime {
     pub fn new() -> Self {
         Self { library_registry: LibraryRegistry::new() }
     }
-    
+
     #[cfg(target_os = "macos")]
     pub fn new_with_custom_loader() -> Self {
         Self { library_registry: LibraryRegistry::new_with_custom_loader() }
@@ -43,10 +43,10 @@ impl DirectRuntime {
 
     pub fn hot_reload(&mut self, lib_path: &str, _type_name: &str) -> Result<(), Box<dyn std::error::Error>> {
         let start = std::time::Instant::now();
-        
+
         let _lib_name = self.library_registry.load(lib_path)?;
         let load_time = start.elapsed();
-        
+
         // With the new approach, objects get their registry when created
         // No need for explicit initialization
         let _ = load_time; // Library loaded
@@ -63,17 +63,18 @@ impl DirectRuntime {
         // Get a pointer to self that we can use as 'static
         // This is safe because we know the runtime is leaked in main.rs
         let self_ptr = self as *const DirectRuntime;
-        let lib_registry = unsafe {
-            &(*self_ptr).library_registry as &'static LibraryRegistry
-        };
-        
+        let lib_registry = unsafe { &(*self_ptr).library_registry as &'static LibraryRegistry };
+
         // Set the library registry in thread-local storage before creating objects
         // This allows constructors to create other objects
         hotline::set_library_registry(lib_registry);
-        
+
         // Create the object
-        let obj = lib_registry.call_constructor(lib_name, type_name, RUSTC_COMMIT)?;
-        
+        let mut obj = lib_registry.call_constructor(lib_name, type_name, RUSTC_COMMIT)?;
+
+        // Store the registry on the object so it can create other objects later
+        obj.set_registry(lib_registry);
+
         let handle = self.register(obj);
         Ok(handle)
     }
@@ -165,9 +166,7 @@ impl DirectRuntime {
         // Set the library registry in thread-local storage before calling methods
         // This allows objects to create other objects during method calls
         let self_ptr = self as *const DirectRuntime;
-        let lib_registry = unsafe {
-            &(*self_ptr).library_registry as &'static LibraryRegistry
-        };
+        let lib_registry = unsafe { &(*self_ptr).library_registry as &'static LibraryRegistry };
         hotline::set_library_registry(lib_registry);
         // Handle WindowManager methods
         if type_name == "WindowManager" {
@@ -227,9 +226,10 @@ impl DirectRuntime {
                 "add_rect" if args.len() == 1 => {
                     let rect = args[0].downcast_ref::<ObjectHandle>().ok_or("arg 0 not ObjectHandle")?.clone();
                     let symbol_name = format!(
-                        "WindowManager__add_rect______obj_mut_dyn_Any____rect__ObjectHandle____to__unit__{}",
+                        "WindowManager__add_rect______obj_mut_dyn_Any____rect__Rect____to__unit__{}",
                         RUSTC_COMMIT
                     );
+                    // `Rect` is a newtype around `ObjectHandle`, so pass the handle directly
                     type AddRectFn = unsafe extern "Rust" fn(&mut dyn Any, ObjectHandle);
                     let mut obj_guard = self.get_object_mut(handle).ok_or("object not found")?;
                     let obj = obj_guard.as_any_mut();
@@ -325,6 +325,104 @@ impl DirectRuntime {
                     let obj = obj_guard.as_any_mut();
                     return self.call_symbol::<VoidFn, _, _>(lib_name, &symbol_name, |void_fn| {
                         unsafe { (**void_fn)(obj) };
+                        Box::new(()) as Box<dyn Any>
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // Handle CodeEditor methods
+        if type_name == "CodeEditor" {
+            match method {
+                "open" if args.len() == 1 => {
+                    let path = args[0].downcast_ref::<&str>().ok_or("arg 0 not &str")?;
+                    let symbol_name = format!(
+                        "CodeEditor__open______obj_mut_dyn_Any____path__ref_str____to__Result_lt_unit_String_gt__{}",
+                        RUSTC_COMMIT
+                    );
+                    type OpenFn = unsafe extern "Rust" fn(&mut dyn Any, &str) -> Result<(), String>;
+                    let mut obj_guard = self.get_object_mut(handle).ok_or("object not found")?;
+                    let obj = obj_guard.as_any_mut();
+                    return self.call_symbol::<OpenFn, _, _>(lib_name, &symbol_name, |open_fn| {
+                        let result = unsafe { (**open_fn)(obj, path) };
+                        Box::new(result) as Box<dyn Any>
+                    });
+                }
+                "save" if args.is_empty() => {
+                    let symbol_name = format!(
+                        "CodeEditor__save______obj_mut_dyn_Any____to__Result_lt_unit_String_gt__{}",
+                        RUSTC_COMMIT
+                    );
+                    type SaveFn = unsafe extern "Rust" fn(&mut dyn Any) -> Result<(), String>;
+                    let mut obj_guard = self.get_object_mut(handle).ok_or("object not found")?;
+                    let obj = obj_guard.as_any_mut();
+                    return self.call_symbol::<SaveFn, _, _>(lib_name, &symbol_name, |save_fn| {
+                        let result = unsafe { (**save_fn)(obj) };
+                        Box::new(result) as Box<dyn Any>
+                    });
+                }
+                "compile_and_reload" if args.len() == 1 => {
+                    let lib_name_arg = args[0].downcast_ref::<&str>().ok_or("arg 0 not &str")?;
+                    let symbol_name = format!(
+                        "CodeEditor__compile_and_reload______obj_mut_dyn_Any____lib_name__ref_str____to__Result_lt_unit_String_gt__{}",
+                        RUSTC_COMMIT
+                    );
+                    type CRFn = unsafe extern "Rust" fn(&mut dyn Any, &str) -> Result<(), String>;
+                    let mut obj_guard = self.get_object_mut(handle).ok_or("object not found")?;
+                    let obj = obj_guard.as_any_mut();
+                    return self.call_symbol::<CRFn, _, _>(lib_name, &symbol_name, |cr_fn| {
+                        let result = unsafe { (**cr_fn)(obj, lib_name_arg) };
+                        Box::new(result) as Box<dyn Any>
+                    });
+                }
+                "insert_char" if args.len() == 1 => {
+                    let ch = *args[0].downcast_ref::<char>().ok_or("arg 0 not char")?;
+                    let symbol_name = format!(
+                        "CodeEditor__insert_char______obj_mut_dyn_Any____ch__char____to__unit__{}",
+                        RUSTC_COMMIT
+                    );
+                    type InsertFn = unsafe extern "Rust" fn(&mut dyn Any, char);
+                    let mut obj_guard = self.get_object_mut(handle).ok_or("object not found")?;
+                    let obj = obj_guard.as_any_mut();
+                    return self.call_symbol::<InsertFn, _, _>(lib_name, &symbol_name, |ins_fn| {
+                        unsafe { (**ins_fn)(obj, ch) };
+                        Box::new(()) as Box<dyn Any>
+                    });
+                }
+                "backspace" if args.is_empty() => {
+                    let symbol_name =
+                        format!("CodeEditor__backspace______obj_mut_dyn_Any____to__unit__{}", RUSTC_COMMIT);
+                    type BackFn = unsafe extern "Rust" fn(&mut dyn Any);
+                    let mut obj_guard = self.get_object_mut(handle).ok_or("object not found")?;
+                    let obj = obj_guard.as_any_mut();
+                    return self.call_symbol::<BackFn, _, _>(lib_name, &symbol_name, |b_fn| {
+                        unsafe { (**b_fn)(obj) };
+                        Box::new(()) as Box<dyn Any>
+                    });
+                }
+                "is_focused" if args.is_empty() => {
+                    let symbol_name =
+                        format!("CodeEditor__is_focused______obj_mut_dyn_Any____to__bool__{}", RUSTC_COMMIT);
+                    type FocusFn = unsafe extern "Rust" fn(&mut dyn Any) -> bool;
+                    let mut obj_guard = self.get_object_mut(handle).ok_or("object not found")?;
+                    let obj = obj_guard.as_any_mut();
+                    return self.call_symbol::<FocusFn, _, _>(lib_name, &symbol_name, |f_fn| {
+                        let result = unsafe { (**f_fn)(obj) };
+                        Box::new(result) as Box<dyn Any>
+                    });
+                }
+                "set_rect" if args.len() == 1 => {
+                    let rect = args[0].downcast_ref::<ObjectHandle>().ok_or("arg 0 not ObjectHandle")?.clone();
+                    let symbol_name = format!(
+                        "CodeEditor__set_rect______obj_mut_dyn_Any____rect__Rect____to__unit__{}",
+                        RUSTC_COMMIT
+                    );
+                    type SetRectFn = unsafe extern "Rust" fn(&mut dyn Any, ObjectHandle);
+                    let mut obj_guard = self.get_object_mut(handle).ok_or("object not found")?;
+                    let obj = obj_guard.as_any_mut();
+                    return self.call_symbol::<SetRectFn, _, _>(lib_name, &symbol_name, |sr_fn| {
+                        unsafe { (**sr_fn)(obj, rect) };
                         Box::new(()) as Box<dyn Any>
                     });
                 }

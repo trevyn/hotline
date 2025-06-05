@@ -43,6 +43,7 @@ fn main() -> Result<(), String> {
     let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
     let texture_creator = canvas.texture_creator();
     let mut event_pump = sdl_context.event_pump()?;
+    video_subsystem.text_input().start();
 
     // Leak the runtime to give it 'static lifetime so objects can store references to it
     let runtime = Box::leak(Box::new({
@@ -168,6 +169,19 @@ fn main() -> Result<(), String> {
     // Initialize window manager (which sets up the text renderer)
     direct_call!(runtime, &window_manager, WindowManager, initialize()).expect("Failed to initialize WindowManager");
 
+    // Create code editor and open Rect source
+    let code_editor = runtime
+        .create_from_lib("libCodeEditor", "CodeEditor")
+        .expect("Failed to create CodeEditor");
+    direct_call!(runtime, &code_editor, CodeEditor, open("objects/Rect/src/lib.rs"))
+        .expect("Failed to open Rect source");
+    let editor_rect = runtime
+        .create_from_lib("libRect", "Rect")
+        .expect("Failed to create Rect");
+    direct_call!(runtime, &editor_rect, Rect, initialize(400.0, 50.0, 380.0, 500.0)).expect("Failed to init Rect");
+    direct_call!(runtime, &window_manager, WindowManager, add_rect(editor_rect.clone())).expect("Failed to add editor rect");
+    direct_call!(runtime, &code_editor, CodeEditor, set_rect(editor_rect)).expect("Failed to set editor rect");
+
     // Create texture once outside the loop
     let mut texture =
         texture_creator.create_texture_streaming(PixelFormatEnum::ARGB8888, 800, 600).map_err(|e| e.to_string())?;
@@ -286,19 +300,50 @@ fn main() -> Result<(), String> {
                     break 'running;
                 }
                 Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
-                    // Pass event to WindowManager
                     direct_call!(runtime, &window_manager, WindowManager, handle_mouse_down(x as f64, y as f64))
                         .expect("Failed to handle mouse down");
+                    let _ = direct_call!(runtime, &code_editor, CodeEditor, handle_mouse_down(x as f64, y as f64));
                 }
                 Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
-                    // Pass event to WindowManager
                     direct_call!(runtime, &window_manager, WindowManager, handle_mouse_up(x as f64, y as f64))
                         .expect("Failed to handle mouse up");
                 }
                 Event::MouseMotion { x, y, .. } => {
-                    // Pass event to WindowManager
                     direct_call!(runtime, &window_manager, WindowManager, handle_mouse_motion(x as f64, y as f64))
                         .expect("Failed to handle mouse motion");
+                }
+                Event::TextInput { text, .. } => {
+                    let focused = direct_call!(runtime, &code_editor, CodeEditor, is_focused())
+                        .ok()
+                        .and_then(|b| b.downcast::<bool>().ok())
+                        .map(|b| *b)
+                        .unwrap_or(false);
+                    if focused {
+                        for ch in text.chars() {
+                            let _ = direct_call!(runtime, &code_editor, CodeEditor, insert_char(ch));
+                        }
+                    }
+                }
+                Event::KeyDown { keycode: Some(Keycode::Backspace), .. } => {
+                    let focused = direct_call!(runtime, &code_editor, CodeEditor, is_focused())
+                        .ok()
+                        .and_then(|b| b.downcast::<bool>().ok())
+                        .map(|b| *b)
+                        .unwrap_or(false);
+                    if focused {
+                        let _ = direct_call!(runtime, &code_editor, CodeEditor, backspace());
+                    }
+                }
+                Event::KeyDown { keycode: Some(Keycode::F5), .. } => {
+                    let focused = direct_call!(runtime, &code_editor, CodeEditor, is_focused())
+                        .ok()
+                        .and_then(|b| b.downcast::<bool>().ok())
+                        .map(|b| *b)
+                        .unwrap_or(false);
+                    if focused {
+                        let _ = direct_call!(runtime, &code_editor, CodeEditor, save());
+                        let _ = direct_call!(runtime, &code_editor, CodeEditor, compile_and_reload("Rect"));
+                    }
                 }
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {
@@ -353,6 +398,17 @@ fn main() -> Result<(), String> {
                         eprintln!("Failed to get render symbol: {}", e);
                     }
                 }
+            }
+
+            // Render code editor
+            if let Ok(mut ce_guard) = code_editor.lock() {
+                let ce_obj = &mut **ce_guard;
+                let render_symbol = format!("CodeEditor__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}", runtime::RUSTC_COMMIT);
+                type RenderFn = extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64);
+                let _ = runtime.library_registry().with_symbol::<RenderFn, _, _>("libCodeEditor", &render_symbol, |render_fn| {
+                    let any_obj = ce_obj.as_any_mut();
+                    (**render_fn)(any_obj, buffer, 800, 600, pitch as i64);
+                });
             }
 
         })?;
