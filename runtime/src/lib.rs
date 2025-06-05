@@ -13,6 +13,7 @@ impl DirectRuntime {
         Self { library_registry: LibraryRegistry::new() }
     }
     
+    #[cfg(target_os = "macos")]
     pub fn new_with_custom_loader() -> Self {
         Self { library_registry: LibraryRegistry::new_with_custom_loader() }
     }
