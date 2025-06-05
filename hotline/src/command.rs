@@ -1,4 +1,5 @@
 use crate::HotlineObject;
+#[cfg(target_os = "macos")]
 use crate::macho_loader::MachoLoader;
 use libloading::{Library, Symbol};
 use std::any::Any;
@@ -7,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 enum LoadedLibrary {
     Dlopen(Arc<Library>),
+    #[cfg(target_os = "macos")]
     Custom(Arc<Mutex<MachoLoader>>),
 }
 
@@ -28,8 +30,9 @@ impl LibraryRegistry {
         }
     }
     
+    #[cfg(target_os = "macos")]
     pub fn new_with_custom_loader() -> Self {
-        Self { 
+        Self {
             libs: Arc::new(Mutex::new(HashMap::new())),
             use_custom_loader: true,
             old_libs: Arc::new(Mutex::new(Vec::new())),
@@ -116,10 +119,11 @@ impl LibraryRegistry {
             match libs.get(lib_name) {
                 Some(lib) => match lib {
                     LoadedLibrary::Dlopen(arc) => LoadedLibrary::Dlopen(arc.clone()),
+                    #[cfg(target_os = "macos")]
                     LoadedLibrary::Custom(arc) => LoadedLibrary::Custom(arc.clone()),
                 },
                 None => {
-                    return Err(format!("library '{}' not loaded. Available: {:?}", 
+                    return Err(format!("library '{}' not loaded. Available: {:?}",
                         lib_name, libs.keys().collect::<Vec<_>>()).into());
                 }
             }
@@ -130,6 +134,7 @@ impl LibraryRegistry {
                 let symbol: Symbol<T> = unsafe { lib_arc.get(symbol_name.as_bytes())? };
                 Ok(f(&symbol))
             }
+            #[cfg(target_os = "macos")]
             LoadedLibrary::Custom(loader_arc) => {
                 // For custom loader, we need to create a fake Symbol wrapper
                 let loader = loader_arc.lock().unwrap();
@@ -185,6 +190,7 @@ impl LibraryRegistry {
             match libs.get(lib_name) {
                 Some(lib) => match lib {
                     LoadedLibrary::Dlopen(arc) => LoadedLibrary::Dlopen(arc.clone()),
+                    #[cfg(target_os = "macos")]
                     LoadedLibrary::Custom(arc) => LoadedLibrary::Custom(arc.clone()),
                 },
                 None => {
@@ -197,6 +203,7 @@ impl LibraryRegistry {
             LoadedLibrary::Dlopen(_) => {
                 self.with_symbol::<ConstructorFn, _, _>(lib_name, &constructor_symbol, |symbol| symbol())?
             }
+            #[cfg(target_os = "macos")]
             LoadedLibrary::Custom(loader_arc) => {
                 let loader = loader_arc.lock().unwrap();
                 unsafe {

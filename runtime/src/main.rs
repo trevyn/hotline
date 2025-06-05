@@ -26,7 +26,12 @@ fn main() -> Result<(), String> {
     let mut event_pump = sdl_context.event_pump()?;
 
     // Leak the runtime to give it 'static lifetime so objects can store references to it
-    let runtime = Box::leak(Box::new(DirectRuntime::new_with_custom_loader()));
+    let runtime = Box::leak(Box::new({
+        #[cfg(target_os = "macos")]
+        { DirectRuntime::new_with_custom_loader() }
+        #[cfg(not(target_os = "macos"))]
+        { DirectRuntime::new() }
+    }));
 
     // Dynamically discover and load libraries from objects directory
     use std::fs;
