@@ -174,6 +174,12 @@ fn main() -> Result<(), String> {
         .expect("Failed to create CodeEditor");
     direct_call!(runtime, &code_editor, CodeEditor, open("objects/Rect/src/lib.rs"))
         .expect("Failed to open Rect source");
+    let editor_rect = runtime
+        .create_from_lib("libRect", "Rect")
+        .expect("Failed to create Rect");
+    direct_call!(runtime, &editor_rect, Rect, initialize(400.0, 50.0, 380.0, 500.0)).expect("Failed to init Rect");
+    direct_call!(runtime, &window_manager, WindowManager, add_rect(editor_rect.clone())).expect("Failed to add editor rect");
+    direct_call!(runtime, &code_editor, CodeEditor, with_rect(editor_rect)).expect("Failed to set editor rect");
 
     // Create texture once outside the loop
     let mut texture =
@@ -293,31 +299,50 @@ fn main() -> Result<(), String> {
                     break 'running;
                 }
                 Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
-                    // Pass event to WindowManager
                     direct_call!(runtime, &window_manager, WindowManager, handle_mouse_down(x as f64, y as f64))
                         .expect("Failed to handle mouse down");
+                    let _ = direct_call!(runtime, &code_editor, CodeEditor, handle_mouse_down(x as f64, y as f64));
                 }
                 Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
-                    // Pass event to WindowManager
                     direct_call!(runtime, &window_manager, WindowManager, handle_mouse_up(x as f64, y as f64))
                         .expect("Failed to handle mouse up");
                 }
                 Event::MouseMotion { x, y, .. } => {
-                    // Pass event to WindowManager
                     direct_call!(runtime, &window_manager, WindowManager, handle_mouse_motion(x as f64, y as f64))
                         .expect("Failed to handle mouse motion");
                 }
                 Event::TextInput { text, .. } => {
-                    for ch in text.chars() {
-                        let _ = direct_call!(runtime, &code_editor, CodeEditor, insert_char(ch));
+                    let focused = direct_call!(runtime, &code_editor, CodeEditor, is_focused())
+                        .ok()
+                        .and_then(|b| b.downcast::<bool>().ok())
+                        .map(|b| *b)
+                        .unwrap_or(false);
+                    if focused {
+                        for ch in text.chars() {
+                            let _ = direct_call!(runtime, &code_editor, CodeEditor, insert_char(ch));
+                        }
                     }
                 }
                 Event::KeyDown { keycode: Some(Keycode::Backspace), .. } => {
-                    let _ = direct_call!(runtime, &code_editor, CodeEditor, backspace());
+                    let focused = direct_call!(runtime, &code_editor, CodeEditor, is_focused())
+                        .ok()
+                        .and_then(|b| b.downcast::<bool>().ok())
+                        .map(|b| *b)
+                        .unwrap_or(false);
+                    if focused {
+                        let _ = direct_call!(runtime, &code_editor, CodeEditor, backspace());
+                    }
                 }
                 Event::KeyDown { keycode: Some(Keycode::F5), .. } => {
-                    let _ = direct_call!(runtime, &code_editor, CodeEditor, save());
-                    let _ = direct_call!(runtime, &code_editor, CodeEditor, compile_and_reload("Rect"));
+                    let focused = direct_call!(runtime, &code_editor, CodeEditor, is_focused())
+                        .ok()
+                        .and_then(|b| b.downcast::<bool>().ok())
+                        .map(|b| *b)
+                        .unwrap_or(false);
+                    if focused {
+                        let _ = direct_call!(runtime, &code_editor, CodeEditor, save());
+                        let _ = direct_call!(runtime, &code_editor, CodeEditor, compile_and_reload("Rect"));
+                    }
                 }
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {

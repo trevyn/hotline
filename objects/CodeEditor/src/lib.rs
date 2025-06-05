@@ -6,10 +6,32 @@ hotline::object!({
         #[setter]
         text: String,
         file_path: Option<String>,
+        rect: Option<Rect>,
+        focused: bool,
+        highlight: Option<HighlightLens>,
     }
 
     impl CodeEditor {
-        pub fn initialize(&mut self) {}
+        pub fn initialize(&mut self) {
+            if self.highlight.is_none() {
+                self.highlight = Some(HighlightLens::new());
+            }
+        }
+
+        pub fn set_rect(&mut self, rect: Rect) {
+            self.rect = Some(rect);
+            self.initialize();
+        }
+
+        pub fn is_focused(&mut self) -> bool {
+            self.focused
+        }
+
+        pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
+            if let Some(ref mut r) = self.rect {
+                self.focused = r.contains_point(x, y);
+            }
+        }
 
         pub fn open(&mut self, path: &str) -> Result<(), String> {
             self.text = std::fs::read_to_string(path)
@@ -30,11 +52,15 @@ hotline::object!({
         }
 
         pub fn insert_char(&mut self, ch: char) {
-            self.text.push(ch);
+            if self.focused {
+                self.text.push(ch);
+            }
         }
 
         pub fn backspace(&mut self) {
-            self.text.pop();
+            if self.focused {
+                self.text.pop();
+            }
         }
 
         pub fn compile_and_reload(&mut self, lib_name: &str) -> Result<(), String> {
@@ -65,16 +91,45 @@ hotline::object!({
             if let Some(registry) = self.get_registry() {
                 ::hotline::set_library_registry(registry);
             }
-            let mut y = 10.0;
-            let line_height = 14.0;
-            for line in self.text.split('\n') {
-                let mut tr = TextRenderer::new()
-                    .with_text(line.to_string())
-                    .with_x(10.0)
-                    .with_y(y)
-                    .with_color((255, 255, 255, 255));
-                tr.render(buffer, buffer_width, buffer_height, pitch);
-                y += line_height;
+
+            if let Some(ref mut rect) = self.rect {
+                let (x, y, w, h) = rect.bounds();
+                let x_start = x.max(0.0) as u32;
+                let y_start = y.max(0.0) as u32;
+                let x_end = (x + w).min(buffer_width as f64) as u32;
+                let y_end = (y + h).min(buffer_height as f64) as u32;
+
+                // Draw background
+                for py in y_start..y_end {
+                    for px in x_start..x_end {
+                        let offset = (py * (pitch as u32) + px * 4) as usize;
+                        if offset + 3 < buffer.len() {
+                            buffer[offset] = 40;
+                            buffer[offset + 1] = 40;
+                            buffer[offset + 2] = 40;
+                            buffer[offset + 3] = 255;
+                        }
+                    }
+                }
+
+                let mut cursor_y = y + 10.0;
+                let line_height = 14.0;
+                for line in self.text.split('\n') {
+                    let mut tr = TextRenderer::new()
+                        .with_text(line.to_string())
+                        .with_x(x + 10.0)
+                        .with_y(cursor_y)
+                        .with_color((255, 255, 255, 255));
+                    tr.render(buffer, buffer_width, buffer_height, pitch);
+                    cursor_y += line_height;
+                }
+
+                if self.focused {
+                    if let Some(ref mut hl) = self.highlight {
+                        *hl = hl.clone().with_target(&*rect);
+                        hl.render(buffer, buffer_width, buffer_height, pitch);
+                    }
+                }
             }
         }
     }
