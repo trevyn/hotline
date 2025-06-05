@@ -6,4 +6,5 @@
 - runtime/main should not call any specific objects other than WindowManager
 - when working with macros, remember that you can use cargo-expand, and you can also pipe the expansion into rustc
 - adjust the `object` macro if it would help make things cleaner
+- error reporting in `hotline-macros` should be done with proc-macro-error's `abort!` instead of panic or expect
 - when dealing with symbols, be very attentive to the number of underscores

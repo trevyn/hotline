@@ -221,7 +221,7 @@ fn generate_builder_ffi_method(
             if let Ok(mut guard) = self.0.lock() {
                 let obj = &mut **guard;
                 let type_name = obj.type_name().to_string();
-                let lib_name = format!("lib{}", type_name);
+                let __lib_name = format!("lib{}", type_name);
                 
                 // Get registry from the object using the trait method
                 let registry = obj.get_registry()
@@ -230,7 +230,7 @@ fn generate_builder_ffi_method(
                 let obj_any = obj.as_any_mut();
 
                 type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*);
-                registry.with_symbol::<FnType, _, _>(&lib_name, &#symbol_name,
+                registry.with_symbol::<FnType, _, _>(&__lib_name, &#symbol_name,
                     |fn_ptr| unsafe { (**fn_ptr)(obj_any #(, #param_idents)*) }
                 ).unwrap_or_else(|e| panic!("Method not found: {}", e));
             }

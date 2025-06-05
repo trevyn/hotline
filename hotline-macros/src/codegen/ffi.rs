@@ -41,8 +41,6 @@ impl FfiWrapper {
 
         let param_list = params.iter().map(|(name, ty)| quote! { #name: #ty });
         let return_spec = return_type.map(|ty| quote! { -> #ty }).unwrap_or_default();
-        let panic_msg = format!("Type mismatch in {}: expected {}, but got {{}}", wrapper_name, struct_name);
-
         quote! {
             #[unsafe(no_mangle)]
             #[allow(non_snake_case)]
@@ -52,7 +50,8 @@ impl FfiWrapper {
             ) #return_spec {
                 let obj_type_name = ::std::any::type_name_of_val(&*obj);
                 let instance = obj.downcast_mut::<#struct_name>()
-                    .unwrap_or_else(|| panic!(#panic_msg, obj_type_name));
+                    .unwrap_or_else(|| panic!("Type mismatch in {}: expected {}, but got {}", 
+                        stringify!(#wrapper_name), stringify!(#struct_name), obj_type_name));
                 #body
             }
         }
@@ -73,7 +72,7 @@ pub fn quote_method_call_with_registry(
             if let Ok(mut guard) = #receiver.lock() {
                 let obj = &mut **guard;
                 let type_name = obj.type_name().to_string();
-                let lib_name = format!("lib{}", type_name);
+                let __lib_name = format!("lib{}", type_name);
                 
                 // Get registry from the object using the trait method
                 let registry = obj.get_registry()
@@ -83,7 +82,7 @@ pub fn quote_method_call_with_registry(
 
                 type FnType = #fn_type;
                 registry.with_symbol::<FnType, _, _>(
-                    &lib_name,
+                    &__lib_name,
                     &#symbol_name,
                     |fn_ptr| unsafe { (**fn_ptr)(obj_any #args) }
                 ).unwrap_or_else(|e| panic!(#ERR_METHOD_NOT_FOUND, type_name, #method_name, e))

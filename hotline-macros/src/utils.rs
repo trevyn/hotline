@@ -1,4 +1,5 @@
 pub mod types {
+    use proc_macro_error2::abort_call_site;
     use syn::{GenericArgument, PathArguments, Type};
 
     pub fn type_to_string(ty: &Type) -> String {
@@ -23,7 +24,7 @@ pub mod types {
                 let elems: Vec<_> = type_tuple.elems.iter().map(type_to_string).collect();
                 format!("tuple_{}", elems.join("_comma_"))
             }
-            _ => panic!("Unsupported type in hotline macro: {:?}", ty),
+            _ => abort_call_site!(format!("Unsupported type in hotline macro: {:?}", ty)),
         }
     }
 

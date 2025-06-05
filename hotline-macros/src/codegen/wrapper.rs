@@ -11,6 +11,12 @@ pub fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> p
         .iter()
         .filter_map(|type_name| {
             let lib_path = find_object_lib_file(type_name);
+            
+            // Skip if the lib file doesn't exist (might be an external type)
+            if !lib_path.exists() {
+                return None;
+            }
+            
             fs::read_to_string(&lib_path)
                 .ok()
                 .and_then(|content| syn::parse_file(&content).ok())
@@ -46,9 +52,11 @@ fn generate_typed_wrapper(
             pub fn new() -> Self {
                 // Use thread-local registry to create the object
                 let obj = ::hotline::with_library_registry(|registry| {
-                    registry.call_constructor(concat!("lib", #type_name), #type_name, ::hotline::RUSTC_COMMIT)
-                        .expect(&format!("Failed to construct {}", #type_name))
-                }).expect("Library registry not initialized");
+                    match registry.call_constructor(concat!("lib", #type_name), #type_name, ::hotline::RUSTC_COMMIT) {
+                        Ok(obj) => obj,
+                        Err(e) => panic!("Failed to construct {}: {}", #type_name, e)
+                    }
+                }).expect(&format!("Library registry not initialized for {}", #type_name));
 
                 Self::from_handle(::std::sync::Arc::new(::std::sync::Mutex::new(obj)))
             }

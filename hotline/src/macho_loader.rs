@@ -5,9 +5,11 @@ use std::ptr;
 use std::slice;
 use crate::tlv_support::{TLVManager, find_tlv_sections};
 
-// constants for dlsym
+// constants for dlsym and dlopen
 #[cfg(target_os = "macos")]
 const RTLD_DEFAULT: *mut libc::c_void = -2isize as *mut libc::c_void;
+const RTLD_LAZY: libc::c_int = 0x1;
+const RTLD_GLOBAL: libc::c_int = 0x8;
 
 #[repr(C)]
 struct MachHeader64 {
@@ -1238,57 +1240,63 @@ impl MachoLoader {
     fn resolve_external_symbol(&self, symbol: &str, lib_name: &str) -> Result<usize, Box<dyn std::error::Error>> {
         // Resolving symbol
         
-        // for now, use dlsym to resolve symbols from system libraries
-        // in a full implementation, we'd parse the export trie of the target library
+        // Special case for __tlv_bootstrap - we don't use the system's version
+        if symbol == "__tlv_bootstrap" {
+            // We handle TLVs ourselves, so we don't need to resolve this
+            // Return a dummy address - it shouldn't be called since we update the thunks
+            return Ok(0x1000);
+        }
         
-        // special handling for common system symbols
-        if lib_name.contains("libSystem") {
-            // special case for __tlv_bootstrap - we don't use the system's version
-            if symbol == "__tlv_bootstrap" {
-                // We handle TLVs ourselves, so we don't need to resolve this
-                // Skipping __tlv_bootstrap (using hotline TLV implementation)
-                // Return a dummy address - it shouldn't be called since we update the thunks
-                return Ok(0x1000);
+        // Special case for dyld_stub_binder
+        if symbol == "dyld_stub_binder" {
+            // dyld_stub_binder is needed for lazy binding, but since we process
+            // lazy binds eagerly, we can skip it
+            // return a dummy address - it shouldn't be called
+            return Ok(0x1000);
+        }
+        
+        // For now, use dlsym to resolve symbols from any external library
+        // In a full implementation, we'd parse the export trie of the target library
+        
+        // First try the symbol as-is from already loaded libraries
+        let c_symbol = std::ffi::CString::new(symbol)?;
+        let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
+        
+        if !addr.is_null() {
+            return Ok(addr as usize);
+        }
+        
+        // If not found and we have a library path, try to load it
+        if !lib_name.is_empty() && std::path::Path::new(lib_name).exists() {
+            let lib_c_str = std::ffi::CString::new(lib_name)?;
+            let handle = unsafe { libc::dlopen(lib_c_str.as_ptr(), RTLD_LAZY | RTLD_GLOBAL) };
+            if !handle.is_null() {
+                let addr = unsafe { libc::dlsym(handle, c_symbol.as_ptr()) };
+                if !addr.is_null() {
+                    return Ok(addr as usize);
+                }
             }
-            
-            // special case for dyld_stub_binder
-            if symbol == "dyld_stub_binder" {
-                // dyld_stub_binder is needed for lazy binding, but since we process
-                // lazy binds eagerly, we can skip it
-                // Skipping dyld_stub_binder (lazy binds processed eagerly)
-                // return a dummy address - it shouldn't be called
-                return Ok(0x1000);
-            }
-            
-            // try with underscore prefix first (standard macOS symbol naming)
+        }
+        
+        // If the symbol doesn't start with underscore, try adding one
+        if !symbol.starts_with('_') {
             let prefixed_symbol = format!("_{}", symbol);
             let c_symbol = std::ffi::CString::new(prefixed_symbol)?;
             let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
             
             if !addr.is_null() {
-                // Resolved symbol
                 return Ok(addr as usize);
             }
-            
-            // try without prefix
-            let c_symbol = std::ffi::CString::new(symbol)?;
+        }
+        
+        // If symbol starts with underscore, also try without it
+        if symbol.starts_with('_') {
+            let unprefixed = &symbol[1..];
+            let c_symbol = std::ffi::CString::new(unprefixed)?;
             let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
             
             if !addr.is_null() {
-                // Resolved symbol
                 return Ok(addr as usize);
-            }
-            
-            // if symbol starts with underscore, also try without it (e.g. _CCRandomGenerateBytes -> CCRandomGenerateBytes)
-            if symbol.starts_with('_') {
-                let unprefixed = &symbol[1..];
-                let c_symbol = std::ffi::CString::new(unprefixed)?;
-                let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
-                
-                if !addr.is_null() {
-                    // Resolved symbol
-                    return Ok(addr as usize);
-                }
             }
         }
         

@@ -20,9 +20,6 @@ png = "0.17"
 name = "runtime"
 path = "src/main.rs"
 
-[[bin]]
-name = "test_load"
-path = "src/bin/test_load.rs"
 
 [features]
 default = []
