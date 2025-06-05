@@ -1,15 +1,40 @@
+use bytemuck::{Pod, Zeroable};
+use hotline::ObjectHandle;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use runtime::{DirectRuntime, direct_call};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
-use sdl2::pixels::{Color, PixelFormatEnum};
-use std::any::Any;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{TryRecvError, channel};
 use std::time::Duration;
+use wgpu::util::DeviceExt;
 use xxhash_rust::xxh3::xxh3_64;
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct Vertex {
+    position: [f32; 2],
+    color: [f32; 4],
+}
+
+fn rect_vertices(x: f32, y: f32, w: f32, h: f32, width: f32, height: f32) -> [Vertex; 6] {
+    let x1 = x / width * 2.0 - 1.0;
+    let y1 = 1.0 - y / height * 2.0;
+    let x2 = (x + w) / width * 2.0 - 1.0;
+    let y2 = 1.0 - (y + h) / height * 2.0;
+    let color = [1.0, 0.0, 0.0, 1.0];
+    [
+        Vertex { position: [x1, y1], color },
+        Vertex { position: [x2, y1], color },
+        Vertex { position: [x2, y2], color },
+        Vertex { position: [x1, y1], color },
+        Vertex { position: [x2, y2], color },
+        Vertex { position: [x1, y2], color },
+    ]
+}
 
 #[cfg(target_os = "linux")]
 use png::{BitDepth, ColorType, Encoder};
@@ -36,19 +61,22 @@ fn main() -> Result<(), String> {
     let window = video_subsystem
         .window("hotline - direct calls", 800, 600)
         .position_centered()
+        .vulkan()
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
-    let texture_creator = canvas.texture_creator();
     let mut event_pump = sdl_context.event_pump()?;
 
     // Leak the runtime to give it 'static lifetime so objects can store references to it
     let runtime = Box::leak(Box::new({
         #[cfg(target_os = "macos")]
-        { DirectRuntime::new_with_custom_loader() }
+        {
+            DirectRuntime::new_with_custom_loader()
+        }
         #[cfg(not(target_os = "macos"))]
-        { DirectRuntime::new() }
+        {
+            DirectRuntime::new()
+        }
     }));
 
     // Dynamically discover and load libraries from objects directory
@@ -71,20 +99,20 @@ fn main() -> Result<(), String> {
                 path.file_name()?.to_str().map(|s| s.to_string())
             })
             .collect();
-        
+
         if !lib_names.is_empty() {
             // Building libraries in parallel
             let mut cmd = std::process::Command::new("cargo");
             cmd.args(&["build", "--release"]);
-            
+
             // add all packages
             for lib_name in &lib_names {
                 cmd.args(&["-p", lib_name]);
             }
-            
+
             // use status() instead of output() to see real-time output
             let status = cmd.status().expect("failed to build libraries");
-            
+
             if !status.success() {
                 panic!("failed to build libraries");
             }
@@ -101,7 +129,7 @@ fn main() -> Result<(), String> {
                     return None;
                 }
                 let lib_name = path.file_name()?.to_str()?.to_string();
-                
+
                 // Construct library path based on OS
                 #[cfg(target_os = "macos")]
                 let lib_path = format!("target/release/lib{}.dylib", lib_name);
@@ -109,7 +137,7 @@ fn main() -> Result<(), String> {
                 let lib_path = format!("target/release/lib{}.so", lib_name);
                 #[cfg(target_os = "windows")]
                 let lib_path = format!("target/release/{}.dll", lib_name);
-                
+
                 if Path::new(&lib_path).exists() {
                     Some((lib_name, lib_path))
                 } else {
@@ -118,11 +146,11 @@ fn main() -> Result<(), String> {
                 }
             })
             .collect();
-        
+
         // Load libraries sequentially (dlopen can be finicky with parallelism)
         // Loading libraries
         let start = std::time::Instant::now();
-        
+
         for (lib_name, lib_path) in libs_to_load {
             if let Err(e) = runtime.hot_reload(&lib_path, &lib_name) {
                 eprintln!("Failed to load {} library: {}", lib_name, e);
@@ -130,7 +158,7 @@ fn main() -> Result<(), String> {
                 loaded_libs.push((lib_name, lib_path));
             }
         }
-        
+
         let total_elapsed = start.elapsed();
         println!("Total loading time: {:.1}ms", total_elapsed.as_secs_f64() * 1000.0);
     }
@@ -167,62 +195,58 @@ fn main() -> Result<(), String> {
     // Initialize window manager (which sets up the text renderer)
     direct_call!(runtime, &window_manager, WindowManager, initialize()).expect("Failed to initialize WindowManager");
 
-    // Create texture once outside the loop
-    let mut texture =
-        texture_creator.create_texture_streaming(PixelFormatEnum::ARGB8888, 800, 600).map_err(|e| e.to_string())?;
+    // Initialize Vulkan via wgpu
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::VULKAN, ..Default::default() });
+    let surface = unsafe {
+        let target = wgpu::SurfaceTargetUnsafe::from_window(&window).map_err(|e| e.to_string())?;
+        instance.create_surface_unsafe(target).map_err(|e| e.to_string())?
+    };
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: Some(&surface),
+        force_fallback_adapter: false,
+    }))
+    .ok_or("adapter")?;
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&Default::default(), None)).map_err(|e| e.to_string())?;
+    let mut config = surface.get_default_config(&adapter, 800, 600).ok_or("config")?;
+    surface.configure(&device, &config);
 
-    #[cfg(target_os = "linux")]
-    {
-        println!("[linux] creating test rects");
-        // Simulate drawing two rectangles via mouse events
-        direct_call!(runtime, &window_manager, WindowManager, handle_mouse_down(50.0, 50.0)).expect("mouse down");
-        direct_call!(runtime, &window_manager, WindowManager, handle_mouse_up(250.0, 150.0)).expect("mouse up");
-
-        direct_call!(runtime, &window_manager, WindowManager, handle_mouse_down(300.0, 200.0)).expect("mouse down");
-        direct_call!(runtime, &window_manager, WindowManager, handle_mouse_up(450.0, 350.0)).expect("mouse up");
-
-        println!("[linux] rendering");
-        let mut png_data = vec![0u8; 800 * 600 * 4];
-        texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
-            for pixel in buffer.chunks_exact_mut(4) {
-                pixel[0] = 30;
-                pixel[1] = 30;
-                pixel[2] = 30;
-                pixel[3] = 255;
-            }
-            if let Ok(mut wm_guard) = window_manager.lock() {
-                let wm_obj = &mut **wm_guard;
-                let render_symbol = format!(
-                    "WindowManager__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}",
-                    runtime::RUSTC_COMMIT
-                );
-                type RenderFn = extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64);
-                runtime
-                    .library_registry()
-                    .with_symbol::<RenderFn, _, _>("libWindowManager", &render_symbol, |render_fn| {
-                        let any_obj = wm_obj.as_any_mut();
-                        (**render_fn)(any_obj, buffer, 800, 600, pitch as i64);
-                    })
-                    .expect("render failed");
-            }
-
-            for y in 0..600 {
-                for x in 0..800 {
-                    let src = y * pitch + x * 4;
-                    let dst = (y * 800 + x) * 4;
-                    png_data[dst] = buffer[src + 2];
-                    png_data[dst + 1] = buffer[src + 1];
-                    png_data[dst + 2] = buffer[src];
-                    png_data[dst + 3] = buffer[src + 3];
-                }
-            }
-        })?;
-
-        println!("[linux] saving test_output.png");
-        save_png("test_output.png", 800, 600, &png_data)?;
-        println!("[linux] image saved");
-        return Ok(());
-    }
+    let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/rect.wgsl"));
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("rect_layout"),
+        bind_group_layouts: &[],
+        push_constant_ranges: &[],
+    });
+    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("rect_pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: "vs_main",
+            compilation_options: Default::default(),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
+            }],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: "fs_main",
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
 
     'running: loop {
         // Check for file system events
@@ -251,7 +275,7 @@ fn main() -> Result<(), String> {
                                         .args(&["build", "--release", "-p", lib_name])
                                         .status()
                                         .expect(&format!("Failed to build {}", lib_name));
-                                    
+
                                     if !status.success() {
                                         eprintln!("Failed to build {}", lib_name);
                                         continue;
@@ -276,91 +300,101 @@ fn main() -> Result<(), String> {
             }
         }
 
-        canvas.set_draw_color(Color::RGB(0, 0, 0));
-        canvas.clear();
-
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-                    break 'running;
-                }
+                Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => break 'running,
                 Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
-                    // Pass event to WindowManager
                     direct_call!(runtime, &window_manager, WindowManager, handle_mouse_down(x as f64, y as f64))
                         .expect("Failed to handle mouse down");
                 }
                 Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
-                    // Pass event to WindowManager
                     direct_call!(runtime, &window_manager, WindowManager, handle_mouse_up(x as f64, y as f64))
                         .expect("Failed to handle mouse up");
                 }
                 Event::MouseMotion { x, y, .. } => {
-                    // Pass event to WindowManager
                     direct_call!(runtime, &window_manager, WindowManager, handle_mouse_motion(x as f64, y as f64))
                         .expect("Failed to handle mouse motion");
                 }
-                // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {
-                    // Build all libraries in parallel with single cargo invocation
                     let mut cmd = std::process::Command::new("cargo");
                     cmd.args(&["build", "--release"]);
-                    
                     for (lib_name, _) in &lib_paths {
                         cmd.args(&["-p", lib_name]);
                     }
-                    
                     let status = cmd.status().expect("Failed to build libraries");
                     if !status.success() {
                         eprintln!("Failed to rebuild libraries");
                         continue;
                     }
-
-                    // Reload all libraries
                     for (lib_name, lib_path) in &lib_paths {
                         if let Err(e) = runtime.hot_reload(lib_path, lib_name) {
                             eprintln!("Failed to reload {} lib: {}", lib_name, e);
                         }
                     }
                 }
+                Event::Window { win_event: sdl2::event::WindowEvent::Resized(w, h), .. } => {
+                    config.width = w as u32;
+                    config.height = h as u32;
+                    surface.configure(&device, &config);
+                }
                 _ => {}
             }
         }
 
-        // Render to texture
-        texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
-            // Clear buffer with a dark gray color
-            for pixel in buffer.chunks_exact_mut(4) {
-                pixel[0] = 30;  // B
-                pixel[1] = 30;  // G
-                pixel[2] = 30;  // R
-                pixel[3] = 255; // A
+        let output = match surface.get_current_texture() {
+            Ok(f) => f,
+            Err(_) => {
+                surface.configure(&device, &config);
+                surface.get_current_texture().expect("frame")
             }
-
-            // First render the WindowManager (which will try to render rects but fail due to registry access)
-            if let Ok(mut wm_guard) = window_manager.lock() {
-                let wm_obj = &mut **wm_guard;
-                let render_symbol = format!("WindowManager__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}", runtime::RUSTC_COMMIT);
-
-                // Generic dynamic call
-                type RenderFn = extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64);
-                match runtime.library_registry().with_symbol::<RenderFn, _, _>("libWindowManager", &render_symbol, |render_fn| {
-                    let any_obj = wm_obj.as_any_mut();
-                    (**render_fn)(any_obj, buffer, 800, 600, pitch as i64);
-                }) {
-                    Ok(_) => {},
-                    Err(e) => {
-                        eprintln!("Failed to get render symbol: {}", e);
-                    }
-                }
+        };
+        let view = output.texture.create_view(&Default::default());
+        let mut vertices: Vec<Vertex> = Vec::new();
+        let rc_any = direct_call!(runtime, &window_manager, WindowManager, get_rects_count()).expect("count");
+        let rc = *rc_any.downcast_ref::<i64>().unwrap() as i32;
+        for i in 0..rc {
+            let h_any = direct_call!(runtime, &window_manager, WindowManager, get_rect_at(i as i64)).expect("rect");
+            if let Some(handle) = h_any.downcast_ref::<Option<ObjectHandle>>().unwrap().clone() {
+                let b_any = direct_call!(runtime, &handle, Rect, bounds()).expect("bounds");
+                let (x, y, w, h) = *b_any.downcast_ref::<(f64, f64, f64, f64)>().unwrap();
+                vertices.extend_from_slice(&rect_vertices(
+                    x as f32,
+                    y as f32,
+                    w as f32,
+                    h as f32,
+                    config.width as f32,
+                    config.height as f32,
+                ));
             }
-
-        })?;
-
-        // Copy texture to canvas
-        canvas.copy(&texture, None, None)?;
-
-        canvas.present();
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+        }
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("vertices"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("encoder") });
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rpass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.1, b: 0.1, a: 1.0 }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            rpass.set_pipeline(&render_pipeline);
+            rpass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            rpass.draw(0..vertices.len() as u32, 0..1);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+        ::std::thread::sleep(Duration::from_millis(16));
     }
 
     Ok(())
