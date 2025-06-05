@@ -58,10 +58,18 @@ fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
 
-    let window = video_subsystem
-        .window("hotline - direct calls", 800, 600)
-        .position_centered()
-        .vulkan()
+    let mut window_builder = video_subsystem
+        .window("hotline - direct calls", 800, 600);
+    window_builder.position_centered();
+    #[cfg(target_os = "macos")]
+    {
+        window_builder.metal_view();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window_builder.vulkan();
+    }
+    let window = window_builder
         .build()
         .map_err(|e| e.to_string())?;
 
