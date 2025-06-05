@@ -4,6 +4,7 @@ use crate::macho_loader::MachoLoader;
 use libloading::{Library, Symbol};
 use std::any::Any;
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::sync::{Arc, Mutex};
 
 enum LoadedLibrary {
@@ -19,14 +20,16 @@ pub struct LibraryRegistry {
     use_custom_loader: bool,
     // Keep old libraries mapped to prevent TLV crashes during hot reload
     old_libs: Arc<Mutex<Vec<LoadedLibrary>>>,
+    symbol_cache: Arc<Mutex<HashMap<(String, String), *const c_void>>>,
 }
 
 impl LibraryRegistry {
     pub fn new() -> Self {
-        Self { 
+        Self {
             libs: Arc::new(Mutex::new(HashMap::new())),
             use_custom_loader: false,
             old_libs: Arc::new(Mutex::new(Vec::new())),
+            symbol_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     
@@ -36,6 +39,7 @@ impl LibraryRegistry {
             libs: Arc::new(Mutex::new(HashMap::new())),
             use_custom_loader: true,
             old_libs: Arc::new(Mutex::new(Vec::new())),
+            symbol_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -70,7 +74,13 @@ impl LibraryRegistry {
                         let mut old_libs = self.old_libs.lock().unwrap();
                         old_libs.push(old_lib);
                     }
-                    
+
+                    // Clear cached symbols for this library
+                    self.symbol_cache
+                        .lock()
+                        .unwrap()
+                        .retain(|(l, _), _| l != &lib_name);
+
                     return Ok(lib_name);
                 }
             }
@@ -98,21 +108,46 @@ impl LibraryRegistry {
         // dlopen timing check removed
         
         let mut libs = self.libs.lock().unwrap();
-        
+
         // If replacing an existing library, move it to old_libs
         if let Some(old_lib) = libs.insert(lib_name.clone(), LoadedLibrary::Dlopen(Arc::new(lib))) {
             let mut old_libs = self.old_libs.lock().unwrap();
             old_libs.push(old_lib);
         }
-        
+
+        // Remove any cached symbols for this library
+        self.symbol_cache
+            .lock()
+            .unwrap()
+            .retain(|(l, _), _| l != &lib_name);
+
         Ok(lib_name)
     }
 
     pub fn with_symbol<T, R, F>(&self, lib_name: &str, symbol_name: &str, f: F) -> Result<R, Box<dyn std::error::Error>>
     where
-        T: 'static,
+        T: Sized + 'static,
         F: FnOnce(&Symbol<T>) -> R,
     {
+        let cache_key = (lib_name.to_string(), symbol_name.to_string());
+
+        if let Some(ptr) = self.symbol_cache.lock().unwrap().get(&cache_key).copied() {
+            struct FakeSymbol<T> {
+                ptr: *const T,
+            }
+
+            impl<T> std::ops::Deref for FakeSymbol<T> {
+                type Target = *const T;
+                fn deref(&self) -> &Self::Target {
+                    &self.ptr
+                }
+            }
+
+            let fake = FakeSymbol { ptr: ptr as *const T };
+            let sym = &fake as *const FakeSymbol<T> as *const Symbol<T>;
+            return Ok(f(unsafe { &*sym }));
+        }
+
         // Get loaded library while holding the lock, then release the lock
         let loaded_lib = {
             let libs = self.libs.lock().unwrap();
@@ -132,6 +167,11 @@ impl LibraryRegistry {
         match &loaded_lib {
             LoadedLibrary::Dlopen(lib_arc) => {
                 let symbol: Symbol<T> = unsafe { lib_arc.get(symbol_name.as_bytes())? };
+                let ptr = unsafe { symbol.clone().try_as_raw_ptr().unwrap() } as *const c_void;
+                self.symbol_cache
+                    .lock()
+                    .unwrap()
+                    .insert(cache_key, ptr);
                 Ok(f(&symbol))
             }
             #[cfg(target_os = "macos")]
@@ -141,9 +181,9 @@ impl LibraryRegistry {
                 unsafe {
                     let addr = loader.get_symbol(symbol_name)
                         .ok_or_else(|| format!("symbol '{}' not found in custom loaded library", symbol_name))?;
-                    
+
                     // println!("    - Found symbol {} at address: {:p}", symbol_name, addr);
-                    
+
                     // Create a raw pointer to the function
                     let func_ptr = addr as *const T;
                     
@@ -162,7 +202,13 @@ impl LibraryRegistry {
                     }
                     
                     let fake_symbol = FakeSymbol { ptr: func_ptr };
-                    
+
+                    // cache symbol address
+                    self.symbol_cache
+                        .lock()
+                        .unwrap()
+                        .insert(cache_key, func_ptr as *const c_void);
+
                     // Since f expects &Symbol<T> but we have FakeSymbol<T>,
                     // and Symbol<T> derefs to *const T, we need to transmute
                     let symbol_ref = &fake_symbol as *const FakeSymbol<T> as *const Symbol<T>;
