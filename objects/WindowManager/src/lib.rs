@@ -7,6 +7,7 @@ hotline::object!({
         selected: Option<Rect>,
         highlight_lens: Option<HighlightLens>, // HighlightLens for selected rect
         text_renderer: Option<TextRenderer>,   // TextRenderer for displaying text
+        menu_bar: Option<MenuBar>,             // simple menu bar
         dragging: bool,
         drag_offset_x: f64,
         drag_offset_y: f64,
@@ -19,7 +20,7 @@ hotline::object!({
             if let Some(registry) = self.get_registry() {
                 // Set the registry in thread-local storage for TextRenderer::new()
                 ::hotline::set_library_registry(registry);
-                
+
                 // Now create text renderer
                 let text_renderer = TextRenderer::new()
                     .with_text("Hello, Hotline!".to_string())
@@ -27,6 +28,12 @@ hotline::object!({
                     .with_y(20.0)
                     .with_color((0, 255, 255, 255)); // Yellow text in BGRA format
                 self.text_renderer = Some(text_renderer);
+
+                // Create menu bar
+                let mut menu_bar = MenuBar::new();
+                let file_index = menu_bar.add_menu("File".to_string());
+                menu_bar.add_menu_item(file_index, "Exit".to_string());
+                self.menu_bar = Some(menu_bar);
             } else {
                 panic!("WindowManager registry not initialized");
             }
@@ -77,6 +84,13 @@ hotline::object!({
         }
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
+            if let Some(ref mut menu_bar) = self.menu_bar {
+                menu_bar.handle_mouse_down(x, y);
+                if y <= menu_bar.bar_height() {
+                    return;
+                }
+            }
+
             // First check for hits
             let mut hit_index = None;
             let mut hit_position = (0.0, 0.0);
@@ -153,6 +167,10 @@ hotline::object!({
         }
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
+            if let Some(ref mut menu_bar) = self.menu_bar {
+                menu_bar.render(buffer, buffer_width, buffer_height, pitch);
+            }
+
             // Render all rects
             for rect_handle in &mut self.rects {
                 rect_handle.render(buffer, buffer_width, buffer_height, pitch);
