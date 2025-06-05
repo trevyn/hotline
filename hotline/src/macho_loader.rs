@@ -1206,16 +1206,14 @@ impl MachoLoader {
             return Ok(0x1000);
         }
 
+        if symbol == "dyld_stub_binder" {
+            // dyld_stub_binder is needed for lazy binding, but since we process
+            // lazy binds eagerly, we can skip it regardless of the library name
+            // return a dummy address - it shouldn't be called
+            return Ok(0x1000);
+        }
+
         if lib_name.contains("libSystem") {
-            
-            // special case for dyld_stub_binder
-            if symbol == "dyld_stub_binder" {
-                // dyld_stub_binder is needed for lazy binding, but since we process
-                // lazy binds eagerly, we can skip it
-                // Skipping dyld_stub_binder (lazy binds processed eagerly)
-                // return a dummy address - it shouldn't be called
-                return Ok(0x1000);
-            }
             
             // try with underscore prefix first (standard macOS symbol naming)
             let prefixed_symbol = format!("_{}", symbol);
