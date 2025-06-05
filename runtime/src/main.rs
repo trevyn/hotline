@@ -36,6 +36,7 @@ fn main() -> Result<(), String> {
     let window = video_subsystem
         .window("hotline - direct calls", 800, 600)
         .position_centered()
+        .allow_highdpi()
         .build()
         .map_err(|e| e.to_string())?;
 
