@@ -1199,14 +1199,14 @@ impl MachoLoader {
         // in a full implementation, we'd parse the export trie of the target library
         
         // special handling for common system symbols
+        if symbol == "__tlv_bootstrap" {
+            // We handle TLVs ourselves, so we don't need to resolve this
+            // Skipping __tlv_bootstrap (using hotline TLV implementation)
+            // Return a dummy address - it shouldn't be called since we update the thunks
+            return Ok(0x1000);
+        }
+
         if lib_name.contains("libSystem") {
-            // special case for __tlv_bootstrap - we don't use the system's version
-            if symbol == "__tlv_bootstrap" {
-                // We handle TLVs ourselves, so we don't need to resolve this
-                // Skipping __tlv_bootstrap (using hotline TLV implementation)
-                // Return a dummy address - it shouldn't be called since we update the thunks
-                return Ok(0x1000);
-            }
             
             // special case for dyld_stub_binder
             if symbol == "dyld_stub_binder" {
