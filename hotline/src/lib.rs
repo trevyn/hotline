@@ -10,8 +10,15 @@ pub use libloading;
 pub const RUSTC_COMMIT: &str = env!("RUSTC_COMMIT_HASH");
 
 pub mod command;
+#[cfg(target_os = "macos")]
 mod macho_loader;
+#[cfg(not(target_os = "macos"))]
+mod macho_loader {}
+
+#[cfg(target_os = "macos")]
 mod tlv_support;
+#[cfg(not(target_os = "macos"))]
+mod tlv_support {}
 
 pub use command::{CommandHandler, CommandRegistry, LibraryRegistry};
 

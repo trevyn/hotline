@@ -10,7 +10,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut runtime = if use_dlopen {
         DirectRuntime::new()
     } else {
-        DirectRuntime::new_with_custom_loader()
+        #[cfg(target_os = "macos")]
+        { DirectRuntime::new_with_custom_loader() }
+        #[cfg(not(target_os = "macos"))]
+        { DirectRuntime::new() }
     };
     
     // Load Rect library
