@@ -10,7 +10,11 @@ libloading = "0.8"
 notify = "8.0"
 rand = "0.9"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
-sdl2 = {version = "0.37.0", features = ["ttf", "image"]}
+sdl2 = {version = "0.37.0", features = ["ttf", "image", "raw-window-handle"]}
+wgpu = "0.20"
+pollster = "0.3"
+bytemuck = { version = "1.14", features = ["derive"] }
+raw-window-handle = "0.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
