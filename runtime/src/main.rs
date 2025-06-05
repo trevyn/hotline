@@ -179,7 +179,7 @@ fn main() -> Result<(), String> {
         .expect("Failed to create Rect");
     direct_call!(runtime, &editor_rect, Rect, initialize(400.0, 50.0, 380.0, 500.0)).expect("Failed to init Rect");
     direct_call!(runtime, &window_manager, WindowManager, add_rect(editor_rect.clone())).expect("Failed to add editor rect");
-    direct_call!(runtime, &code_editor, CodeEditor, with_rect(editor_rect)).expect("Failed to set editor rect");
+    direct_call!(runtime, &code_editor, CodeEditor, set_rect(editor_rect)).expect("Failed to set editor rect");
 
     // Create texture once outside the loop
     let mut texture =
