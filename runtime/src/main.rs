@@ -11,6 +11,24 @@ use std::sync::mpsc::{TryRecvError, channel};
 use std::time::Duration;
 use xxhash_rust::xxh3::xxh3_64;
 
+#[cfg(target_os = "linux")]
+use png::{BitDepth, ColorType, Encoder};
+#[cfg(target_os = "linux")]
+use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::io::BufWriter;
+
+#[cfg(target_os = "linux")]
+fn save_png(path: &str, width: u32, height: u32, data: &[u8]) -> Result<(), String> {
+    let file = File::create(path).map_err(|e| e.to_string())?;
+    let w = BufWriter::new(file);
+    let mut encoder = Encoder::new(w, width, height);
+    encoder.set_color(ColorType::Rgba);
+    encoder.set_depth(BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    writer.write_image_data(data).map_err(|e| e.to_string())
+}
+
 fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
@@ -152,6 +170,59 @@ fn main() -> Result<(), String> {
     // Create texture once outside the loop
     let mut texture =
         texture_creator.create_texture_streaming(PixelFormatEnum::ARGB8888, 800, 600).map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "linux")]
+    {
+        println!("[linux] creating test rects");
+        // Simulate drawing two rectangles via mouse events
+        direct_call!(runtime, &window_manager, WindowManager, handle_mouse_down(50.0, 50.0)).expect("mouse down");
+        direct_call!(runtime, &window_manager, WindowManager, handle_mouse_up(250.0, 150.0)).expect("mouse up");
+
+        direct_call!(runtime, &window_manager, WindowManager, handle_mouse_down(300.0, 200.0)).expect("mouse down");
+        direct_call!(runtime, &window_manager, WindowManager, handle_mouse_up(450.0, 350.0)).expect("mouse up");
+
+        println!("[linux] rendering");
+        let mut png_data = vec![0u8; 800 * 600 * 4];
+        texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
+            for pixel in buffer.chunks_exact_mut(4) {
+                pixel[0] = 30;
+                pixel[1] = 30;
+                pixel[2] = 30;
+                pixel[3] = 255;
+            }
+            if let Ok(mut wm_guard) = window_manager.lock() {
+                let wm_obj = &mut **wm_guard;
+                let render_symbol = format!(
+                    "WindowManager__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}",
+                    runtime::RUSTC_COMMIT
+                );
+                type RenderFn = extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64);
+                runtime
+                    .library_registry()
+                    .with_symbol::<RenderFn, _, _>("libWindowManager", &render_symbol, |render_fn| {
+                        let any_obj = wm_obj.as_any_mut();
+                        (**render_fn)(any_obj, buffer, 800, 600, pitch as i64);
+                    })
+                    .expect("render failed");
+            }
+
+            for y in 0..600 {
+                for x in 0..800 {
+                    let src = y * pitch + x * 4;
+                    let dst = (y * 800 + x) * 4;
+                    png_data[dst] = buffer[src + 2];
+                    png_data[dst + 1] = buffer[src + 1];
+                    png_data[dst + 2] = buffer[src];
+                    png_data[dst + 3] = buffer[src + 3];
+                }
+            }
+        })?;
+
+        println!("[linux] saving test_output.png");
+        save_png("test_output.png", 800, 600, &png_data)?;
+        println!("[linux] image saved");
+        return Ok(());
+    }
 
     'running: loop {
         // Check for file system events
