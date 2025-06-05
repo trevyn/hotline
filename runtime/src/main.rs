@@ -42,6 +42,7 @@ fn main() -> Result<(), String> {
     let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
     let texture_creator = canvas.texture_creator();
     let mut event_pump = sdl_context.event_pump()?;
+    video_subsystem.text_input().start();
 
     // Leak the runtime to give it 'static lifetime so objects can store references to it
     let runtime = Box::leak(Box::new({
@@ -166,6 +167,13 @@ fn main() -> Result<(), String> {
 
     // Initialize window manager (which sets up the text renderer)
     direct_call!(runtime, &window_manager, WindowManager, initialize()).expect("Failed to initialize WindowManager");
+
+    // Create code editor and open Rect source
+    let code_editor = runtime
+        .create_from_lib("libCodeEditor", "CodeEditor")
+        .expect("Failed to create CodeEditor");
+    direct_call!(runtime, &code_editor, CodeEditor, open("objects/Rect/src/lib.rs"))
+        .expect("Failed to open Rect source");
 
     // Create texture once outside the loop
     let mut texture =
@@ -299,6 +307,18 @@ fn main() -> Result<(), String> {
                     direct_call!(runtime, &window_manager, WindowManager, handle_mouse_motion(x as f64, y as f64))
                         .expect("Failed to handle mouse motion");
                 }
+                Event::TextInput { text, .. } => {
+                    for ch in text.chars() {
+                        let _ = direct_call!(runtime, &code_editor, CodeEditor, insert_char(ch));
+                    }
+                }
+                Event::KeyDown { keycode: Some(Keycode::Backspace), .. } => {
+                    let _ = direct_call!(runtime, &code_editor, CodeEditor, backspace());
+                }
+                Event::KeyDown { keycode: Some(Keycode::F5), .. } => {
+                    let _ = direct_call!(runtime, &code_editor, CodeEditor, save());
+                    let _ = direct_call!(runtime, &code_editor, CodeEditor, compile_and_reload("Rect"));
+                }
                 // Hot reload on R key
                 Event::KeyDown { keycode: Some(Keycode::R), .. } => {
                     // Build all libraries in parallel with single cargo invocation
@@ -352,6 +372,17 @@ fn main() -> Result<(), String> {
                         eprintln!("Failed to get render symbol: {}", e);
                     }
                 }
+            }
+
+            // Render code editor
+            if let Ok(mut ce_guard) = code_editor.lock() {
+                let ce_obj = &mut **ce_guard;
+                let render_symbol = format!("CodeEditor__render______obj_mut_dyn_Any____buffer__mut_ref_slice_u8____buffer_width__i64____buffer_height__i64____pitch__i64____to__unit__{}", runtime::RUSTC_COMMIT);
+                type RenderFn = extern "Rust" fn(&mut dyn Any, &mut [u8], i64, i64, i64);
+                let _ = runtime.library_registry().with_symbol::<RenderFn, _, _>("libCodeEditor", &render_symbol, |render_fn| {
+                    let any_obj = ce_obj.as_any_mut();
+                    (**render_fn)(any_obj, buffer, 800, 600, pitch as i64);
+                });
             }
 
         })?;
