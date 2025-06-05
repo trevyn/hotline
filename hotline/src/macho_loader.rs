@@ -218,13 +218,14 @@ pub struct MachoLoader {
     total_size: usize,
     file_data: Vec<u8>,
     segments: Vec<SegmentInfo>,
+    lazy_ptr_sections: Vec<LazyPointerSection>,
     symbols: HashMap<String, u64>,
     imports: Vec<String>,
     slide: i64,  // difference between where we loaded vs where linked
     dysymtab: Option<DysymtabInfo>,
     indirect_symbols: Option<Vec<u32>>,
-    symtab_symbols: Option<Vec<Nlist64>>,
-    symtab_strings: Option<Vec<u8>>,
+    symtab_symbols: Option<(usize, usize)>,
+    symtab_strings: Option<(usize, usize)>,
     tlv_manager: TLVManager,
     lib_path: Option<String>,
 }
@@ -237,6 +238,12 @@ unsafe impl Sync for MachoLoader {}
 struct SegmentInfo {
     _name: String,
     vmaddr: u64,
+}
+
+struct LazyPointerSection {
+    vmaddr: u64,
+    size: u64,
+    indirect_offset: usize,
 }
 
 struct DysymtabInfo {
@@ -252,6 +259,7 @@ impl MachoLoader {
             total_size: 0,
             file_data: Vec::new(),
             segments: Vec::new(),
+            lazy_ptr_sections: Vec::new(),
             symbols: HashMap::new(),
             imports: Vec::new(),
             slide: 0,
@@ -270,7 +278,10 @@ impl MachoLoader {
         
         // read the entire file
         let mut file = File::open(path)?;
-        file.read_to_end(&mut self.file_data)?;
+        let file_size = file.metadata()?.len() as usize;
+        self.file_data.clear();
+        self.file_data.resize(file_size, 0);
+        file.read_exact(&mut self.file_data)?;
         
         // parse mach-o header
         let header = unsafe { &*(self.file_data.as_ptr() as *const MachHeader64) };
@@ -397,35 +408,19 @@ impl MachoLoader {
         
         // Processing load commands
         
-        // first pass: collect imports
-        let mut cmd_ptr_tmp = cmd_ptr;
-        for _i in 0..header.ncmds {
-            let cmd = unsafe { &*(cmd_ptr_tmp as *const LoadCommand) };
-            
-            match cmd.cmd {
-                LC_LOAD_DYLIB | LC_LOAD_WEAK_DYLIB | LC_REEXPORT_DYLIB | LC_LAZY_LOAD_DYLIB => {
-                    unsafe { self.process_dylib(cmd_ptr_tmp as *const DylibCommand)? };
-                }
-                _ => {}
-            }
-            
-            cmd_ptr_tmp = unsafe { cmd_ptr_tmp.add(cmd.cmdsize as usize) };
-        }
-        
-        // second pass: process everything else
         for _i in 0..header.ncmds {
             let cmd = unsafe { &*(cmd_ptr as *const LoadCommand) };
-            
+
             match cmd.cmd {
+                LC_LOAD_DYLIB | LC_LOAD_WEAK_DYLIB | LC_REEXPORT_DYLIB | LC_LAZY_LOAD_DYLIB => {
+                    unsafe { self.process_dylib(cmd_ptr as *const DylibCommand)? };
+                }
                 LC_SEGMENT_64 => unsafe { self.process_segment(cmd_ptr as *const SegmentCommand64)? },
                 LC_SYMTAB => unsafe { self.process_symtab(cmd_ptr as *const SymtabCommand)? },
                 LC_DYSYMTAB => {
                     // Processing LC_DYSYMTAB
                     unsafe { self.process_dysymtab(cmd_ptr as *const DysymtabCommand)? };
                 },
-                LC_LOAD_DYLIB | LC_LOAD_WEAK_DYLIB | LC_REEXPORT_DYLIB | LC_LAZY_LOAD_DYLIB => {
-                    // already processed
-                }
                 LC_DYLD_CHAINED_FIXUPS => {
                     // Found LC_DYLD_CHAINED_FIXUPS
                     unsafe { self.process_chained_fixups(cmd_ptr as *const LinkeditDataCommand)? };
@@ -495,9 +490,12 @@ impl MachoLoader {
             if section_type == S_LAZY_SYMBOL_POINTERS {
                 let _ptr_count = section.size / 8; // 64-bit pointers
                 let _indirect_offset = section.reserved1 as usize; // offset into indirect symbol table
-                // Found __la_symbol_ptr section
-                
-                // we'll process these properly after indirect symbols are loaded
+
+                self.lazy_ptr_sections.push(LazyPointerSection {
+                    vmaddr: section.addr,
+                    size: section.size,
+                    indirect_offset: section.reserved1 as usize,
+                });
             }
             
             // check for module initializers
@@ -612,15 +610,13 @@ impl MachoLoader {
                 symtab.nsyms as usize,
             )
         };
-        
+
         let strings = unsafe { self.file_data.as_ptr().add(symtab.stroff as usize) };
-        
-        // store symbol table for indirect symbol resolution
-        self.symtab_symbols = Some(symbols.to_vec());
+
+        // store offsets for indirect symbol resolution
+        self.symtab_symbols = Some((symtab.symoff as usize, symtab.nsyms as usize));
         let string_size = self.file_data.len() - symtab.stroff as usize;
-        self.symtab_strings = Some(unsafe {
-            slice::from_raw_parts(strings, string_size).to_vec()
-        });
+        self.symtab_strings = Some((symtab.stroff as usize, string_size));
         
         let mut _exported_count = 0;
         for symbol in symbols {
@@ -680,97 +676,58 @@ impl MachoLoader {
     }
     
     unsafe fn bind_lazy_pointers(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let Some(indirect_symbols) = &self.indirect_symbols else {
-            return Ok(());
-        };
-        let Some(symtab_symbols) = &self.symtab_symbols else {
-            return Ok(());
-        };
-        let Some(symtab_strings) = &self.symtab_strings else {
-            return Ok(());
-        };
-        
+        let Some(indirect_symbols) = &self.indirect_symbols else { return Ok(()); };
+        let Some(symtab_symbols) = &self.symtab_symbols else { return Ok(()); };
+        let Some(symtab_strings) = &self.symtab_strings else { return Ok(()); };
+
         let base = self.base_addr.ok_or("base_addr not initialized")?;
-        
-        // iterate through segments to find lazy pointer sections again
-        let header_ptr = base.as_ptr() as *const MachHeader64;
-        let header = unsafe { &*header_ptr };
-        let mut cmd_ptr = unsafe { (header_ptr as *const u8).add(std::mem::size_of::<MachHeader64>()) };
-        
-        for _ in 0..header.ncmds {
-            let cmd = unsafe { &*(cmd_ptr as *const LoadCommand) };
-            
-            if cmd.cmd == LC_SEGMENT_64 {
-                let segment = unsafe { &*(cmd_ptr as *const SegmentCommand64) };
-                
-                // check sections in this segment
-                let mut section_ptr = unsafe { (segment as *const SegmentCommand64).add(1) as *const Section64 };
-                for _ in 0..segment.nsects {
-                    let section = unsafe { &*section_ptr };
-                    let section_type = section.flags & 0xff;
-                    
-                    if section_type == S_LAZY_SYMBOL_POINTERS {
-                        let ptr_count = section.size / 8;
-                        let indirect_offset = section.reserved1 as usize;
-                        
-                        // Binding lazy pointers for section
-                        
-                        // get pointer to lazy symbol pointers in memory
-                        let offset = (section.addr - self.base_vmaddr) as usize;
-                        let la_ptr_base = unsafe { base.as_ptr().add(offset) as *mut u64 };
-                        
-                        // bind each lazy pointer
-                        for i in 0..ptr_count {
-                            let indirect_index = indirect_offset + i as usize;
-                            if indirect_index >= indirect_symbols.len() {
-                                continue;
-                            }
-                            
-                            let symbol_index = indirect_symbols[indirect_index] as usize;
-                            
-                            // special values
-                            const INDIRECT_SYMBOL_LOCAL: u32 = 0x80000000;
-                            const INDIRECT_SYMBOL_ABS: u32 = 0x40000000;
-                            
-                            if symbol_index == INDIRECT_SYMBOL_LOCAL as usize || 
-                               symbol_index == INDIRECT_SYMBOL_ABS as usize ||
-                               symbol_index == (INDIRECT_SYMBOL_LOCAL | INDIRECT_SYMBOL_ABS) as usize {
-                                continue;
-                            }
-                            
-                            if symbol_index < symtab_symbols.len() {
-                                let symbol = &symtab_symbols[symbol_index];
-                                
-                                // get symbol name
-                                if symbol.n_strx > 0 && (symbol.n_strx as usize) < symtab_strings.len() {
-                                    let name_ptr = unsafe { symtab_strings.as_ptr().add(symbol.n_strx as usize) };
-                                    let name = unsafe { std::ffi::CStr::from_ptr(name_ptr as *const i8) }.to_string_lossy();
-                                    
-                                    // resolve the symbol
-                                    match self.resolve_external_symbol(&name, "/usr/lib/libSystem.B.dylib") {
-                                        Ok(addr) => {
-                                            unsafe {
-                                                let ptr = la_ptr_base.add(i as usize);
-                                                *ptr = addr as u64;
-                                            }
-                                            // Bound lazy pointer
-                                        }
-                                        Err(_e) => {
-                                            // Failed to bind lazy pointer
-                                        }
-                                    }
-                                }
-                            }
+
+        let (sym_off, sym_count) = *symtab_symbols;
+        let (str_off, str_size) = *symtab_strings;
+
+        let symtab_symbols = unsafe {
+            slice::from_raw_parts(
+                self.file_data.as_ptr().add(sym_off) as *const Nlist64,
+                sym_count,
+            )
+        };
+        let strings_ptr = unsafe { self.file_data.as_ptr().add(str_off) };
+
+        for section in &self.lazy_ptr_sections {
+            let ptr_count = section.size / 8;
+            let indirect_offset = section.indirect_offset;
+            let offset = (section.vmaddr - self.base_vmaddr) as usize;
+            let la_ptr_base = unsafe { base.as_ptr().add(offset) as *mut u64 };
+
+            for i in 0..ptr_count {
+                let indirect_index = indirect_offset + i as usize;
+                if indirect_index >= indirect_symbols.len() {
+                    continue;
+                }
+
+                let symbol_index = indirect_symbols[indirect_index] as usize;
+                const INDIRECT_SYMBOL_LOCAL: u32 = 0x80000000;
+                const INDIRECT_SYMBOL_ABS: u32 = 0x40000000;
+                if symbol_index == INDIRECT_SYMBOL_LOCAL as usize
+                    || symbol_index == INDIRECT_SYMBOL_ABS as usize
+                    || symbol_index == (INDIRECT_SYMBOL_LOCAL | INDIRECT_SYMBOL_ABS) as usize
+                {
+                    continue;
+                }
+
+                if symbol_index < symtab_symbols.len() {
+                    let symbol = &symtab_symbols[symbol_index];
+                    if symbol.n_strx > 0 && (symbol.n_strx as usize) < str_size {
+                        let name_ptr = unsafe { strings_ptr.add(symbol.n_strx as usize) };
+                        let name = unsafe { std::ffi::CStr::from_ptr(name_ptr as *const i8) }.to_string_lossy();
+                        if let Ok(addr) = self.resolve_external_symbol(&name, "/usr/lib/libSystem.B.dylib") {
+                            unsafe { *la_ptr_base.add(i as usize) = addr as u64 };
                         }
                     }
-                    
-                    section_ptr = unsafe { section_ptr.add(1) };
                 }
             }
-            
-            cmd_ptr = unsafe { cmd_ptr.add(cmd.cmdsize as usize) };
         }
-        
+
         Ok(())
     }
     
