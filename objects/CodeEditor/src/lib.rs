@@ -13,6 +13,11 @@ hotline::object!({
 
     impl CodeEditor {
         pub fn initialize(&mut self) {
+            // Ensure the thread-local registry is set before creating other objects
+            if let Some(registry) = self.get_registry() {
+                ::hotline::set_library_registry(registry);
+            }
+
             if self.highlight.is_none() {
                 self.highlight = Some(HighlightLens::new());
             }
@@ -34,8 +39,7 @@ hotline::object!({
         }
 
         pub fn open(&mut self, path: &str) -> Result<(), String> {
-            self.text = std::fs::read_to_string(path)
-                .map_err(|e| format!("Failed to read {}: {}", path, e))?;
+            self.text = std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
             self.file_path = Some(path.to_string());
             self.initialize();
             Ok(())
@@ -43,8 +47,7 @@ hotline::object!({
 
         pub fn save(&mut self) -> Result<(), String> {
             if let Some(path) = &self.file_path {
-                std::fs::write(path, &self.text)
-                    .map_err(|e| format!("Failed to write {}: {}", path, e))?;
+                std::fs::write(path, &self.text).map_err(|e| format!("Failed to write {}: {}", path, e))?;
                 Ok(())
             } else {
                 Err("no file loaded".into())
@@ -134,4 +137,3 @@ hotline::object!({
         }
     }
 });
-
