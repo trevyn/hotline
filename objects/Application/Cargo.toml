@@ -8,6 +8,5 @@ crate-type = ["dylib"]
 
 [dependencies]
 hotline = {path = "../../hotline"}
-sdl2 = {version = "0.37.0", features = ["ttf", "image"]}
-xxhash-rust = { version = "0.8", features = ["xxh3"] }
+sdl2 = "0.37"
 png = "0.17"
