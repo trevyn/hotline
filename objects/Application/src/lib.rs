@@ -3,7 +3,6 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
 use sdl2::pixels::{Color, PixelFormatEnum};
-use std::time::Duration;
 
 #[cfg(target_os = "linux")]
 use png::{BitDepth, ColorType, Encoder};
@@ -18,6 +17,8 @@ hotline::object!({
         window_manager: Option<WindowManager>,
         code_editor: Option<CodeEditor>,
         gpu_renderer: Option<GPURenderer>,
+        gpu_atlases: Vec<AtlasData>,
+        gpu_commands: Vec<RenderCommand>,
     }
 
     impl Application {
@@ -74,7 +75,7 @@ hotline::object!({
                 .build()
                 .map_err(|e| e.to_string())?;
 
-            let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+            let mut canvas = window.into_canvas().present_vsync().build().map_err(|e| e.to_string())?;
             let texture_creator = canvas.texture_creator();
             let mut event_pump = sdl_context.event_pump()?;
             video_subsystem.text_input().start();
@@ -163,14 +164,24 @@ hotline::object!({
                     wm.render_gpu(gpu);
                 }
 
-                if let Some(ref mut gpu) = self.gpu_renderer {
-                    // Execute GPU rendering commands
-                    Self::execute_gpu_commands_static(&mut canvas, gpu)?;
+                // Take GPU renderer out temporarily to avoid borrow issues
+                if let Some(mut gpu) = self.gpu_renderer.take() {
+                    // Clear previous frame data
+                    self.gpu_atlases.clear();
+                    self.gpu_commands.clear();
+
+                    // GPU sends render messages to us
+                    gpu.render_via(self)?;
+
+                    // Put GPU renderer back
+                    self.gpu_renderer = Some(gpu);
+
+                    // Execute the received commands
+                    self.execute_gpu_render(&mut canvas)?;
                 }
 
                 canvas.copy(&texture, None, None)?;
                 canvas.present();
-                ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
             }
 
             Ok(())
@@ -196,75 +207,6 @@ hotline::object!({
                     editor.render(buffer, 800, 600, pitch as i64);
                 }
             })?;
-            Ok(())
-        }
-
-        fn execute_gpu_commands_static(
-            canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
-            gpu: &mut GPURenderer,
-        ) -> Result<(), String> {
-            use sdl2::pixels::PixelFormatEnum;
-            use sdl2::rect::Rect;
-            use std::collections::HashMap;
-
-            let texture_creator = canvas.texture_creator();
-            let mut textures = HashMap::new();
-
-            // Create textures for all atlases
-            for atlas in gpu.atlases() {
-                let mut texture = match atlas.format {
-                    AtlasFormat::GrayscaleAlpha => texture_creator
-                        .create_texture_static(PixelFormatEnum::ABGR8888, atlas.width, atlas.height)
-                        .map_err(|e| e.to_string())?,
-                    AtlasFormat::RGBA => texture_creator
-                        .create_texture_static(PixelFormatEnum::RGBA8888, atlas.width, atlas.height)
-                        .map_err(|e| e.to_string())?,
-                };
-
-                // Convert atlas data to texture format
-                let rgba_data = match atlas.format {
-                    AtlasFormat::GrayscaleAlpha => {
-                        let mut rgba = vec![0u8; (atlas.width * atlas.height * 4) as usize];
-                        for i in 0..(atlas.width * atlas.height) as usize {
-                            let _gray = atlas.data[i * 2];
-                            let alpha = atlas.data[i * 2 + 1];
-                            rgba[i * 4] = alpha; // A
-                            rgba[i * 4 + 1] = 255; // B
-                            rgba[i * 4 + 2] = 255; // G  
-                            rgba[i * 4 + 3] = 255; // R
-                        }
-                        rgba
-                    }
-                    AtlasFormat::RGBA => atlas.data.clone(),
-                };
-
-                texture.update(None, &rgba_data, (atlas.width * 4) as usize).map_err(|e| e.to_string())?;
-                textures.insert(atlas.id, texture);
-            }
-
-            // Execute render commands
-            for command in gpu.commands() {
-                match command {
-                    RenderCommand::Atlas { texture_id, src_x, src_y, src_width, src_height, dest_x, dest_y, color } => {
-                        if let Some(texture) = textures.get(&texture_id) {
-                            let src_rect = Rect::new(src_x as i32, src_y as i32, src_width, src_height);
-
-                            let dst_rect = Rect::new(dest_x as i32, dest_y as i32, src_width, src_height);
-
-                            // Apply color modulation
-                            canvas.set_draw_color(sdl2::pixels::Color::RGBA(
-                                color.2, // R
-                                color.1, // G
-                                color.0, // B
-                                color.3, // A
-                            ));
-
-                            canvas.copy(texture, src_rect, dst_rect)?;
-                        }
-                    }
-                }
-            }
-
             Ok(())
         }
 
@@ -315,6 +257,80 @@ hotline::object!({
             println!("[linux] saving test_output.png");
             save_png("test_output.png", 800, 600, &png_data)?;
             println!("[linux] image saved");
+            Ok(())
+        }
+
+        pub fn gpu_receive_atlas(&mut self, atlas: AtlasData) -> Result<(), String> {
+            self.gpu_atlases.push(atlas);
+            Ok(())
+        }
+
+        pub fn gpu_receive_command(&mut self, command: RenderCommand) -> Result<(), String> {
+            self.gpu_commands.push(command);
+            Ok(())
+        }
+
+        fn execute_gpu_render(&mut self, canvas: &mut sdl2::render::Canvas<sdl2::video::Window>) -> Result<(), String> {
+            use sdl2::rect::Rect;
+            use std::collections::HashMap;
+
+            let texture_creator = canvas.texture_creator();
+            let mut textures = HashMap::new();
+
+            // Create textures from received atlases
+            for atlas in &self.gpu_atlases {
+                let mut texture = match atlas.format {
+                    AtlasFormat::GrayscaleAlpha => texture_creator
+                        .create_texture_static(PixelFormatEnum::ABGR8888, atlas.width, atlas.height)
+                        .map_err(|e| e.to_string())?,
+                    AtlasFormat::RGBA => texture_creator
+                        .create_texture_static(PixelFormatEnum::RGBA8888, atlas.width, atlas.height)
+                        .map_err(|e| e.to_string())?,
+                };
+
+                // Convert atlas data to texture format
+                let rgba_data = match atlas.format {
+                    AtlasFormat::GrayscaleAlpha => {
+                        let mut rgba = vec![0u8; (atlas.width * atlas.height * 4) as usize];
+                        for i in 0..(atlas.width * atlas.height) as usize {
+                            let _gray = atlas.data[i * 2];
+                            let alpha = atlas.data[i * 2 + 1];
+                            rgba[i * 4] = alpha; // A
+                            rgba[i * 4 + 1] = 255; // B
+                            rgba[i * 4 + 2] = 255; // G
+                            rgba[i * 4 + 3] = 255; // R
+                        }
+                        rgba
+                    }
+                    AtlasFormat::RGBA => atlas.data.clone(),
+                };
+
+                texture.update(None, &rgba_data, (atlas.width * 4) as usize).map_err(|e| e.to_string())?;
+                textures.insert(atlas.id, texture);
+            }
+
+            // Execute received render commands
+            for command in &self.gpu_commands {
+                match command {
+                    RenderCommand::Atlas { texture_id, src_x, src_y, src_width, src_height, dest_x, dest_y, color } => {
+                        if let Some(texture) = textures.get(texture_id) {
+                            let src_rect = Rect::new(*src_x as i32, *src_y as i32, *src_width, *src_height);
+                            let dst_rect = Rect::new(*dest_x as i32, *dest_y as i32, *src_width, *src_height);
+
+                            // Apply color modulation
+                            canvas.set_draw_color(sdl2::pixels::Color::RGBA(
+                                color.2, // R
+                                color.1, // G
+                                color.0, // B
+                                color.3, // A
+                            ));
+
+                            canvas.copy(texture, src_rect, dst_rect)?;
+                        }
+                    }
+                }
+            }
+
             Ok(())
         }
     }

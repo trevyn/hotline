@@ -169,5 +169,38 @@ fn generate_typed_wrapper(
         impl ::std::ops::DerefMut for #type_ident {
             fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
         }
+
+        impl ::hotline::HotlineObject for #type_ident {
+            fn type_name(&self) -> &'static str {
+                // Get the actual type name from the wrapped object
+                if let Ok(guard) = self.0.lock() {
+                    guard.type_name()
+                } else {
+                    #type_name
+                }
+            }
+
+            fn as_any(&self) -> &dyn ::std::any::Any {
+                self as &dyn ::std::any::Any
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any {
+                self as &mut dyn ::std::any::Any
+            }
+
+            fn set_registry(&mut self, registry: &'static ::hotline::LibraryRegistry) {
+                if let Ok(mut guard) = self.0.lock() {
+                    guard.set_registry(registry);
+                }
+            }
+
+            fn get_registry(&self) -> Option<&'static ::hotline::LibraryRegistry> {
+                if let Ok(guard) = self.0.lock() {
+                    guard.get_registry()
+                } else {
+                    None
+                }
+            }
+        }
     }
 }

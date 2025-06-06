@@ -175,12 +175,11 @@ pub fn object(input: TokenStream) -> TokenStream {
         objects_to_check = new_objects;
     }
 
-    // Generate wrappers for all objects at once
-    let additional_wrappers = generate_typed_wrappers(&all_objects, &rustc_commit).0;
+    // Generate wrappers only for directly referenced objects in this object
+    let additional_wrappers = generate_typed_wrappers(&referenced_objects, &rustc_commit).0;
 
-    // Merge custom types found in the current object with those found transitively
-    let local_custom_types = find_referenced_custom_types(&struct_item, &impl_blocks);
-    all_custom_types.extend(local_custom_types);
+    // Get custom types referenced in THIS object only (not transitively discovered)
+    let mut local_custom_types = find_referenced_custom_types(&struct_item, &impl_blocks);
 
     // Get names of types defined in this object to exclude them from proxies
     let local_type_names: HashSet<String> = type_defs
@@ -192,17 +191,59 @@ pub fn object(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    // Collect custom types from imported objects that we need proxies for
+    let mut custom_types_from_objects = HashSet::new();
+    for obj_name in &referenced_objects {
+        let lib_path = crate::discovery::find_object_lib_file(obj_name);
+        if lib_path.exists() {
+            if let Ok(content) = fs::read_to_string(&lib_path) {
+                if let Ok(file) = syn::parse_file(&content) {
+                    // Look for custom types defined in object! macro
+                    for item in &file.items {
+                        if let syn::Item::Macro(item_macro) = item {
+                            if item_macro.mac.path.is_ident("object")
+                                || (item_macro.mac.path.segments.len() == 2
+                                    && item_macro.mac.path.segments[0].ident == "hotline"
+                                    && item_macro.mac.path.segments[1].ident == "object")
+                            {
+                                if let Ok(parsed) =
+                                    syn::parse2::<crate::parser::ObjectInput>(item_macro.mac.tokens.clone())
+                                {
+                                    // Skip the main object type itself
+                                    let _main_type = parsed.struct_item.ident.to_string();
+
+                                    // Collect other types defined in the object
+                                    for type_def in &parsed.type_defs {
+                                        match type_def {
+                                            syn::Item::Struct(s) => {
+                                                custom_types_from_objects.insert(s.ident.to_string());
+                                            }
+                                            syn::Item::Enum(e) => {
+                                                custom_types_from_objects.insert(e.ident.to_string());
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Add custom types from imported objects to our local custom types
+    local_custom_types.extend(custom_types_from_objects);
+
     // Only generate proxies for:
-    // 1. Custom types (not object types)
+    // 1. Custom types used in THIS object (including from imported objects)
     // 2. Not defined locally in this object
-    let external_custom_types: HashSet<String> = all_custom_types
+    // 3. Not the imported object types themselves (they have their own wrappers)
+    let external_custom_types: HashSet<String> = local_custom_types
         .into_iter()
         .filter(|t| !local_type_names.contains(t))
-        .filter(|t| {
-            // Check if this is an object type
-            let lib_path = crate::discovery::find_object_lib_file(t);
-            !lib_path.exists() // Only include if it's NOT an object type
-        })
+        .filter(|t| !referenced_objects.contains(t)) // Not an imported object itself
         .collect();
 
     let custom_type_proxies = generate_custom_type_proxies_for_types(&external_custom_types);

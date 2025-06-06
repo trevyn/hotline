@@ -1,3 +1,4 @@
+use proc_macro_error2::abort;
 use quote::{format_ident, quote};
 use syn::{Fields, FnArg, Ident, ImplItem, ItemImpl, Pat, ReturnType, Type};
 
@@ -8,7 +9,9 @@ use crate::codegen::{
 use crate::constants::{SET_PREFIX, WITH_PREFIX};
 use crate::discovery::ReceiverType;
 use crate::utils::symbols::SymbolName;
-use crate::utils::types::{extract_option_type, is_object_type, resolve_self_type, type_to_string};
+use crate::utils::types::{
+    contains_reference, extract_like_type, extract_option_type, is_object_type, resolve_self_type, type_to_string,
+};
 
 pub fn generate_method_wrappers(
     struct_name: &Ident,
@@ -91,7 +94,24 @@ fn generate_method_wrapper(
 
     let return_type = match &method.sig.output {
         ReturnType::Default => None,
-        ReturnType::Type(_, ty) => Some(resolve_self_type((**ty).clone(), &struct_name.to_string())),
+        ReturnType::Type(_, ty) => {
+            let resolved_type = resolve_self_type((**ty).clone(), &struct_name.to_string());
+
+            // Check if the return type contains any references
+            if contains_reference(&resolved_type) {
+                abort!(
+                    method.sig.ident.span(),
+                    "Methods returning references are not supported in hotline objects";
+                    note = "Due to FFI limitations, methods cannot return references (including references inside generic types like Option<&T> or Vec<&T>). Consider alternatives:\n\
+                    - Return owned/cloned values\n\
+                    - Send messages back to the caller: pass another object and call its methods with the data\n\
+                    - Use a visitor pattern: `pub fn visit_data(&self, visitor: &mut DataVisitor)`\n\
+                    - Use intent tokens as per Alan Kay's vision: objects send messages, not data"
+                );
+            }
+
+            Some(resolved_type)
+        }
     };
 
     let symbol = SymbolName::new(&struct_name.to_string(), &method_name.to_string(), rustc_commit)
@@ -242,6 +262,74 @@ fn generate_builder_ffi_method(
 fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_commit: &str) -> proc_macro2::TokenStream {
     let MethodGenConfig { method_ident, param_idents, param_types, param_names, return_type, .. } = config;
 
+    // Check if any parameters are Like<T> where T is an object type
+    let mut generic_params = vec![];
+    let mut adjusted_param_types = vec![];
+    let mut ffi_param_types = vec![];
+
+    for (i, param_type) in param_types.iter().enumerate() {
+        let mut handled = false;
+
+        if let Type::Reference(type_ref) = param_type {
+            // Check for &[mut] Like<Object>
+            if let Some(inner) = extract_like_type(&type_ref.elem) {
+                if let Type::Path(tp) = inner {
+                    if let Some(ident) = tp.path.get_ident() {
+                        if is_object_type(&ident.to_string()) {
+                            // This is &mut Like<SomeObject>
+                            let generic_name = format_ident!("T{}", i);
+                            generic_params.push(quote! { #generic_name: ::hotline::HotlineObject });
+
+                            // Use generic in method signature
+                            if type_ref.mutability.is_some() {
+                                adjusted_param_types.push(quote! { &mut #generic_name });
+                            } else {
+                                adjusted_param_types.push(quote! { &#generic_name });
+                            }
+
+                            // Use &mut dyn Any for FFI
+                            ffi_param_types.push(quote! { &mut dyn std::any::Any });
+                            handled = true;
+                        }
+                    }
+                }
+            }
+
+            // Check for direct &[mut] Object references
+            if !handled {
+                if let Type::Path(tp) = &*type_ref.elem {
+                    if let Some(ident) = tp.path.get_ident() {
+                        if is_object_type(&ident.to_string()) {
+                            // This is &[mut] SomeObject
+                            let generic_name = format_ident!("T{}", i);
+                            generic_params.push(quote! { #generic_name: ::hotline::HotlineObject });
+
+                            // Use generic in method signature
+                            if type_ref.mutability.is_some() {
+                                adjusted_param_types.push(quote! { &mut #generic_name });
+                            } else {
+                                adjusted_param_types.push(quote! { &#generic_name });
+                            }
+
+                            // Use &mut dyn Any for FFI
+                            ffi_param_types.push(quote! { &mut dyn std::any::Any });
+                            handled = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !handled {
+            // Not an object parameter, keep as-is
+            adjusted_param_types.push(quote! { #param_type });
+            ffi_param_types.push(quote! { #param_type });
+        }
+    }
+
+    // Build parameter list for method signature
+    let method_params = param_idents.iter().zip(&adjusted_param_types).map(|(name, ty)| quote! { #name: #ty });
+
     let param_specs: Vec<_> =
         param_names.iter().zip(param_types.iter()).map(|(name, ty)| (name.clone(), type_to_string(ty))).collect();
 
@@ -250,8 +338,37 @@ fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_comm
         .with_return_type(type_to_string(return_type));
 
     let symbol_name = symbol.build_method();
+
+    // Build FFI call arguments
+    let ffi_args = param_idents.iter().zip(param_types.iter()).map(|(name, param_type)| {
+        if let Type::Reference(type_ref) = param_type {
+            // Check for Like<Object>
+            if let Some(inner) = extract_like_type(&type_ref.elem) {
+                if let Type::Path(tp) = inner {
+                    if let Some(ident) = tp.path.get_ident() {
+                        if is_object_type(&ident.to_string()) {
+                            // Convert to dyn Any for FFI
+                            return quote! { #name.as_any_mut() };
+                        }
+                    }
+                }
+            }
+
+            // Check for direct object reference
+            if let Type::Path(tp) = &*type_ref.elem {
+                if let Some(ident) = tp.path.get_ident() {
+                    if is_object_type(&ident.to_string()) {
+                        // Convert to dyn Any for FFI
+                        return quote! { #name.as_any_mut() };
+                    }
+                }
+            }
+        }
+        quote! { #name }
+    });
+
     let fn_type = quote! {
-        unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*) -> #return_type
+        unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #ffi_param_types)*) -> #return_type
     };
 
     let method_body = quote_method_call_with_registry(
@@ -259,12 +376,19 @@ fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_comm
         &method_ident.to_string(),
         &symbol_name,
         fn_type,
-        quote! { #(, #param_idents)* },
+        quote! { #(, #ffi_args)* },
     );
+
+    // Build generic parameters if any
+    let generics = if generic_params.is_empty() {
+        quote! {}
+    } else {
+        quote! { <#(#generic_params),*> }
+    };
 
     if config.returns_self {
         quote! {
-            pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> Self {
+            pub fn #method_ident #generics(&mut self #(, #method_params)*) -> Self {
                 let handle_clone = self.0.clone();
                 #method_body;
                 Self::from_handle(handle_clone)
@@ -272,7 +396,7 @@ fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_comm
         }
     } else {
         quote! {
-            pub fn #method_ident(&mut self #(, #param_idents: #param_types)*) -> #return_type {
+            pub fn #method_ident #generics(&mut self #(, #method_params)*) -> #return_type {
                 #method_body
             }
         }

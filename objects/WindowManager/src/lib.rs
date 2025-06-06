@@ -192,9 +192,5 @@ hotline::object!({
                 text_renderer.generate_commands(gpu_renderer);
             }
         }
-
-        pub fn text_renderer(&mut self) -> Option<&mut TextRenderer> {
-            self.text_renderer.as_mut()
-        }
     }
 });
