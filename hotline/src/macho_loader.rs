@@ -1424,9 +1424,7 @@ impl MachoLoader {
 
         // 4. Finally try RTLD_DEFAULT as last resort (rarely works - 0.7% success rate)
         let addr = unsafe {
-            // RTLD_DEFAULT = -2 on macOS
-            let rtld_default = -2isize as *mut libc::c_void;
-            libc::dlsym(rtld_default, symbol_cstr.as_ptr())
+            libc::dlsym(RTLD_DEFAULT, symbol_cstr.as_ptr())
         };
 
         if !addr.is_null() {
