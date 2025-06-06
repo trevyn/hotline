@@ -4,7 +4,7 @@ name = "Application"
 version = "0.1.0"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["dylib"]
 
 [dependencies]
 hotline = {path = "../../hotline"}
