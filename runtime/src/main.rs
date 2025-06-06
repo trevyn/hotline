@@ -105,7 +105,7 @@ fn main() -> Result<(), String> {
                         let lib_path = format!("target/release/{}.dll", lib_name);
                         
                         if Path::new(&lib_path).exists() {
-                            eprintln!("Loading library: {} from {}", lib_name, lib_path);
+                            // Loading library
                             runtime.hot_reload(&lib_path, lib_name)
                                 .map_err(|e| format!("Failed to load {}: {}", lib_name, e))?;
                         } else {

@@ -710,20 +710,20 @@ impl MachoLoader {
     }
     
     unsafe fn bind_lazy_pointers(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        eprintln!("[bind_lazy_pointers] Processing lazy pointers for library: {:?}", self.lib_path);
+        // Processing lazy pointers for library
         
         let mut _found_lazy_sections = false;
         
         let Some(indirect_symbols) = &self.indirect_symbols else {
-            eprintln!("[bind_lazy_pointers] No indirect symbols found");
+            // No indirect symbols found
             return Ok(());
         };
         let Some(symtab_symbols) = &self.symtab_symbols else {
-            eprintln!("[bind_lazy_pointers] No symtab symbols found");
+            // No symtab symbols found
             return Ok(());
         };
         let Some(symtab_strings) = &self.symtab_strings else {
-            eprintln!("[bind_lazy_pointers] No symtab strings found");
+            // No symtab strings found
             return Ok(());
         };
         
@@ -750,7 +750,7 @@ impl MachoLoader {
                         let ptr_count = section.size / 8;
                         let indirect_offset = section.reserved1 as usize;
                         
-                        eprintln!("[bind_lazy_pointers] Found lazy pointer section with {} pointers at offset {}", ptr_count, indirect_offset);
+                        // Found lazy pointer section with ptr_count pointers at indirect_offset
                         _found_lazy_sections = true;
                         
                         // Binding lazy pointers for section
@@ -802,8 +802,9 @@ impl MachoLoader {
                                             }
                                             // Bound lazy pointer
                                         }
-                                        Err(e) => {
-                                            eprintln!("[bind_lazy_pointers] failed to bind {}: {}", name, e);
+                                        Err(_e) => {
+                                            // Failed to bind symbol - this is expected for some symbols
+                                            // eprintln!("[bind_lazy_pointers] failed to bind {}: {}", name, e);
                                             // Failed to bind lazy pointer
                                         }
                                     }
@@ -1140,9 +1141,13 @@ impl MachoLoader {
                         let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
                         
-                        // Binding symbol
-                        eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
-                            symbol_name, ptr as usize, symbol_addr);
+                        // Binding symbol - skip logging for expected symbols
+                        if symbol_name != "__tlv_bootstrap" && 
+                           symbol_name != "dyld_stub_binder" && 
+                           symbol_name != "_CCRandomGenerateBytes" {
+                            eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
+                                symbol_name, ptr as usize, symbol_addr);
+                        }
                         
                         unsafe { *ptr = symbol_addr as u64 };
                         
@@ -1167,8 +1172,10 @@ impl MachoLoader {
                         let base = self.base_addr.ok_or("base_addr not set")?;
                         let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
-                        eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
-                            symbol_name, ptr as usize, symbol_addr);
+                        if symbol_name != "__tlv_bootstrap" {
+                            eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
+                                symbol_name, ptr as usize, symbol_addr);
+                        }
                         unsafe { *ptr = symbol_addr as u64 };
                         
                         // Bound symbol
@@ -1194,8 +1201,10 @@ impl MachoLoader {
                         let base = self.base_addr.ok_or("base_addr not set")?;
                         let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
-                        eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
-                            symbol_name, ptr as usize, symbol_addr);
+                        if symbol_name != "__tlv_bootstrap" {
+                            eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
+                                symbol_name, ptr as usize, symbol_addr);
+                        }
                         unsafe { *ptr = symbol_addr as u64 };
                         
                         // Bound symbol
@@ -1225,8 +1234,12 @@ impl MachoLoader {
                             let base = self.base_addr.ok_or("base_addr not set")?;
                             let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                             let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
-                            eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
-                                symbol_name, ptr as usize, symbol_addr);
+                            if symbol_name != "__tlv_bootstrap" && 
+                               symbol_name != "dyld_stub_binder" && 
+                               symbol_name != "_CCRandomGenerateBytes" {
+                                eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
+                                    symbol_name, ptr as usize, symbol_addr);
+                            }
                             unsafe { *ptr = symbol_addr as u64 };
                             
                             // Bound symbol
@@ -1299,7 +1312,7 @@ impl MachoLoader {
         if symbol == "__tlv_bootstrap" {
             // We handle TLVs ourselves, so we don't need to resolve this
             // Return address of our crash handler
-            eprintln!("[macho_loader] WARNING: returning crash handler for __tlv_bootstrap");
+            // This is expected behavior, no need to warn
             return Ok(Self::crash_handler_tlv_bootstrap as usize);
         }
         
@@ -1308,7 +1321,7 @@ impl MachoLoader {
             // dyld_stub_binder is needed for lazy binding, but since we process
             // lazy binds eagerly, we can skip it
             // Return address of our crash handler
-            eprintln!("[macho_loader] WARNING: returning crash handler for dyld_stub_binder");
+            // This is expected behavior, no need to warn
             return Ok(Self::crash_handler_dyld_stub_binder as usize);
         }
         
@@ -1363,6 +1376,7 @@ impl MachoLoader {
     fn resolve_symbol_any_library(&self, symbol: &str) -> Result<usize, Box<dyn std::error::Error>> {
         // Special case for __tlv_bootstrap
         if symbol == "__tlv_bootstrap" {
+            // Expected behavior - we handle TLVs ourselves
             return Ok(Self::crash_handler_tlv_bootstrap as usize);
         }
         
