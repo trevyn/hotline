@@ -1423,9 +1423,7 @@ impl MachoLoader {
         }
 
         // 4. Finally try RTLD_DEFAULT as last resort (rarely works - 0.7% success rate)
-        let addr = unsafe {
-            libc::dlsym(RTLD_DEFAULT, symbol_cstr.as_ptr())
-        };
+        let addr = unsafe { libc::dlsym(RTLD_DEFAULT, symbol_cstr.as_ptr()) };
 
         if !addr.is_null() {
             return Ok(addr as usize);
