@@ -23,13 +23,13 @@ pub struct LibraryRegistry {
 
 impl LibraryRegistry {
     pub fn new() -> Self {
-        Self { 
+        Self {
             libs: Arc::new(Mutex::new(HashMap::new())),
             use_custom_loader: false,
             old_libs: Arc::new(Mutex::new(Vec::new())),
         }
     }
-    
+
     #[cfg(target_os = "macos")]
     pub fn new_with_custom_loader() -> Self {
         Self {
@@ -38,32 +38,32 @@ impl LibraryRegistry {
             old_libs: Arc::new(Mutex::new(Vec::new())),
         }
     }
-    
+
     #[cfg(target_os = "macos")]
     fn load_dependencies(&self, dependencies: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         use std::collections::HashSet;
         use std::ffi::CString;
-        
+
         const RTLD_LAZY: libc::c_int = 0x1;
         const RTLD_GLOBAL: libc::c_int = 0x8;
-        
+
         if dependencies.is_empty() {
             return Ok(());
         }
-                
+
         // Track what we've already loaded
         static LOADED_DEPS: std::sync::OnceLock<Mutex<HashSet<String>>> = std::sync::OnceLock::new();
         let loaded = LOADED_DEPS.get_or_init(|| Mutex::new(HashSet::new()));
-        
+
         for dep in dependencies {
             // Skip system libraries and already loaded deps
             if dep.starts_with("/usr/lib/") || dep.starts_with("/System/") {
                 continue;
             }
-            
+
             // Extract library name from path
             let lib_name = dep.split('/').last().unwrap_or(dep);
-            
+
             // Check if already loaded
             {
                 let mut loaded_set = loaded.lock().unwrap();
@@ -72,10 +72,10 @@ impl LibraryRegistry {
                 }
                 loaded_set.insert(lib_name.to_string());
             }
-            
+
             // Try different paths for the dependency
             let mut paths = vec![];
-            
+
             // If it's an @rpath dependency, try common locations
             if dep.starts_with("@rpath/") {
                 let lib_name = dep.strip_prefix("@rpath/").unwrap();
@@ -89,7 +89,7 @@ impl LibraryRegistry {
                 // Absolute path
                 paths.push(dep.clone());
             }
-            
+
             // Also try without version suffix
             // e.g., libSDL2-2.0.0.dylib -> libSDL2.dylib
             if lib_name.contains('-') {
@@ -98,7 +98,7 @@ impl LibraryRegistry {
                     paths.push(format!("/usr/local/lib/{}.dylib", base_name));
                 }
             }
-            
+
             // Try to load from each path
             let mut loaded = false;
             for path in &paths {
@@ -112,15 +112,15 @@ impl LibraryRegistry {
                     break;
                 }
             }
-            
+
             if !loaded {
                 eprintln!("Warning: Failed to load dependency: {} (tried: {:?})", lib_name, paths);
             }
         }
-                
+
         Ok(())
     }
-    
+
     #[cfg(not(target_os = "macos"))]
     fn load_dependencies(&self, _dependencies: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         // On non-macOS platforms, dependencies are handled by the system loader
@@ -128,12 +128,9 @@ impl LibraryRegistry {
     }
 
     pub fn load(&self, lib_path: &str) -> Result<String, Box<dyn std::error::Error>> {
-        let lib_name = std::path::Path::new(lib_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or("invalid lib path")?
-            .to_string();
-        
+        let lib_name =
+            std::path::Path::new(lib_path).file_stem().and_then(|s| s.to_str()).ok_or("invalid lib path")?.to_string();
+
         if self.use_custom_loader {
             // use custom mach-o loader
             #[cfg(target_os = "macos")]
@@ -142,42 +139,44 @@ impl LibraryRegistry {
                 {
                     let load_start = std::time::Instant::now();
                     let mut loader = MachoLoader::new();
-                    
+
                     // First, parse dependencies
                     let dependencies = unsafe { loader.parse_dependencies(lib_path)? };
-                    
+
                     // Load dependencies BEFORE finishing the load
                     // This ensures symbols are available when processing lazy bindings
                     self.load_dependencies(&dependencies)?;
-                    
+
                     // Now finish loading with dependencies available
                     unsafe {
                         loader.finish_loading()?;
                     }
-                    
+
                     let load_time = load_start.elapsed();
                     println!("{:.1}ms {}", load_time.as_secs_f64() * 1000.0, lib_path);
-                    
+
                     let mut libs = self.libs.lock().unwrap();
-                    
+
                     // If replacing an existing library, move it to old_libs instead of dropping
                     // This keeps the old code mapped to avoid TLV crashes
-                    if let Some(old_lib) = libs.insert(lib_name.clone(), LoadedLibrary::Custom(Arc::new(Mutex::new(loader)))) {
+                    if let Some(old_lib) =
+                        libs.insert(lib_name.clone(), LoadedLibrary::Custom(Arc::new(Mutex::new(loader))))
+                    {
                         let mut old_libs = self.old_libs.lock().unwrap();
                         old_libs.push(old_lib);
                     }
-                    
+
                     return Ok(lib_name);
                 }
             }
-            
+
             #[cfg(not(target_os = "macos"))]
             return Err("custom loader only supported on macOS".into());
         }
-        
+
         // use traditional dlopen
         let dlopen_start = std::time::Instant::now();
-        
+
         // Use RTLD_LAZY for faster loading - symbols are resolved when first used
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         let lib = unsafe {
@@ -185,22 +184,22 @@ impl LibraryRegistry {
             let unix_lib = UnixLibrary::open(Some(lib_path), RTLD_LAZY)?;
             Library::from(unix_lib)
         };
-        
+
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let lib = unsafe { Library::new(lib_path)? };
-        
+
         let _dlopen_time = dlopen_start.elapsed();
-        
+
         // dlopen timing check removed
-        
+
         let mut libs = self.libs.lock().unwrap();
-        
+
         // If replacing an existing library, move it to old_libs
         if let Some(old_lib) = libs.insert(lib_name.clone(), LoadedLibrary::Dlopen(Arc::new(lib))) {
             let mut old_libs = self.old_libs.lock().unwrap();
             old_libs.push(old_lib);
         }
-        
+
         Ok(lib_name)
     }
 
@@ -219,8 +218,12 @@ impl LibraryRegistry {
                     LoadedLibrary::Custom(arc) => LoadedLibrary::Custom(arc.clone()),
                 },
                 None => {
-                    return Err(format!("library '{}' not loaded. Available: {:?}",
-                        lib_name, libs.keys().collect::<Vec<_>>()).into());
+                    return Err(format!(
+                        "library '{}' not loaded. Available: {:?}",
+                        lib_name,
+                        libs.keys().collect::<Vec<_>>()
+                    )
+                    .into());
                 }
             }
         }; // mutex is dropped here
@@ -235,30 +238,31 @@ impl LibraryRegistry {
                 // For custom loader, we need to create a fake Symbol wrapper
                 let loader = loader_arc.lock().unwrap();
                 unsafe {
-                    let addr = loader.get_symbol(symbol_name)
+                    let addr = loader
+                        .get_symbol(symbol_name)
                         .ok_or_else(|| format!("symbol '{}' not found in custom loaded library", symbol_name))?;
-                    
+
                     // println!("    - Found symbol {} at address: {:p}", symbol_name, addr);
-                    
+
                     // Create a raw pointer to the function
                     let func_ptr = addr as *const T;
-                    
+
                     // We can't create a real libloading::Symbol, so we pass the raw pointer
                     // wrapped in a way that matches the Symbol interface
                     // Symbol dereferences to *const T, so we create a wrapper that does the same
                     struct FakeSymbol<T> {
                         ptr: *const T,
                     }
-                    
+
                     impl<T> std::ops::Deref for FakeSymbol<T> {
                         type Target = *const T;
                         fn deref(&self) -> &Self::Target {
                             &self.ptr
                         }
                     }
-                    
+
                     let fake_symbol = FakeSymbol { ptr: func_ptr };
-                    
+
                     // Since f expects &Symbol<T> but we have FakeSymbol<T>,
                     // and Symbol<T> derefs to *const T, we need to transmute
                     let symbol_ref = &fake_symbol as *const FakeSymbol<T> as *const Symbol<T>;
@@ -277,7 +281,7 @@ impl LibraryRegistry {
         // Set the library registry in thread-local storage before calling constructor
         // This allows the constructor (and any methods it calls) to create other objects
         crate::set_library_registry(self);
-        
+
         let constructor_symbol = format!("{}__new____to__Box_lt_dyn_HotlineObject_gt__{}", type_name, rustc_commit);
         type ConstructorFn = fn() -> Box<dyn HotlineObject>;
 
@@ -303,14 +307,15 @@ impl LibraryRegistry {
             LoadedLibrary::Custom(loader_arc) => {
                 let loader = loader_arc.lock().unwrap();
                 unsafe {
-                    let addr = loader.get_symbol(&constructor_symbol)
+                    let addr = loader
+                        .get_symbol(&constructor_symbol)
                         .ok_or_else(|| format!("symbol '{}' not found", constructor_symbol))?;
                     let func: ConstructorFn = std::mem::transmute(addr);
                     func()
                 }
             }
         };
-        
+
         // Set the registry on the newly created object
         obj.set_registry(self);
         Ok(obj)

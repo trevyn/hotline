@@ -222,11 +222,11 @@ fn generate_builder_ffi_method(
                 let obj = &mut **guard;
                 let type_name = obj.type_name().to_string();
                 let __lib_name = format!("lib{}", type_name);
-                
+
                 // Get registry from the object using the trait method
                 let registry = obj.get_registry()
                     .unwrap_or_else(|| panic!("Registry not initialized for {}", type_name));
-                
+
                 let obj_any = obj.as_any_mut();
 
                 type FnType = unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #param_types)*);

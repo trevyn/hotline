@@ -66,7 +66,6 @@ hotline::object!({
             }
         }
 
-
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             if let Some(registry) = self.get_registry() {
                 ::hotline::set_library_registry(registry);

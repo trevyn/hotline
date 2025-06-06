@@ -1,10 +1,10 @@
 use hotline::{HotlineObject, LibraryRegistry, ObjectHandle};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
-use std::sync::{Arc, Mutex};
-use std::sync::mpsc::channel;
 use std::path::Path;
-use std::time::Duration;
+use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 pub const RUSTC_COMMIT: &str = env!("RUSTC_COMMIT_HASH");
 
@@ -15,18 +15,12 @@ pub struct DirectRuntime {
 
 impl DirectRuntime {
     pub fn new() -> Self {
-        Self { 
-            library_registry: LibraryRegistry::new(),
-            watcher_thread: None,
-        }
+        Self { library_registry: LibraryRegistry::new(), watcher_thread: None }
     }
 
     #[cfg(target_os = "macos")]
     pub fn new_with_custom_loader() -> Self {
-        Self { 
-            library_registry: LibraryRegistry::new_with_custom_loader(),
-            watcher_thread: None,
-        }
+        Self { library_registry: LibraryRegistry::new_with_custom_loader(), watcher_thread: None }
     }
 
     pub fn register(&mut self, obj: Box<dyn HotlineObject>) -> ObjectHandle {
@@ -70,13 +64,13 @@ impl DirectRuntime {
     pub fn start_watching(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let path = path.to_string();
         let registry = self.library_registry.clone();
-        
+
         let handle = thread::spawn(move || {
             if let Err(e) = watch_and_reload_files(path, registry) {
                 eprintln!("File watcher error: {}", e);
             }
         });
-        
+
         self.watcher_thread = Some(handle);
         Ok(())
     }
@@ -84,17 +78,14 @@ impl DirectRuntime {
 
 fn watch_and_reload_files(path: String, registry: LibraryRegistry) -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = channel();
-    
-    let mut watcher = RecommendedWatcher::new(
-        tx,
-        Config::default().with_poll_interval(Duration::from_millis(500)),
-    )?;
-    
+
+    let mut watcher = RecommendedWatcher::new(tx, Config::default().with_poll_interval(Duration::from_millis(500)))?;
+
     watcher.watch(Path::new(&path), RecursiveMode::Recursive)?;
-    
+
     // Track file hashes to detect actual changes
     let mut file_hashes = std::collections::HashMap::new();
-    
+
     for res in rx {
         match res {
             Ok(event) => {
@@ -108,27 +99,27 @@ fn watch_and_reload_files(path: String, registry: LibraryRegistry) -> Result<(),
                                     // Check if file content actually changed
                                     if let Ok(contents) = std::fs::read(&event_path) {
                                         let hash = xxhash_rust::xxh3::xxh3_64(&contents);
-                                        
+
                                         if let Some(&prev_hash) = file_hashes.get(&event_path) {
                                             if prev_hash == hash {
                                                 continue; // No actual change
                                             }
                                         }
-                                        
+
                                         file_hashes.insert(event_path.clone(), hash);
-                                        
+
                                         eprintln!("Detected change in {}, recompiling...", object_name);
-                                        
+
                                         // Compile
                                         let status = std::process::Command::new("cargo")
                                             .args(["build", "--release", "-p", &object_name])
                                             .status()?;
-                                            
+
                                         if !status.success() {
                                             eprintln!("Cargo build failed for {}", object_name);
                                             continue;
                                         }
-                                        
+
                                         // Reload
                                         #[cfg(target_os = "macos")]
                                         let lib_path = format!("target/release/lib{}.dylib", object_name);
@@ -136,7 +127,7 @@ fn watch_and_reload_files(path: String, registry: LibraryRegistry) -> Result<(),
                                         let lib_path = format!("target/release/lib{}.so", object_name);
                                         #[cfg(target_os = "windows")]
                                         let lib_path = format!("target/release/{}.dll", object_name);
-                                        
+
                                         if let Err(e) = registry.load(&lib_path) {
                                             eprintln!("Failed to reload {}: {}", object_name, e);
                                         } else {
@@ -153,7 +144,7 @@ fn watch_and_reload_files(path: String, registry: LibraryRegistry) -> Result<(),
             Err(e) => eprintln!("Watch error: {:?}", e),
         }
     }
-    
+
     Ok(())
 }
 

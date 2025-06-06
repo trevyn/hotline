@@ -1,6 +1,6 @@
-use std::slice;
+use libc::{pthread_getspecific, pthread_key_create, pthread_key_t, pthread_setspecific};
 use std::collections::HashMap;
-use libc::{pthread_key_t, pthread_key_create, pthread_getspecific, pthread_setspecific};
+use std::slice;
 
 // Runtime TLV thunk structure for 64-bit (matches dyld's TLV_Thunkv2)
 #[repr(C)]
@@ -8,7 +8,7 @@ pub struct TLVThunkv2 {
     func: *const u8,
     key: u32,
     offset: u32,
-    initial_content_delta: i32,  // delta to initial content, or 0 for zero-fill
+    initial_content_delta: i32, // delta to initial content, or 0 for zero-fill
     initial_content_size: u32,
 }
 
@@ -28,9 +28,7 @@ pub struct TLVManager {
 
 impl TLVManager {
     pub fn new() -> Self {
-        Self {
-            keys: HashMap::new(),
-        }
+        Self { keys: HashMap::new() }
     }
 
     // Set up TLVs for a loaded library
@@ -53,7 +51,7 @@ impl TLVManager {
         if result != 0 {
             return Err("Failed to create pthread key for TLVs".into());
         }
-        
+
         self.keys.insert(lib_path.to_string(), key);
 
         // Use our own TLV handler
@@ -66,7 +64,6 @@ impl TLVManager {
             // Since base_vmaddr is typically 0 for dylibs, this simplifies to base_addr + thunks_addr
             let thunks_ptr = unsafe { base_addr.add(section.thunks_addr as usize) };
             let thunk_count = section.thunks_size / std::mem::size_of::<TLVThunkv2>() as u64;
-            
 
             // Initial content location (if not zero-fill)
             let initial_content_ptr = if !section.all_zero_fill && section.initial_content_size > 0 {
@@ -81,26 +78,26 @@ impl TLVManager {
             struct DiskThunk {
                 func: *const u8,
                 key: usize,    // 64-bit on disk
-                offset: usize, // 64-bit on disk  
+                offset: usize, // 64-bit on disk
             }
             let disk_thunks = unsafe { slice::from_raw_parts(thunks_ptr as *const DiskThunk, thunk_count as usize) };
-            
+
             // Now reinterpret as runtime TLVThunkv2 format for writing
             let thunks = unsafe { slice::from_raw_parts_mut(thunks_ptr as *mut TLVThunkv2, thunk_count as usize) };
-            
+
             for (disk_thunk, thunkv2) in disk_thunks.iter().zip(thunks.iter_mut()) {
                 // Since we're manually loading, we always need to set up the thunks
                 // The func pointer in the file is just a placeholder that would normally be relocated
-                
+
                 // Update the thunk with our TLV info
                 thunkv2.func = tlv_get_addr as *const u8;
                 thunkv2.key = key as u32;
                 // Use the offset from the disk format
                 thunkv2.offset = disk_thunk.offset as u32;
-                
+
                 // Set up initial content info
                 if let Some(content_ptr) = initial_content_ptr {
-                    // Calculate delta from thunk field to initial content  
+                    // Calculate delta from thunk field to initial content
                     let delta_field_ptr = &thunkv2.initial_content_delta as *const i32 as *const u8;
                     thunkv2.initial_content_delta = unsafe { content_ptr.offset_from(delta_field_ptr) as i32 };
                     thunkv2.initial_content_size = section.initial_content_size as u32;
@@ -109,7 +106,6 @@ impl TLVManager {
                     thunkv2.initial_content_delta = 0;
                     thunkv2.initial_content_size = section.initial_content_size as u32;
                 }
-                
             }
         }
 
@@ -138,28 +134,28 @@ pub unsafe extern "C" fn hotline_tlv_get_addr(thunk: *const TLVThunkv2) -> *mut 
     if thunk.is_null() {
         panic!("hotline_tlv_get_addr called with null thunk");
     }
-    
+
     let thunk = unsafe { &*thunk };
     let key = thunk.key;
     let offset = thunk.offset;
-    
+
     // Get the thread's TLV allocation for this key
     let allocation = unsafe { pthread_getspecific(key as pthread_key_t) as *mut u8 };
-    
+
     if !allocation.is_null() {
         // Already allocated, return address
         return unsafe { allocation.add(offset as usize) };
     }
-    
+
     // First use - need to allocate and initialize
     // For now, allocate based on the size in the thunk
     let size = thunk.initial_content_size as usize;
     let allocation = unsafe { libc::malloc(size) as *mut u8 };
-    
+
     if allocation.is_null() {
         panic!("Failed to allocate TLV storage");
     }
-    
+
     // Initialize the content
     if thunk.initial_content_delta != 0 {
         // Copy initial content
@@ -170,10 +166,10 @@ pub unsafe extern "C" fn hotline_tlv_get_addr(thunk: *const TLVThunkv2) -> *mut 
         // Zero-fill
         unsafe { std::ptr::write_bytes(allocation, 0, size) };
     }
-    
+
     // Store the allocation for this thread
     unsafe { pthread_setspecific(key as pthread_key_t, allocation as *const libc::c_void) };
-    
+
     // Return the address of the specific TLV
     unsafe { allocation.add(offset as usize) }
 }
@@ -246,38 +242,37 @@ pub unsafe fn find_tlv_sections(
     _base_addr: *const u8,
     file_data: &[u8],
 ) -> Result<Vec<TLVSectionInfo>, Box<dyn std::error::Error>> {
-    
     let mut tlv_sections = Vec::new();
     let mut initial_content_start: Option<u64> = None;
     let mut initial_content_size = 0u64;
     let mut all_zero_fill = true;
-    
+
     let header = unsafe { &*(file_data.as_ptr() as *const MachHeader64) };
     let mut cmd_ptr = unsafe { file_data.as_ptr().add(std::mem::size_of::<MachHeader64>()) };
-    
+
     // First pass: find TLV sections and initial content
     for _ in 0..header.ncmds {
         let cmd = unsafe { &*(cmd_ptr as *const LoadCommand) };
-        
+
         if cmd.cmd == LC_SEGMENT_64 {
             let segment = unsafe { &*(cmd_ptr as *const SegmentCommand64) };
             let mut section_ptr = unsafe { (segment as *const SegmentCommand64).add(1) as *const Section64 };
-            
+
             for _ in 0..segment.nsects {
                 let section = unsafe { &*section_ptr };
                 let section_type = section.flags & 0xff;
-                
+
                 match section_type {
                     S_THREAD_LOCAL_VARIABLES => {
                         // Found thunks section
                         tlv_sections.push(TLVSectionInfo {
                             thunks_addr: section.addr,
                             thunks_size: section.size,
-                            initial_content_addr: 0,  // will be filled later
-                            initial_content_size: 0,  // will be filled later
-                            all_zero_fill: true,      // will be updated
+                            initial_content_addr: 0, // will be filled later
+                            initial_content_size: 0, // will be filled later
+                            all_zero_fill: true,     // will be updated
                         });
-                    },
+                    }
                     S_THREAD_LOCAL_REGULAR => {
                         // Non-zero initial content
                         all_zero_fill = false;
@@ -286,7 +281,7 @@ pub unsafe fn find_tlv_sections(
                         }
                         let end = section.addr + section.size;
                         initial_content_size = end - initial_content_start.unwrap();
-                    },
+                    }
                     S_THREAD_LOCAL_ZEROFILL => {
                         // Zero-fill content
                         if initial_content_start.is_none() {
@@ -294,25 +289,25 @@ pub unsafe fn find_tlv_sections(
                         }
                         let end = section.addr + section.size;
                         initial_content_size = end - initial_content_start.unwrap();
-                    },
+                    }
                     _ => {}
                 }
-                
+
                 section_ptr = unsafe { section_ptr.add(1) };
             }
         }
-        
+
         cmd_ptr = unsafe { cmd_ptr.add(cmd.cmdsize as usize) };
     }
-    
+
     // Update TLV sections with initial content info
     for section in &mut tlv_sections {
         section.initial_content_addr = initial_content_start.unwrap_or(0);
         section.initial_content_size = initial_content_size;
         section.all_zero_fill = all_zero_fill;
-        
+
         // Found TLV section
     }
-    
+
     Ok(tlv_sections)
 }

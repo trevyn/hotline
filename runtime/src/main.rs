@@ -3,22 +3,25 @@ use runtime::DirectRuntime;
 fn main() -> Result<(), String> {
     use std::fs;
     use std::path::Path;
-    
+
     // Dependencies will be loaded automatically by the custom macho loader
-    
+
     // Leak the runtime to give it 'static lifetime
     let runtime = Box::leak(Box::new({
         #[cfg(target_os = "macos")]
-        { DirectRuntime::new_with_custom_loader() }
+        {
+            DirectRuntime::new_with_custom_loader()
+        }
         #[cfg(not(target_os = "macos"))]
-        { DirectRuntime::new() }
+        {
+            DirectRuntime::new()
+        }
     }));
-    
+
     // Start watching objects directory for changes
-    runtime.start_watching("objects")
-        .map_err(|e| format!("Failed to start file watcher: {}", e))?;
+    runtime.start_watching("objects").map_err(|e| format!("Failed to start file watcher: {}", e))?;
     eprintln!("Started watching objects/ directory for changes");
-    
+
     // Load all libraries from objects directory
     let objects_dir = Path::new("objects");
     let load_start = std::time::Instant::now();
@@ -34,10 +37,11 @@ fn main() -> Result<(), String> {
                         let lib_path = format!("target/release/lib{}.so", lib_name);
                         #[cfg(target_os = "windows")]
                         let lib_path = format!("target/release/{}.dll", lib_name);
-                        
+
                         if Path::new(&lib_path).exists() {
                             // Loading library
-                            runtime.hot_reload(&lib_path, lib_name)
+                            runtime
+                                .hot_reload(&lib_path, lib_name)
                                 .map_err(|e| format!("Failed to load {}: {}", lib_name, e))?;
                         } else {
                             eprintln!("Library not found: {}", lib_path);
@@ -49,39 +53,36 @@ fn main() -> Result<(), String> {
     }
     let load_time = load_start.elapsed();
     eprintln!("------\n{:.1}ms Total library loading time", load_time.as_secs_f64() * 1000.0);
-    
+
     // Now create Application
-    let app_handle = runtime.create_from_lib("libApplication", "Application")
-        .map_err(|e| e.to_string())?;
-    
+    let app_handle = runtime.create_from_lib("libApplication", "Application").map_err(|e| e.to_string())?;
+
     // Get the Application object and call run
     if let Ok(mut app_guard) = app_handle.lock() {
         let app = &mut **app_guard;
-        
+
         // Call initialize method
         let init_symbol = format!(
             "Application__initialize______obj_mut_dyn_Any____to__Result_lt_unit_String_gt__{}",
             runtime::RUSTC_COMMIT
         );
         type InitFn = unsafe extern "Rust" fn(&mut dyn std::any::Any) -> Result<(), String>;
-        runtime.library_registry().with_symbol::<InitFn, _, _>(
-            "libApplication",
-            &init_symbol,
-            |init_fn| unsafe { (**init_fn)(app.as_any_mut()) }
-        ).map_err(|e| e.to_string())??;
-        
+        runtime
+            .library_registry()
+            .with_symbol::<InitFn, _, _>("libApplication", &init_symbol, |init_fn| unsafe {
+                (**init_fn)(app.as_any_mut())
+            })
+            .map_err(|e| e.to_string())??;
+
         // Call run method
-        let run_symbol = format!(
-            "Application__run______obj_mut_dyn_Any____to__Result_lt_unit_String_gt__{}",
-            runtime::RUSTC_COMMIT
-        );
+        let run_symbol =
+            format!("Application__run______obj_mut_dyn_Any____to__Result_lt_unit_String_gt__{}", runtime::RUSTC_COMMIT);
         type RunFn = unsafe extern "Rust" fn(&mut dyn std::any::Any) -> Result<(), String>;
-        runtime.library_registry().with_symbol::<RunFn, _, _>(
-            "libApplication",
-            &run_symbol,
-            |run_fn| unsafe { (**run_fn)(app.as_any_mut()) }
-        ).map_err(|e| e.to_string())??;
+        runtime
+            .library_registry()
+            .with_symbol::<RunFn, _, _>("libApplication", &run_symbol, |run_fn| unsafe { (**run_fn)(app.as_any_mut()) })
+            .map_err(|e| e.to_string())??;
     }
-    
+
     Ok(())
 }

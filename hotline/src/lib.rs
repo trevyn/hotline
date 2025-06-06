@@ -61,9 +61,7 @@ pub fn with_library_registry<T, F>(f: F) -> Option<T>
 where
     F: FnOnce(&'static LibraryRegistry) -> T,
 {
-    CURRENT_REGISTRY.with(|r| {
-        r.borrow().as_ref().map(|registry| f(registry))
-    })
+    CURRENT_REGISTRY.with(|r| r.borrow().as_ref().map(|registry| f(registry)))
 }
 
 pub trait HotlineObject: Any + Send + Sync {
@@ -106,11 +104,11 @@ impl RegistryPtr {
     pub fn new() -> Self {
         Self(None)
     }
-    
+
     pub fn set(&mut self, registry: &'static LibraryRegistry) {
         self.0 = std::ptr::NonNull::new(registry as *const _ as *mut _);
     }
-    
+
     pub fn get(&self) -> Option<&'static LibraryRegistry> {
         self.0.map(|ptr| unsafe { &*ptr.as_ptr() })
     }

@@ -38,7 +38,7 @@ fn get_rustc_commit_hash() -> String {
 
 fn add_registry_field(struct_item: &syn::ItemStruct) -> proc_macro2::TokenStream {
     let mut modified = struct_item.clone();
-    
+
     // Add the registry field to the struct using RegistryPtr to avoid any TLS
     if let Fields::Named(ref mut fields) = modified.fields {
         let registry_field: syn::Field = syn::parse_quote! {
@@ -47,7 +47,7 @@ fn add_registry_field(struct_item: &syn::ItemStruct) -> proc_macro2::TokenStream
         };
         fields.named.push(registry_field);
     }
-    
+
     quote! { #modified }
 }
 
@@ -119,10 +119,10 @@ pub fn object(input: TokenStream) -> TokenStream {
         generate_typed_wrappers(&find_referenced_object_types(&struct_item, &impl_blocks), &rustc_commit);
 
     let modified_struct = &processed.modified_struct;
-    
+
     // Add registry field to the struct
     let struct_with_registry = add_registry_field(modified_struct);
-    
+
     let output = quote! {
         #[allow(dead_code)]
         type Like<T> = T;

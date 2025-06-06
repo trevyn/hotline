@@ -207,6 +207,5 @@ pub mod symbols {
         pub fn build_type_name_getter(&self) -> String {
             format!("{}__get_type_name____obj_ref_dyn_Any__to__str__{}", self.type_name, self.rustc_commit)
         }
-
     }
 }

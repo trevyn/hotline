@@ -11,12 +11,12 @@ pub fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> p
         .iter()
         .filter_map(|type_name| {
             let lib_path = find_object_lib_file(type_name);
-            
+
             // Skip if the lib file doesn't exist (might be an external type)
             if !lib_path.exists() {
                 return None;
             }
-            
+
             fs::read_to_string(&lib_path)
                 .ok()
                 .and_then(|content| syn::parse_file(&content).ok())

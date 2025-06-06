@@ -19,7 +19,7 @@ hotline::object!({
             if let Some(registry) = self.get_registry() {
                 // Set the registry in thread-local storage for TextRenderer::new()
                 ::hotline::set_library_registry(registry);
-                
+
                 // Now create text renderer
                 let text_renderer = TextRenderer::new()
                     .with_text("Hello, Hotline!".to_string())
