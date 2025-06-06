@@ -3,7 +3,6 @@ use std::fs::File;
 use std::io::Read;
 use std::ptr;
 use std::slice;
-use std::sync::Mutex;
 use crate::tlv_support::{TLVManager, find_tlv_sections};
 
 // constants for dlsym and dlopen
@@ -216,117 +215,6 @@ const S_LAZY_SYMBOL_POINTERS: u32 = 0x7;
 const S_THREAD_LOCAL_VARIABLES: u32 = 0x13;
 const S_MOD_INIT_FUNC_POINTERS: u32 = 0x9;
 
-// Symbol resolution statistics tracking
-#[derive(Default, Debug)]
-struct ResolutionStats {
-    rtld_default_attempts: u64,
-    rtld_default_successes: u64,
-    system_lib_attempts: HashMap<String, u64>,
-    system_lib_successes: HashMap<String, u64>,
-    main_exe_attempts: u64,
-    main_exe_successes: u64,
-    with_underscore_attempts: u64,
-    with_underscore_successes: u64,
-    without_underscore_attempts: u64,
-    without_underscore_successes: u64,
-    specific_lib_attempts: HashMap<String, u64>,
-    specific_lib_successes: HashMap<String, u64>,
-}
-
-static RESOLUTION_STATS: std::sync::OnceLock<Mutex<ResolutionStats>> = std::sync::OnceLock::new();
-
-fn get_stats() -> &'static Mutex<ResolutionStats> {
-    RESOLUTION_STATS.get_or_init(|| Mutex::new(ResolutionStats::default()))
-}
-
-pub fn print_resolution_stats() {
-    if let Some(stats_mutex) = RESOLUTION_STATS.get() {
-        if let Ok(stats) = stats_mutex.lock() {
-            stats.print_summary();
-        }
-    }
-}
-
-impl ResolutionStats {
-    fn print_summary(&self) {
-        eprintln!("\n=== Symbol Resolution Statistics ===");
-        
-        // RTLD_DEFAULT stats
-        if self.rtld_default_attempts > 0 {
-            let success_rate = (self.rtld_default_successes as f64 / self.rtld_default_attempts as f64) * 100.0;
-            eprintln!("RTLD_DEFAULT: {} attempts, {} successes ({:.1}%)", 
-                self.rtld_default_attempts, self.rtld_default_successes, success_rate);
-        }
-        
-        // System library stats
-        let mut system_libs: Vec<_> = self.system_lib_attempts.iter().collect();
-        system_libs.sort_by_key(|(path, _)| *path);
-        for (path, attempts) in system_libs {
-            let successes = self.system_lib_successes.get(path).unwrap_or(&0);
-            let success_rate = (*successes as f64 / *attempts as f64) * 100.0;
-            eprintln!("{}: {} attempts, {} successes ({:.1}%)", 
-                path, attempts, successes, success_rate);
-        }
-        
-        // Main executable stats
-        if self.main_exe_attempts > 0 {
-            let success_rate = (self.main_exe_successes as f64 / self.main_exe_attempts as f64) * 100.0;
-            eprintln!("Main executable: {} attempts, {} successes ({:.1}%)", 
-                self.main_exe_attempts, self.main_exe_successes, success_rate);
-        }
-        
-        // Underscore prefix stats
-        if self.with_underscore_attempts > 0 {
-            let success_rate = (self.with_underscore_successes as f64 / self.with_underscore_attempts as f64) * 100.0;
-            eprintln!("With underscore prefix: {} attempts, {} successes ({:.1}%)", 
-                self.with_underscore_attempts, self.with_underscore_successes, success_rate);
-        }
-        
-        if self.without_underscore_attempts > 0 {
-            let success_rate = (self.without_underscore_successes as f64 / self.without_underscore_attempts as f64) * 100.0;
-            eprintln!("Without underscore prefix: {} attempts, {} successes ({:.1}%)", 
-                self.without_underscore_attempts, self.without_underscore_successes, success_rate);
-        }
-        
-        // Specific library stats
-        if !self.specific_lib_attempts.is_empty() {
-            eprintln!("\nSpecific library loads:");
-            let mut libs: Vec<_> = self.specific_lib_attempts.iter().collect();
-            libs.sort_by_key(|(path, _)| *path);
-            for (path, attempts) in libs {
-                let successes = self.specific_lib_successes.get(path).unwrap_or(&0);
-                let success_rate = (*successes as f64 / *attempts as f64) * 100.0;
-                eprintln!("  {}: {} attempts, {} successes ({:.1}%)", 
-                    path, attempts, successes, success_rate);
-            }
-        }
-        
-        eprintln!("\n=== Optimization Suggestions ===");
-        
-        // Find the most successful resolution method
-        let mut methods = vec![];
-        if self.rtld_default_successes > 0 {
-            methods.push(("RTLD_DEFAULT", self.rtld_default_successes));
-        }
-        for (path, successes) in &self.system_lib_successes {
-            if *successes > 0 {
-                methods.push((path.as_str(), *successes));
-            }
-        }
-        if self.main_exe_successes > 0 {
-            methods.push(("Main executable", self.main_exe_successes));
-        }
-        
-        methods.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-        
-        if let Some((best_method, _)) = methods.first() {
-            eprintln!("Most successful method: {}", best_method);
-            eprintln!("Consider trying this method first for better performance.");
-        }
-        
-        eprintln!("===================================\n");
-    }
-}
 
 pub struct MachoLoader {
     base_addr: Option<std::ptr::NonNull<u8>>,
@@ -407,7 +295,7 @@ impl MachoLoader {
         unsafe { libc::abort(); }
     }
 
-    pub unsafe fn load(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub unsafe fn parse_dependencies(&mut self, path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         // store the library path
         self.lib_path = Some(path.to_string());
         
@@ -423,6 +311,31 @@ impl MachoLoader {
         
         if header.filetype != MH_BUNDLE && header.filetype != MH_DYLIB {
             return Err("not a bundle or dylib".into());
+        }
+        
+        // find dependencies
+        let mut cmd_ptr = unsafe { self.file_data.as_ptr().add(std::mem::size_of::<MachHeader64>()) };
+        
+        for _ in 0..header.ncmds {
+            let cmd = unsafe { &*(cmd_ptr as *const LoadCommand) };
+            
+            match cmd.cmd {
+                LC_LOAD_DYLIB | LC_LOAD_WEAK_DYLIB | LC_REEXPORT_DYLIB | LC_LAZY_LOAD_DYLIB => {
+                    unsafe { self.process_dylib(cmd_ptr as *const DylibCommand)? };
+                }
+                _ => {}
+            }
+            
+            cmd_ptr = unsafe { cmd_ptr.add(cmd.cmdsize as usize) };
+        }
+        
+        Ok(self.imports.clone())
+    }
+    
+    pub unsafe fn finish_loading(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Assumes parse_dependencies was already called
+        if self.file_data.is_empty() {
+            return Err("must call parse_dependencies first".into());
         }
         
         // find lowest vmaddr to determine base address
@@ -554,6 +467,7 @@ impl MachoLoader {
             
             cmd_ptr_tmp = unsafe { cmd_ptr_tmp.add(cmd.cmdsize as usize) };
         }
+        
         
         // second pass: process everything else
         for _i in 0..header.ncmds {
@@ -907,18 +821,12 @@ impl MachoLoader {
                                         Ok(addr) => {
                                             unsafe {
                                                 let ptr = la_ptr_base.add(i as usize);
-                                                let _old_val = *ptr;
                                                 *ptr = addr as u64;
-                                                // Only log errors, not successful binds
-                                                // eprintln!("[bind_lazy_pointers] bound {} at 0x{:x} (was 0x{:x}, now 0x{:x})", 
-                                                //     name, ptr as usize, old_val, addr);
                                             }
                                             // Bound lazy pointer
                                         }
-                                        Err(_e) => {
+                                        Err(_) => {
                                             // Failed to bind symbol - this is expected for some symbols
-                                            // eprintln!("[bind_lazy_pointers] failed to bind {}: {}", name, e);
-                                            // Failed to bind lazy pointer
                                         }
                                     }
                                 }
@@ -1254,14 +1162,6 @@ impl MachoLoader {
                         let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
                         
-                        // Binding symbol - skip logging for expected symbols
-                        if symbol_name != "__tlv_bootstrap" && 
-                           symbol_name != "dyld_stub_binder" && 
-                           symbol_name != "_CCRandomGenerateBytes" {
-                            eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
-                                symbol_name, ptr as usize, symbol_addr);
-                        }
-                        
                         unsafe { *ptr = symbol_addr as u64 };
                         
                         // Bound symbol
@@ -1285,10 +1185,6 @@ impl MachoLoader {
                         let base = self.base_addr.ok_or("base_addr not set")?;
                         let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
-                        if symbol_name != "__tlv_bootstrap" {
-                            eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
-                                symbol_name, ptr as usize, symbol_addr);
-                        }
                         unsafe { *ptr = symbol_addr as u64 };
                         
                         // Bound symbol
@@ -1314,10 +1210,6 @@ impl MachoLoader {
                         let base = self.base_addr.ok_or("base_addr not set")?;
                         let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
-                        if symbol_name != "__tlv_bootstrap" {
-                            eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
-                                symbol_name, ptr as usize, symbol_addr);
-                        }
                         unsafe { *ptr = symbol_addr as u64 };
                         
                         // Bound symbol
@@ -1347,12 +1239,6 @@ impl MachoLoader {
                             let base = self.base_addr.ok_or("base_addr not set")?;
                             let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                             let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
-                            if symbol_name != "__tlv_bootstrap" && 
-                               symbol_name != "dyld_stub_binder" && 
-                               symbol_name != "_CCRandomGenerateBytes" {
-                                eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
-                                    symbol_name, ptr as usize, symbol_addr);
-                            }
                             unsafe { *ptr = symbol_addr as u64 };
                             
                             // Bound symbol
@@ -1418,9 +1304,6 @@ impl MachoLoader {
     }
     
     fn resolve_external_symbol(&self, symbol: &str, lib_name: &str) -> Result<usize, Box<dyn std::error::Error>> {
-        // Resolving symbol
-        // eprintln!("[macho_loader] resolving symbol: {} from {}", symbol, lib_name);
-        
         // Special case for __tlv_bootstrap - we don't use the system's version
         if symbol == "__tlv_bootstrap" {
             // We handle TLVs ourselves, so we don't need to resolve this
@@ -1447,20 +1330,11 @@ impl MachoLoader {
         
         // 1. If we have a specific library path, try it first (likely to succeed)
         if !lib_name.is_empty() && std::path::Path::new(lib_name).exists() {
-            // Track specific library attempt
-            if let Ok(mut stats) = get_stats().lock() {
-                *stats.specific_lib_attempts.entry(lib_name.to_string()).or_insert(0) += 1;
-            }
-            
             let lib_c_str = std::ffi::CString::new(lib_name)?;
             let handle = unsafe { libc::dlopen(lib_c_str.as_ptr(), RTLD_LAZY | RTLD_GLOBAL) };
             if !handle.is_null() {
                 let addr = unsafe { libc::dlsym(handle, c_symbol.as_ptr()) };
                 if !addr.is_null() {
-                    // Track specific library success
-                    if let Ok(mut stats) = get_stats().lock() {
-                        *stats.specific_lib_successes.entry(lib_name.to_string()).or_insert(0) += 1;
-                    }
                     return Ok(addr as usize);
                 }
             }
@@ -1468,57 +1342,30 @@ impl MachoLoader {
         
         // 2. Try without underscore prefix (100% success rate for symbols that need it)
         if symbol.starts_with('_') {
-            // Track without underscore attempt
-            if let Ok(mut stats) = get_stats().lock() {
-                stats.without_underscore_attempts += 1;
-            }
-            
             let unprefixed = &symbol[1..];
             let c_symbol_unprefixed = std::ffi::CString::new(unprefixed)?;
             let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol_unprefixed.as_ptr()) };
             
             if !addr.is_null() {
-                // Track without underscore success
-                if let Ok(mut stats) = get_stats().lock() {
-                    stats.without_underscore_successes += 1;
-                }
                 return Ok(addr as usize);
             }
         }
         
         // 3. Try with underscore prefix (also high success rate)
         if !symbol.starts_with('_') {
-            // Track with underscore attempt
-            if let Ok(mut stats) = get_stats().lock() {
-                stats.with_underscore_attempts += 1;
-            }
-            
             let prefixed_symbol = format!("_{}", symbol);
             let c_symbol_prefixed = std::ffi::CString::new(prefixed_symbol)?;
             let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol_prefixed.as_ptr()) };
             
             if !addr.is_null() {
-                // Track with underscore success
-                if let Ok(mut stats) = get_stats().lock() {
-                    stats.with_underscore_successes += 1;
-                }
                 return Ok(addr as usize);
             }
         }
         
         // 4. Finally try RTLD_DEFAULT as-is (rarely works - 0.7% success rate)
-        // Track RTLD_DEFAULT attempt
-        if let Ok(mut stats) = get_stats().lock() {
-            stats.rtld_default_attempts += 1;
-        }
-        
         let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
         
         if !addr.is_null() {
-            // Track RTLD_DEFAULT success
-            if let Ok(mut stats) = get_stats().lock() {
-                stats.rtld_default_successes += 1;
-            }
             return Ok(addr as usize);
         }
         
@@ -1551,67 +1398,33 @@ impl MachoLoader {
         ];
         
         for lib_path in &system_libs {
-            // Track system library attempt
-            if let Ok(mut stats) = get_stats().lock() {
-                *stats.system_lib_attempts.entry(lib_path.to_string()).or_insert(0) += 1;
-            }
-            
             match self.resolve_external_symbol(symbol, lib_path) {
-                Ok(addr) => {
-                    // Track system library success
-                    if let Ok(mut stats) = get_stats().lock() {
-                        *stats.system_lib_successes.entry(lib_path.to_string()).or_insert(0) += 1;
-                    }
-                    return Ok(addr);
-                },
+                Ok(addr) => return Ok(addr),
                 Err(_) => continue,
             }
         }
         
         // 2. Try without underscore prefix (high success rate)
         if symbol.starts_with('_') {
-            // Track without underscore attempt
-            if let Ok(mut stats) = get_stats().lock() {
-                stats.without_underscore_attempts += 1;
-            }
-            
             let unprefixed = &symbol[1..];
             let c_symbol_unprefixed = std::ffi::CString::new(unprefixed)?;
             let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol_unprefixed.as_ptr()) };
             
             if !addr.is_null() {
-                // Track without underscore success
-                if let Ok(mut stats) = get_stats().lock() {
-                    stats.without_underscore_successes += 1;
-                }
                 return Ok(addr as usize);
             }
         }
         
         // 3. SDL symbols might be in the main executable
-        // Track main executable attempt
-        if let Ok(mut stats) = get_stats().lock() {
-            stats.main_exe_attempts += 1;
-        }
-        
         let main_handle = unsafe { libc::dlopen(std::ptr::null(), RTLD_LAZY | RTLD_NOLOAD) };
         if !main_handle.is_null() {
             let addr = unsafe { libc::dlsym(main_handle, symbol_cstr.as_ptr()) };
             if !addr.is_null() {
-                // Track main executable success
-                if let Ok(mut stats) = get_stats().lock() {
-                    stats.main_exe_successes += 1;
-                }
                 return Ok(addr as usize);
             }
         }
         
         // 4. Finally try RTLD_DEFAULT as last resort (rarely works - 0.7% success rate)
-        // Track RTLD_DEFAULT attempt
-        if let Ok(mut stats) = get_stats().lock() {
-            stats.rtld_default_attempts += 1;
-        }
-        
         let addr = unsafe {
             // RTLD_DEFAULT = -2 on macOS
             let rtld_default = -2isize as *mut libc::c_void;
@@ -1619,10 +1432,6 @@ impl MachoLoader {
         };
         
         if !addr.is_null() {
-            // Track RTLD_DEFAULT success
-            if let Ok(mut stats) = get_stats().lock() {
-                stats.rtld_default_successes += 1;
-            }
             return Ok(addr as usize);
         }
         
@@ -1665,6 +1474,7 @@ impl MachoLoader {
             None => None,
         }
     }
+    
     
     // removed call_function - callers should use get_symbol and transmute directly
 }

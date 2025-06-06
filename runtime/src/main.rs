@@ -4,77 +4,7 @@ fn main() -> Result<(), String> {
     use std::fs;
     use std::path::Path;
     
-    // Ensure SDL2 libraries are loaded first
-    #[cfg(target_os = "macos")]
-    {
-        const RTLD_LAZY: libc::c_int = 0x1;
-        const RTLD_GLOBAL: libc::c_int = 0x8;
-        
-        unsafe {
-            // Try homebrew paths first, then fallback to standard names
-            let sdl2_paths = [
-                "/opt/homebrew/lib/libSDL2-2.0.0.dylib",
-                "/usr/local/lib/libSDL2-2.0.0.dylib",
-                "libSDL2-2.0.0.dylib",
-            ];
-            
-            let mut sdl2_loaded = false;
-            for path in &sdl2_paths {
-                let path_cstr = std::ffi::CString::new(*path).unwrap();
-                let handle = libc::dlopen(path_cstr.as_ptr(), RTLD_LAZY | RTLD_GLOBAL);
-                if !handle.is_null() {
-                    eprintln!("Loaded SDL2 from: {}", path);
-                    sdl2_loaded = true;
-                    break;
-                }
-            }
-            if !sdl2_loaded {
-                eprintln!("Warning: Failed to load SDL2 library");
-            }
-            
-            // Load SDL2_ttf
-            let ttf_paths = [
-                "/opt/homebrew/lib/libSDL2_ttf-2.0.0.dylib",
-                "/usr/local/lib/libSDL2_ttf-2.0.0.dylib",
-                "libSDL2_ttf-2.0.0.dylib",
-            ];
-            
-            let mut ttf_loaded = false;
-            for path in &ttf_paths {
-                let path_cstr = std::ffi::CString::new(*path).unwrap();
-                let handle = libc::dlopen(path_cstr.as_ptr(), RTLD_LAZY | RTLD_GLOBAL);
-                if !handle.is_null() {
-                    eprintln!("Loaded SDL2_ttf from: {}", path);
-                    ttf_loaded = true;
-                    break;
-                }
-            }
-            if !ttf_loaded {
-                eprintln!("Warning: Failed to load SDL2_ttf library");
-            }
-            
-            // Load SDL2_image
-            let image_paths = [
-                "/opt/homebrew/lib/libSDL2_image-2.0.0.dylib",
-                "/usr/local/lib/libSDL2_image-2.0.0.dylib",
-                "libSDL2_image-2.0.0.dylib",
-            ];
-            
-            let mut image_loaded = false;
-            for path in &image_paths {
-                let path_cstr = std::ffi::CString::new(*path).unwrap();
-                let handle = libc::dlopen(path_cstr.as_ptr(), RTLD_LAZY | RTLD_GLOBAL);
-                if !handle.is_null() {
-                    eprintln!("Loaded SDL2_image from: {}", path);
-                    image_loaded = true;
-                    break;
-                }
-            }
-            if !image_loaded {
-                eprintln!("Warning: Failed to load SDL2_image library");
-            }
-        }
-    }
+    // Dependencies will be loaded automatically by the custom macho loader
     
     // Leak the runtime to give it 'static lifetime
     let runtime = Box::leak(Box::new({
@@ -118,7 +48,7 @@ fn main() -> Result<(), String> {
         }
     }
     let load_time = load_start.elapsed();
-    eprintln!("Total library loading time: {:.1}ms", load_time.as_secs_f64() * 1000.0);
+    eprintln!("------\n{:.1}ms Total library loading time", load_time.as_secs_f64() * 1000.0);
     
     // Now create Application
     let app_handle = runtime.create_from_lib("libApplication", "Application")

@@ -38,6 +38,94 @@ impl LibraryRegistry {
             old_libs: Arc::new(Mutex::new(Vec::new())),
         }
     }
+    
+    #[cfg(target_os = "macos")]
+    fn load_dependencies(&self, dependencies: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+        use std::collections::HashSet;
+        use std::ffi::CString;
+        
+        const RTLD_LAZY: libc::c_int = 0x1;
+        const RTLD_GLOBAL: libc::c_int = 0x8;
+        
+        if dependencies.is_empty() {
+            return Ok(());
+        }
+                
+        // Track what we've already loaded
+        static LOADED_DEPS: std::sync::OnceLock<Mutex<HashSet<String>>> = std::sync::OnceLock::new();
+        let loaded = LOADED_DEPS.get_or_init(|| Mutex::new(HashSet::new()));
+        
+        for dep in dependencies {
+            // Skip system libraries and already loaded deps
+            if dep.starts_with("/usr/lib/") || dep.starts_with("/System/") {
+                continue;
+            }
+            
+            // Extract library name from path
+            let lib_name = dep.split('/').last().unwrap_or(dep);
+            
+            // Check if already loaded
+            {
+                let mut loaded_set = loaded.lock().unwrap();
+                if loaded_set.contains(lib_name) {
+                    continue;
+                }
+                loaded_set.insert(lib_name.to_string());
+            }
+            
+            // Try different paths for the dependency
+            let mut paths = vec![];
+            
+            // If it's an @rpath dependency, try common locations
+            if dep.starts_with("@rpath/") {
+                let lib_name = dep.strip_prefix("@rpath/").unwrap();
+                paths.push(format!("/opt/homebrew/lib/{}", lib_name));
+                paths.push(format!("/usr/local/lib/{}", lib_name));
+            } else if !dep.starts_with('/') {
+                // Relative path - try common locations
+                paths.push(format!("/opt/homebrew/lib/{}", dep));
+                paths.push(format!("/usr/local/lib/{}", dep));
+            } else {
+                // Absolute path
+                paths.push(dep.clone());
+            }
+            
+            // Also try without version suffix
+            // e.g., libSDL2-2.0.0.dylib -> libSDL2.dylib
+            if lib_name.contains('-') {
+                if let Some(base_name) = lib_name.split('-').next() {
+                    paths.push(format!("/opt/homebrew/lib/{}.dylib", base_name));
+                    paths.push(format!("/usr/local/lib/{}.dylib", base_name));
+                }
+            }
+            
+            // Try to load from each path
+            let mut loaded = false;
+            for path in &paths {
+                let path_cstr = CString::new(path.as_str())?;
+                let dep_start = std::time::Instant::now();
+                let handle = unsafe { libc::dlopen(path_cstr.as_ptr(), RTLD_LAZY | RTLD_GLOBAL) };
+                if !handle.is_null() {
+                    let elapsed = dep_start.elapsed();
+                    eprintln!("  {:.1}ms {}", elapsed.as_secs_f64() * 1000.0, path);
+                    loaded = true;
+                    break;
+                }
+            }
+            
+            if !loaded {
+                eprintln!("Warning: Failed to load dependency: {} (tried: {:?})", lib_name, paths);
+            }
+        }
+                
+        Ok(())
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    fn load_dependencies(&self, _dependencies: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+        // On non-macOS platforms, dependencies are handled by the system loader
+        Ok(())
+    }
 
     pub fn load(&self, lib_path: &str) -> Result<String, Box<dyn std::error::Error>> {
         let lib_name = std::path::Path::new(lib_path)
@@ -55,8 +143,16 @@ impl LibraryRegistry {
                     let load_start = std::time::Instant::now();
                     let mut loader = MachoLoader::new();
                     
+                    // First, parse dependencies
+                    let dependencies = unsafe { loader.parse_dependencies(lib_path)? };
+                    
+                    // Load dependencies BEFORE finishing the load
+                    // This ensures symbols are available when processing lazy bindings
+                    self.load_dependencies(&dependencies)?;
+                    
+                    // Now finish loading with dependencies available
                     unsafe {
-                        loader.load(lib_path)?;
+                        loader.finish_loading()?;
                     }
                     
                     let load_time = load_start.elapsed();
