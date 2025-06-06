@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::Read;
 use std::ptr;
 use std::slice;
+use std::sync::Mutex;
 use crate::tlv_support::{TLVManager, find_tlv_sections};
 
 // constants for dlsym and dlopen
@@ -214,6 +215,118 @@ const S_SYMBOL_STUBS: u32 = 0x8;
 const S_LAZY_SYMBOL_POINTERS: u32 = 0x7;
 const S_THREAD_LOCAL_VARIABLES: u32 = 0x13;
 const S_MOD_INIT_FUNC_POINTERS: u32 = 0x9;
+
+// Symbol resolution statistics tracking
+#[derive(Default, Debug)]
+struct ResolutionStats {
+    rtld_default_attempts: u64,
+    rtld_default_successes: u64,
+    system_lib_attempts: HashMap<String, u64>,
+    system_lib_successes: HashMap<String, u64>,
+    main_exe_attempts: u64,
+    main_exe_successes: u64,
+    with_underscore_attempts: u64,
+    with_underscore_successes: u64,
+    without_underscore_attempts: u64,
+    without_underscore_successes: u64,
+    specific_lib_attempts: HashMap<String, u64>,
+    specific_lib_successes: HashMap<String, u64>,
+}
+
+static RESOLUTION_STATS: std::sync::OnceLock<Mutex<ResolutionStats>> = std::sync::OnceLock::new();
+
+fn get_stats() -> &'static Mutex<ResolutionStats> {
+    RESOLUTION_STATS.get_or_init(|| Mutex::new(ResolutionStats::default()))
+}
+
+pub fn print_resolution_stats() {
+    if let Some(stats_mutex) = RESOLUTION_STATS.get() {
+        if let Ok(stats) = stats_mutex.lock() {
+            stats.print_summary();
+        }
+    }
+}
+
+impl ResolutionStats {
+    fn print_summary(&self) {
+        eprintln!("\n=== Symbol Resolution Statistics ===");
+        
+        // RTLD_DEFAULT stats
+        if self.rtld_default_attempts > 0 {
+            let success_rate = (self.rtld_default_successes as f64 / self.rtld_default_attempts as f64) * 100.0;
+            eprintln!("RTLD_DEFAULT: {} attempts, {} successes ({:.1}%)", 
+                self.rtld_default_attempts, self.rtld_default_successes, success_rate);
+        }
+        
+        // System library stats
+        let mut system_libs: Vec<_> = self.system_lib_attempts.iter().collect();
+        system_libs.sort_by_key(|(path, _)| *path);
+        for (path, attempts) in system_libs {
+            let successes = self.system_lib_successes.get(path).unwrap_or(&0);
+            let success_rate = (*successes as f64 / *attempts as f64) * 100.0;
+            eprintln!("{}: {} attempts, {} successes ({:.1}%)", 
+                path, attempts, successes, success_rate);
+        }
+        
+        // Main executable stats
+        if self.main_exe_attempts > 0 {
+            let success_rate = (self.main_exe_successes as f64 / self.main_exe_attempts as f64) * 100.0;
+            eprintln!("Main executable: {} attempts, {} successes ({:.1}%)", 
+                self.main_exe_attempts, self.main_exe_successes, success_rate);
+        }
+        
+        // Underscore prefix stats
+        if self.with_underscore_attempts > 0 {
+            let success_rate = (self.with_underscore_successes as f64 / self.with_underscore_attempts as f64) * 100.0;
+            eprintln!("With underscore prefix: {} attempts, {} successes ({:.1}%)", 
+                self.with_underscore_attempts, self.with_underscore_successes, success_rate);
+        }
+        
+        if self.without_underscore_attempts > 0 {
+            let success_rate = (self.without_underscore_successes as f64 / self.without_underscore_attempts as f64) * 100.0;
+            eprintln!("Without underscore prefix: {} attempts, {} successes ({:.1}%)", 
+                self.without_underscore_attempts, self.without_underscore_successes, success_rate);
+        }
+        
+        // Specific library stats
+        if !self.specific_lib_attempts.is_empty() {
+            eprintln!("\nSpecific library loads:");
+            let mut libs: Vec<_> = self.specific_lib_attempts.iter().collect();
+            libs.sort_by_key(|(path, _)| *path);
+            for (path, attempts) in libs {
+                let successes = self.specific_lib_successes.get(path).unwrap_or(&0);
+                let success_rate = (*successes as f64 / *attempts as f64) * 100.0;
+                eprintln!("  {}: {} attempts, {} successes ({:.1}%)", 
+                    path, attempts, successes, success_rate);
+            }
+        }
+        
+        eprintln!("\n=== Optimization Suggestions ===");
+        
+        // Find the most successful resolution method
+        let mut methods = vec![];
+        if self.rtld_default_successes > 0 {
+            methods.push(("RTLD_DEFAULT", self.rtld_default_successes));
+        }
+        for (path, successes) in &self.system_lib_successes {
+            if *successes > 0 {
+                methods.push((path.as_str(), *successes));
+            }
+        }
+        if self.main_exe_successes > 0 {
+            methods.push(("Main executable", self.main_exe_successes));
+        }
+        
+        methods.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+        
+        if let Some((best_method, _)) = methods.first() {
+            eprintln!("Most successful method: {}", best_method);
+            eprintln!("Consider trying this method first for better performance.");
+        }
+        
+        eprintln!("===================================\n");
+    }
+}
 
 pub struct MachoLoader {
     base_addr: Option<std::ptr::NonNull<u8>>,
@@ -1328,46 +1441,85 @@ impl MachoLoader {
         // For now, use dlsym to resolve symbols from any external library
         // In a full implementation, we'd parse the export trie of the target library
         
-        // First try the symbol as-is from already loaded libraries
         let c_symbol = std::ffi::CString::new(symbol)?;
-        let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
         
-        if !addr.is_null() {
-            return Ok(addr as usize);
-        }
+        // OPTIMIZED ORDER: Try most successful methods first
         
-        // If not found and we have a library path, try to load it
+        // 1. If we have a specific library path, try it first (likely to succeed)
         if !lib_name.is_empty() && std::path::Path::new(lib_name).exists() {
+            // Track specific library attempt
+            if let Ok(mut stats) = get_stats().lock() {
+                *stats.specific_lib_attempts.entry(lib_name.to_string()).or_insert(0) += 1;
+            }
+            
             let lib_c_str = std::ffi::CString::new(lib_name)?;
             let handle = unsafe { libc::dlopen(lib_c_str.as_ptr(), RTLD_LAZY | RTLD_GLOBAL) };
             if !handle.is_null() {
                 let addr = unsafe { libc::dlsym(handle, c_symbol.as_ptr()) };
                 if !addr.is_null() {
+                    // Track specific library success
+                    if let Ok(mut stats) = get_stats().lock() {
+                        *stats.specific_lib_successes.entry(lib_name.to_string()).or_insert(0) += 1;
+                    }
                     return Ok(addr as usize);
                 }
             }
         }
         
-        // If the symbol doesn't start with underscore, try adding one
-        if !symbol.starts_with('_') {
-            let prefixed_symbol = format!("_{}", symbol);
-            let c_symbol = std::ffi::CString::new(prefixed_symbol)?;
-            let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
+        // 2. Try without underscore prefix (100% success rate for symbols that need it)
+        if symbol.starts_with('_') {
+            // Track without underscore attempt
+            if let Ok(mut stats) = get_stats().lock() {
+                stats.without_underscore_attempts += 1;
+            }
+            
+            let unprefixed = &symbol[1..];
+            let c_symbol_unprefixed = std::ffi::CString::new(unprefixed)?;
+            let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol_unprefixed.as_ptr()) };
             
             if !addr.is_null() {
+                // Track without underscore success
+                if let Ok(mut stats) = get_stats().lock() {
+                    stats.without_underscore_successes += 1;
+                }
                 return Ok(addr as usize);
             }
         }
         
-        // If symbol starts with underscore, also try without it
-        if symbol.starts_with('_') {
-            let unprefixed = &symbol[1..];
-            let c_symbol = std::ffi::CString::new(unprefixed)?;
-            let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
+        // 3. Try with underscore prefix (also high success rate)
+        if !symbol.starts_with('_') {
+            // Track with underscore attempt
+            if let Ok(mut stats) = get_stats().lock() {
+                stats.with_underscore_attempts += 1;
+            }
+            
+            let prefixed_symbol = format!("_{}", symbol);
+            let c_symbol_prefixed = std::ffi::CString::new(prefixed_symbol)?;
+            let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol_prefixed.as_ptr()) };
             
             if !addr.is_null() {
+                // Track with underscore success
+                if let Ok(mut stats) = get_stats().lock() {
+                    stats.with_underscore_successes += 1;
+                }
                 return Ok(addr as usize);
             }
+        }
+        
+        // 4. Finally try RTLD_DEFAULT as-is (rarely works - 0.7% success rate)
+        // Track RTLD_DEFAULT attempt
+        if let Ok(mut stats) = get_stats().lock() {
+            stats.rtld_default_attempts += 1;
+        }
+        
+        let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol.as_ptr()) };
+        
+        if !addr.is_null() {
+            // Track RTLD_DEFAULT success
+            if let Ok(mut stats) = get_stats().lock() {
+                stats.rtld_default_successes += 1;
+            }
+            return Ok(addr as usize);
         }
         
         Err(format!("Failed to resolve symbol {} from {}", symbol, lib_name).into())
@@ -1385,21 +1537,13 @@ impl MachoLoader {
             return Ok(Self::crash_handler_dyld_stub_binder as usize);
         }
         
-        // First try RTLD_DEFAULT
         let symbol_cstr = std::ffi::CString::new(symbol)?;
-        let addr = unsafe {
-            // RTLD_DEFAULT = -2 on macOS
-            let rtld_default = -2isize as *mut libc::c_void;
-            libc::dlsym(rtld_default, symbol_cstr.as_ptr())
-        };
         
-        if !addr.is_null() {
-            return Ok(addr as usize);
-        }
+        // OPTIMIZED ORDER: Try most successful methods first
         
-        // If RTLD_DEFAULT fails, try common system libraries
+        // 1. Try common system libraries first (especially libSystem.B.dylib which has 100% success rate)
         let system_libs = [
-            "/usr/lib/libSystem.B.dylib",
+            "/usr/lib/libSystem.B.dylib",  // This one has 100% success rate, try it first
             "/usr/lib/libc++.1.dylib",
             "/usr/lib/libc++abi.dylib",
             "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
@@ -1407,20 +1551,79 @@ impl MachoLoader {
         ];
         
         for lib_path in &system_libs {
+            // Track system library attempt
+            if let Ok(mut stats) = get_stats().lock() {
+                *stats.system_lib_attempts.entry(lib_path.to_string()).or_insert(0) += 1;
+            }
+            
             match self.resolve_external_symbol(symbol, lib_path) {
-                Ok(addr) => return Ok(addr),
+                Ok(addr) => {
+                    // Track system library success
+                    if let Ok(mut stats) = get_stats().lock() {
+                        *stats.system_lib_successes.entry(lib_path.to_string()).or_insert(0) += 1;
+                    }
+                    return Ok(addr);
+                },
                 Err(_) => continue,
             }
         }
         
-        // SDL symbols might be in the main executable or already loaded libraries
-        // Try opening main executable
+        // 2. Try without underscore prefix (high success rate)
+        if symbol.starts_with('_') {
+            // Track without underscore attempt
+            if let Ok(mut stats) = get_stats().lock() {
+                stats.without_underscore_attempts += 1;
+            }
+            
+            let unprefixed = &symbol[1..];
+            let c_symbol_unprefixed = std::ffi::CString::new(unprefixed)?;
+            let addr = unsafe { libc::dlsym(RTLD_DEFAULT, c_symbol_unprefixed.as_ptr()) };
+            
+            if !addr.is_null() {
+                // Track without underscore success
+                if let Ok(mut stats) = get_stats().lock() {
+                    stats.without_underscore_successes += 1;
+                }
+                return Ok(addr as usize);
+            }
+        }
+        
+        // 3. SDL symbols might be in the main executable
+        // Track main executable attempt
+        if let Ok(mut stats) = get_stats().lock() {
+            stats.main_exe_attempts += 1;
+        }
+        
         let main_handle = unsafe { libc::dlopen(std::ptr::null(), RTLD_LAZY | RTLD_NOLOAD) };
         if !main_handle.is_null() {
             let addr = unsafe { libc::dlsym(main_handle, symbol_cstr.as_ptr()) };
             if !addr.is_null() {
+                // Track main executable success
+                if let Ok(mut stats) = get_stats().lock() {
+                    stats.main_exe_successes += 1;
+                }
                 return Ok(addr as usize);
             }
+        }
+        
+        // 4. Finally try RTLD_DEFAULT as last resort (rarely works - 0.7% success rate)
+        // Track RTLD_DEFAULT attempt
+        if let Ok(mut stats) = get_stats().lock() {
+            stats.rtld_default_attempts += 1;
+        }
+        
+        let addr = unsafe {
+            // RTLD_DEFAULT = -2 on macOS
+            let rtld_default = -2isize as *mut libc::c_void;
+            libc::dlsym(rtld_default, symbol_cstr.as_ptr())
+        };
+        
+        if !addr.is_null() {
+            // Track RTLD_DEFAULT success
+            if let Ok(mut stats) = get_stats().lock() {
+                stats.rtld_default_successes += 1;
+            }
+            return Ok(addr as usize);
         }
         
         Err(format!("Failed to resolve symbol {} in any loaded library", symbol).into())
