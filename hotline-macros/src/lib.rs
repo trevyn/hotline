@@ -1,6 +1,8 @@
 use proc_macro::TokenStream;
 use proc_macro_error2::proc_macro_error;
 use quote::{ToTokens, quote};
+use std::collections::HashSet;
+use std::fs;
 use std::process::Command;
 use syn::Type;
 
@@ -11,11 +13,12 @@ mod parser;
 mod utils;
 
 use codegen::core::generate_core_functions;
+use codegen::custom_types::generate_custom_type_proxies_for_types;
 use codegen::fields::{generate_default_impl, generate_field_accessors, generate_setter_builder_methods};
 use codegen::methods::generate_method_wrappers;
 use codegen::process_struct_attributes;
 use codegen::wrapper::generate_typed_wrappers;
-use discovery::find_referenced_object_types;
+use discovery::{extract_object_methods, find_referenced_custom_types, find_referenced_object_types};
 use parser::ObjectInput;
 use syn::Fields;
 
@@ -54,7 +57,7 @@ fn add_registry_field(struct_item: &syn::ItemStruct) -> proc_macro2::TokenStream
 #[proc_macro]
 #[proc_macro_error]
 pub fn object(input: TokenStream) -> TokenStream {
-    let ObjectInput { struct_item, impl_blocks } = syn::parse_macro_input!(input as ObjectInput);
+    let ObjectInput { type_defs, struct_item, impl_blocks } = syn::parse_macro_input!(input as ObjectInput);
     let struct_name = &struct_item.ident;
     let rustc_commit = get_rustc_commit_hash();
 
@@ -115,8 +118,94 @@ pub fn object(input: TokenStream) -> TokenStream {
     let setter_builder_impl = generate_setter_builder_methods(struct_name, &processed);
     let default_impl =
         should_generate_default.then(|| generate_default_impl(struct_name, &processed)).unwrap_or_default();
-    let typed_wrappers =
-        generate_typed_wrappers(&find_referenced_object_types(&struct_item, &impl_blocks), &rustc_commit);
+    let referenced_objects = find_referenced_object_types(&struct_item, &impl_blocks);
+
+    // Collect all objects and custom types transitively
+    let mut all_objects = referenced_objects.clone();
+    let mut objects_to_check = referenced_objects.clone();
+    let mut all_custom_types = HashSet::new();
+
+    let mut iteration = 0;
+    while !objects_to_check.is_empty() && iteration < 5 {
+        iteration += 1;
+
+        let mut new_objects = HashSet::new();
+
+        // Check each object for its dependencies
+        for object_name in &objects_to_check {
+            let lib_path = crate::discovery::find_object_lib_file(object_name);
+            if lib_path.exists() {
+                if let Ok(content) = fs::read_to_string(&lib_path) {
+                    if let Ok(file) = syn::parse_file(&content) {
+                        // Collect custom types from this object
+                        let mut file_types = HashSet::new();
+                        crate::codegen::wrapper::collect_custom_types_from_file(&file, &mut file_types);
+                        all_custom_types.extend(file_types);
+
+                        // Get methods and collect types from method signatures
+                        if let Some(methods) = extract_object_methods(&file, object_name) {
+                            for (_, _, param_types, return_type, _) in &methods {
+                                let mut method_types = HashSet::new();
+                                crate::codegen::wrapper::collect_custom_types_from_type(return_type, &mut method_types);
+                                for param_type in param_types {
+                                    crate::codegen::wrapper::collect_custom_types_from_type(
+                                        param_type,
+                                        &mut method_types,
+                                    );
+                                }
+
+                                // Separate into objects and custom types
+                                for type_name in method_types {
+                                    let type_lib_path = crate::discovery::find_object_lib_file(&type_name);
+                                    if type_lib_path.exists() && !all_objects.contains(&type_name) {
+                                        new_objects.insert(type_name);
+                                    } else if !type_lib_path.exists() {
+                                        all_custom_types.insert(type_name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add new objects for next iteration
+        all_objects.extend(new_objects.clone());
+        objects_to_check = new_objects;
+    }
+
+    // Generate wrappers for all objects at once
+    let additional_wrappers = generate_typed_wrappers(&all_objects, &rustc_commit).0;
+
+    // Merge custom types found in the current object with those found transitively
+    let local_custom_types = find_referenced_custom_types(&struct_item, &impl_blocks);
+    all_custom_types.extend(local_custom_types);
+
+    // Get names of types defined in this object to exclude them from proxies
+    let local_type_names: HashSet<String> = type_defs
+        .iter()
+        .filter_map(|td| match td {
+            syn::Item::Struct(s) => Some(s.ident.to_string()),
+            syn::Item::Enum(e) => Some(e.ident.to_string()),
+            _ => None,
+        })
+        .collect();
+
+    // Only generate proxies for:
+    // 1. Custom types (not object types)
+    // 2. Not defined locally in this object
+    let external_custom_types: HashSet<String> = all_custom_types
+        .into_iter()
+        .filter(|t| !local_type_names.contains(t))
+        .filter(|t| {
+            // Check if this is an object type
+            let lib_path = crate::discovery::find_object_lib_file(t);
+            !lib_path.exists() // Only include if it's NOT an object type
+        })
+        .collect();
+
+    let custom_type_proxies = generate_custom_type_proxies_for_types(&external_custom_types);
 
     let modified_struct = &processed.modified_struct;
 
@@ -126,6 +215,10 @@ pub fn object(input: TokenStream) -> TokenStream {
     let output = quote! {
         #[allow(dead_code)]
         type Like<T> = T;
+
+        #(#type_defs)*
+
+        #custom_type_proxies
 
         #struct_with_registry
         #main_impl
@@ -148,7 +241,7 @@ pub fn object(input: TokenStream) -> TokenStream {
         #(#field_accessors)*
         #(#method_wrappers)*
         #core_functions
-        #typed_wrappers
+        #additional_wrappers
     };
 
     TokenStream::from(output)

@@ -17,6 +17,7 @@ hotline::object!({
     pub struct Application {
         window_manager: Option<WindowManager>,
         code_editor: Option<CodeEditor>,
+        gpu_renderer: Option<GPURenderer>,
     }
 
     impl Application {
@@ -29,10 +30,18 @@ hotline::object!({
                 return Err("Application registry not available during initialize".into());
             }
 
+            // Create GPU renderer
+            self.gpu_renderer = Some(GPURenderer::new());
+
             // Create window manager
             self.window_manager = Some(WindowManager::new());
             if let Some(ref mut wm) = self.window_manager {
                 wm.initialize();
+
+                // Set up GPU rendering
+                if let Some(ref mut gpu) = self.gpu_renderer {
+                    wm.setup_gpu_rendering(gpu);
+                }
             }
 
             // Create code editor
@@ -149,6 +158,16 @@ hotline::object!({
                 // Render
                 self.render_frame(&mut texture)?;
 
+                // GPU render on top
+                if let (Some(gpu), Some(wm)) = (&mut self.gpu_renderer, &mut self.window_manager) {
+                    wm.render_gpu(gpu);
+                }
+
+                if let Some(ref mut gpu) = self.gpu_renderer {
+                    // Execute GPU rendering commands
+                    Self::execute_gpu_commands_static(&mut canvas, gpu)?;
+                }
+
                 canvas.copy(&texture, None, None)?;
                 canvas.present();
                 ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
@@ -177,6 +196,75 @@ hotline::object!({
                     editor.render(buffer, 800, 600, pitch as i64);
                 }
             })?;
+            Ok(())
+        }
+
+        fn execute_gpu_commands_static(
+            canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
+            gpu: &mut GPURenderer,
+        ) -> Result<(), String> {
+            use sdl2::pixels::PixelFormatEnum;
+            use sdl2::rect::Rect;
+            use std::collections::HashMap;
+
+            let texture_creator = canvas.texture_creator();
+            let mut textures = HashMap::new();
+
+            // Create textures for all atlases
+            for atlas in gpu.atlases() {
+                let mut texture = match atlas.format {
+                    AtlasFormat::GrayscaleAlpha => texture_creator
+                        .create_texture_static(PixelFormatEnum::ABGR8888, atlas.width, atlas.height)
+                        .map_err(|e| e.to_string())?,
+                    AtlasFormat::RGBA => texture_creator
+                        .create_texture_static(PixelFormatEnum::RGBA8888, atlas.width, atlas.height)
+                        .map_err(|e| e.to_string())?,
+                };
+
+                // Convert atlas data to texture format
+                let rgba_data = match atlas.format {
+                    AtlasFormat::GrayscaleAlpha => {
+                        let mut rgba = vec![0u8; (atlas.width * atlas.height * 4) as usize];
+                        for i in 0..(atlas.width * atlas.height) as usize {
+                            let _gray = atlas.data[i * 2];
+                            let alpha = atlas.data[i * 2 + 1];
+                            rgba[i * 4] = alpha; // A
+                            rgba[i * 4 + 1] = 255; // B
+                            rgba[i * 4 + 2] = 255; // G  
+                            rgba[i * 4 + 3] = 255; // R
+                        }
+                        rgba
+                    }
+                    AtlasFormat::RGBA => atlas.data.clone(),
+                };
+
+                texture.update(None, &rgba_data, (atlas.width * 4) as usize).map_err(|e| e.to_string())?;
+                textures.insert(atlas.id, texture);
+            }
+
+            // Execute render commands
+            for command in gpu.commands() {
+                match command {
+                    RenderCommand::Atlas { texture_id, src_x, src_y, src_width, src_height, dest_x, dest_y, color } => {
+                        if let Some(texture) = textures.get(&texture_id) {
+                            let src_rect = Rect::new(src_x as i32, src_y as i32, src_width, src_height);
+
+                            let dst_rect = Rect::new(dest_x as i32, dest_y as i32, src_width, src_height);
+
+                            // Apply color modulation
+                            canvas.set_draw_color(sdl2::pixels::Color::RGBA(
+                                color.2, // R
+                                color.1, // G
+                                color.0, // B
+                                color.3, // A
+                            ));
+
+                            canvas.copy(texture, src_rect, dst_rect)?;
+                        }
+                    }
+                }
+            }
+
             Ok(())
         }
 

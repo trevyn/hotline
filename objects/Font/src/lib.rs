@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 
-#[derive(Clone, Default)]
-struct Glyph {
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-    offset_x: i32,
-    offset_y: i32,
-    advance: u32,
-}
-
 hotline::object!({
+    #[derive(Clone, Default)]
+    struct Glyph {
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        offset_x: i32,
+        offset_y: i32,
+        advance: u32,
+    }
+
     #[derive(Clone, Default)]
     pub struct Font {
         pub size: u32,

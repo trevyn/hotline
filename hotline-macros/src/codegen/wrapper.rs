@@ -1,12 +1,85 @@
 use quote::{format_ident, quote};
 use std::collections::HashSet;
 use std::fs;
-use syn::Type;
+use syn::{Item, Type};
 
 use crate::codegen::methods::{MethodGenConfig, generate_method_impl};
 use crate::discovery::{ReceiverType, extract_object_methods, find_object_lib_file};
 
-pub fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> proc_macro2::TokenStream {
+pub fn collect_custom_types_from_type(ty: &Type, types: &mut HashSet<String>) {
+    match ty {
+        Type::Path(type_path) => {
+            if let Some(ident) = type_path.path.get_ident() {
+                let name = ident.to_string();
+                // Look for custom types (uppercase first letter, not common types)
+                if !name.starts_with(char::is_lowercase)
+                    && name != "String"
+                    && name != "Vec"
+                    && name != "Option"
+                    && name != "Result"
+                    && name != "Self"
+                {
+                    types.insert(name);
+                }
+            }
+        }
+        Type::Reference(type_ref) => {
+            collect_custom_types_from_type(&type_ref.elem, types);
+        }
+        Type::Slice(type_slice) => {
+            collect_custom_types_from_type(&type_slice.elem, types);
+        }
+        Type::Array(type_array) => {
+            collect_custom_types_from_type(&type_array.elem, types);
+        }
+        Type::Ptr(type_ptr) => {
+            collect_custom_types_from_type(&type_ptr.elem, types);
+        }
+        Type::Tuple(type_tuple) => {
+            for elem in &type_tuple.elems {
+                collect_custom_types_from_type(elem, types);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub fn collect_custom_types_from_file(file: &syn::File, types: &mut HashSet<String>) {
+    for item in &file.items {
+        match item {
+            Item::Macro(item_macro)
+                if item_macro.mac.path.is_ident("object")
+                    || (item_macro.mac.path.segments.len() == 2
+                        && item_macro.mac.path.segments[0].ident == "hotline"
+                        && item_macro.mac.path.segments[1].ident == "object") =>
+            {
+                // Parse the object! macro to find custom types
+                if let Ok(parsed) = syn::parse2::<crate::parser::ObjectInput>(item_macro.mac.tokens.clone()) {
+                    // Collect types defined in the object
+                    for type_def in &parsed.type_defs {
+                        match type_def {
+                            Item::Struct(s) => {
+                                types.insert(s.ident.to_string());
+                            }
+                            Item::Enum(e) => {
+                                types.insert(e.ident.to_string());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+pub fn generate_typed_wrappers(
+    types: &HashSet<String>,
+    rustc_commit: &str,
+) -> (proc_macro2::TokenStream, HashSet<String>) {
+    let mut all_types = HashSet::new();
+
     let wrappers: Vec<_> = types
         .iter()
         .filter_map(|type_name| {
@@ -20,12 +93,28 @@ pub fn generate_typed_wrappers(types: &HashSet<String>, rustc_commit: &str) -> p
             fs::read_to_string(&lib_path)
                 .ok()
                 .and_then(|content| syn::parse_file(&content).ok())
-                .and_then(|file| extract_object_methods(&file, type_name))
-                .map(|methods| generate_typed_wrapper(type_name, &methods, rustc_commit))
+                .and_then(|file| {
+                    // Also look for custom types defined in this object file
+                    collect_custom_types_from_file(&file, &mut all_types);
+
+                    extract_object_methods(&file, type_name)
+                })
+                .map(|methods| {
+                    // Collect types from method signatures
+                    for (_, _, param_types, return_type, _) in &methods {
+                        let mut method_types = HashSet::new();
+                        collect_custom_types_from_type(return_type, &mut method_types);
+                        for param_type in param_types {
+                            collect_custom_types_from_type(param_type, &mut method_types);
+                        }
+                        all_types.extend(method_types);
+                    }
+                    generate_typed_wrapper(type_name, &methods, rustc_commit)
+                })
         })
         .collect();
 
-    quote! { #(#wrappers)* }
+    (quote! { #(#wrappers)* }, all_types)
 }
 
 fn generate_typed_wrapper(

@@ -86,6 +86,71 @@ pub mod types {
         name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && !is_standard_type(name)
     }
 
+    pub fn is_primitive_type(name: &str) -> bool {
+        matches!(
+            name,
+            "i8" | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+                | "f32"
+                | "f64"
+                | "bool"
+                | "char"
+                | "str"
+        )
+    }
+
+    pub fn contains_external_type(ty: &Type) -> bool {
+        match ty {
+            Type::Path(tp) => {
+                if let Some(ident) = tp.path.get_ident() {
+                    let name = ident.to_string();
+                    // if it's not object, not standard, not primitive, it's external
+                    !is_object_type(&name) && !is_standard_type(&name) && !is_primitive_type(&name)
+                } else if tp.path.segments.len() > 1 {
+                    // multi-segment paths like sdl2::render::Canvas are external
+                    true
+                } else {
+                    false
+                }
+            }
+            Type::Reference(tr) => contains_external_type(&tr.elem),
+            Type::Slice(ts) => contains_external_type(&ts.elem),
+            Type::Array(ta) => contains_external_type(&ta.elem),
+            Type::Tuple(tt) => tt.elems.iter().any(contains_external_type),
+            _ => false,
+        }
+    }
+
+    pub fn contains_reference(ty: &Type) -> bool {
+        match ty {
+            Type::Reference(_) => true,
+            Type::Path(tp) => {
+                // Check if it's Option<&T> or similar
+                if let Some(seg) = tp.path.segments.last() {
+                    if let PathArguments::AngleBracketed(args) = &seg.arguments {
+                        return args.args.iter().any(|arg| {
+                            if let GenericArgument::Type(inner_ty) = arg { contains_reference(inner_ty) } else { false }
+                        });
+                    }
+                }
+                false
+            }
+            Type::Slice(_) => true, // slices are reference types
+            Type::Array(ta) => contains_reference(&ta.elem),
+            Type::Tuple(tt) => tt.elems.iter().any(contains_reference),
+            _ => false,
+        }
+    }
+
     pub fn is_generic_type(ty: &Type) -> bool {
         if let Type::Path(type_path) = ty {
             type_path.path.segments.iter().any(|seg| matches!(seg.arguments, PathArguments::AngleBracketed(_)))

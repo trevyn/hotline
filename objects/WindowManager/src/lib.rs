@@ -168,5 +168,33 @@ hotline::object!({
                 text_renderer.render(buffer, buffer_width, buffer_height, pitch);
             }
         }
+
+        pub fn setup_gpu_rendering(&mut self, gpu_renderer: &mut GPURenderer) {
+            // Register text atlas if we have one
+            if let Some(ref mut text_renderer) = self.text_renderer {
+                if text_renderer.has_atlas() {
+                    let atlas_id = gpu_renderer.register_atlas(
+                        text_renderer.atlas_data(),
+                        text_renderer.atlas_dimensions().0,
+                        text_renderer.atlas_dimensions().1,
+                        AtlasFormat::GrayscaleAlpha,
+                    );
+                    text_renderer.set_atlas_id(atlas_id);
+                }
+            }
+        }
+
+        pub fn render_gpu(&mut self, gpu_renderer: &mut GPURenderer) {
+            gpu_renderer.clear_commands();
+
+            // Generate render commands from text renderer
+            if let Some(ref mut text_renderer) = self.text_renderer {
+                text_renderer.generate_commands(gpu_renderer);
+            }
+        }
+
+        pub fn text_renderer(&mut self) -> Option<&mut TextRenderer> {
+            self.text_renderer.as_mut()
+        }
     }
 });

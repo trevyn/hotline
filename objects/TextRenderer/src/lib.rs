@@ -19,6 +19,7 @@ hotline::object!({
         atlas_width: u32,
         atlas_height: u32,
         initialized: bool,
+        atlas_id: Option<u32>,
     }
 
     impl TextRenderer {
@@ -155,6 +156,83 @@ hotline::object!({
                     cursor_x += advance as f64;
                 }
             }
+        }
+
+        pub fn register_atlas(&mut self, gpu_renderer: &mut GPURenderer) {
+            if !self.initialized {
+                self.initialize();
+            }
+
+            if self.atlas_id.is_none() && !self.atlas.is_empty() {
+                let id = gpu_renderer.register_atlas(
+                    self.atlas.clone(),
+                    self.atlas_width,
+                    self.atlas_height,
+                    AtlasFormat::GrayscaleAlpha,
+                );
+                self.atlas_id = Some(id);
+            }
+        }
+
+        pub fn generate_commands(&mut self, gpu_renderer: &mut GPURenderer) {
+            if !self.initialized {
+                self.initialize();
+            }
+
+            let font = match &mut self.font {
+                Some(f) => f,
+                None => return,
+            };
+
+            let atlas_id = match self.atlas_id {
+                Some(id) => id,
+                None => return,
+            };
+
+            let mut cursor_x = self.x;
+            let cursor_y = self.y;
+
+            for ch in self.text.chars() {
+                if ch == ' ' {
+                    cursor_x += font.space_width() as f64;
+                    continue;
+                }
+
+                if let Some((glyph_x, glyph_y, glyph_width, glyph_height, offset_x, offset_y, advance)) = font.glyph(ch)
+                {
+                    let dest_x = cursor_x + offset_x as f64;
+                    let dest_y = cursor_y + offset_y as f64 + font.size() as f64;
+
+                    gpu_renderer.add_command(RenderCommand::Atlas {
+                        texture_id: atlas_id,
+                        src_x: glyph_x,
+                        src_y: glyph_y,
+                        src_width: glyph_width,
+                        src_height: glyph_height,
+                        dest_x,
+                        dest_y,
+                        color: self.color,
+                    });
+
+                    cursor_x += advance as f64;
+                }
+            }
+        }
+
+        pub fn atlas_data(&self) -> Vec<u8> {
+            self.atlas.clone()
+        }
+
+        pub fn atlas_dimensions(&self) -> (u32, u32) {
+            (self.atlas_width, self.atlas_height)
+        }
+
+        pub fn has_atlas(&self) -> bool {
+            !self.atlas.is_empty()
+        }
+
+        pub fn set_atlas_id(&mut self, id: u32) {
+            self.atlas_id = Some(id);
         }
     }
 });

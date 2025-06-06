@@ -66,6 +66,97 @@ pub fn find_referenced_object_types(struct_item: &ItemStruct, impl_blocks: &[Ite
     visitor.types
 }
 
+pub fn find_referenced_custom_types(struct_item: &ItemStruct, impl_blocks: &[ItemImpl]) -> HashSet<String> {
+    struct CustomTypeVisitor {
+        types: HashSet<String>,
+        current_type: String,
+    }
+
+    impl<'ast> Visit<'ast> for CustomTypeVisitor {
+        fn visit_type(&mut self, ty: &'ast Type) {
+            match ty {
+                Type::Path(type_path) => {
+                    if let Some(ident) = type_path.path.get_ident() {
+                        let name = ident.to_string();
+                        // Look for custom types that might be shared (RenderCommand, AtlasFormat, etc)
+                        if name != self.current_type && name != "Self" 
+                            && !name.starts_with(char::is_lowercase) // Skip primitive types
+                            && name != "String" && name != "Vec" && name != "Option" && name != "Result"
+                        {
+                            self.types.insert(name);
+                        }
+                    }
+                }
+                Type::Reference(type_ref) => {
+                    // Also check types inside references
+                    self.visit_type(&type_ref.elem);
+                }
+                Type::Slice(type_slice) => {
+                    // Also check types inside slices
+                    self.visit_type(&type_slice.elem);
+                }
+                _ => {}
+            }
+            visit::visit_type(self, ty);
+        }
+
+        fn visit_impl_item_fn(&mut self, method: &'ast syn::ImplItemFn) {
+            // Visit method parameters
+            for input in &method.sig.inputs {
+                if let syn::FnArg::Typed(pat_type) = input {
+                    self.visit_type(&pat_type.ty);
+                }
+            }
+
+            // Visit return type
+            if let syn::ReturnType::Type(_, ty) = &method.sig.output {
+                self.visit_type(ty);
+            }
+
+            // Continue with default visitation (for method body)
+            visit::visit_impl_item_fn(self, method);
+        }
+
+        fn visit_expr(&mut self, expr: &'ast syn::Expr) {
+            match expr {
+                syn::Expr::Struct(expr_struct) => {
+                    // Handle simple struct construction: MyStruct { ... }
+                    if let Some(ident) = expr_struct.path.get_ident() {
+                        let name = ident.to_string();
+                        if name != self.current_type && !name.starts_with(char::is_lowercase) {
+                            self.types.insert(name);
+                        }
+                    }
+                    // Handle enum variant construction: RenderCommand::Atlas { ... }
+                    else if expr_struct.path.segments.len() > 1 {
+                        let type_name = expr_struct.path.segments[0].ident.to_string();
+                        if !type_name.starts_with(char::is_lowercase) {
+                            self.types.insert(type_name);
+                        }
+                    }
+                }
+                syn::Expr::Path(path_expr) => {
+                    // Handle type references: AtlasFormat::GrayscaleAlpha
+                    if path_expr.path.segments.len() > 1 {
+                        let type_name = path_expr.path.segments[0].ident.to_string();
+                        if !type_name.starts_with(char::is_lowercase) {
+                            self.types.insert(type_name);
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            visit::visit_expr(self, expr);
+        }
+    }
+
+    let mut visitor = CustomTypeVisitor { types: HashSet::new(), current_type: struct_item.ident.to_string() };
+    visitor.visit_item_struct(struct_item);
+    impl_blocks.iter().for_each(|block| visitor.visit_item_impl(block));
+    visitor.types
+}
+
 pub fn find_object_lib_file(type_name: &str) -> PathBuf {
     let find_workspace = |start: PathBuf| -> Option<PathBuf> {
         start.ancestors().find(|d| d.join("Cargo.toml").exists() && d.join("objects").exists()).map(PathBuf::from)
@@ -172,7 +263,7 @@ fn extract_impl_methods(
     main_impl: &ItemImpl,
     type_name: &str,
 ) -> Vec<(String, Vec<String>, Vec<Type>, Type, ReceiverType)> {
-    use crate::utils::types::resolve_self_type;
+    use crate::utils::types::{contains_external_type, contains_reference, resolve_self_type};
     use syn::{FnArg, ImplItem, Pat, ReturnType};
 
     main_impl
@@ -205,6 +296,16 @@ fn extract_impl_methods(
                     ReturnType::Default => syn::parse_quote! { () },
                     ReturnType::Type(_, ty) => resolve_self_type((**ty).clone(), type_name),
                 };
+
+                // Skip methods with external types
+                if param_types.iter().any(contains_external_type) || contains_external_type(&return_type) {
+                    return None;
+                }
+
+                // Skip methods that return references (can't proxy them across FFI)
+                if contains_reference(&return_type) {
+                    return None;
+                }
 
                 Some((method.sig.ident.to_string(), param_names, param_types, return_type, receiver_type))
             }
