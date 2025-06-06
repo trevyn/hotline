@@ -6,6 +6,7 @@ version = "0.1.0"
 [dependencies]
 base64 = "0.22"
 hotline = {path = "../hotline"}
+libc = "0.2"
 libloading = "0.8"
 notify = "8.0"
 rand = "0.9"

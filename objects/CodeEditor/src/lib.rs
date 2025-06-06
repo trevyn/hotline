@@ -66,29 +66,6 @@ hotline::object!({
             }
         }
 
-        pub fn compile_and_reload(&mut self, lib_name: &str) -> Result<(), String> {
-            let status = std::process::Command::new("cargo")
-                .args(["build", "--release", "-p", lib_name])
-                .status()
-                .map_err(|e| format!("Failed to run cargo: {}", e))?;
-            if !status.success() {
-                return Err("cargo build failed".into());
-            }
-
-            if let Some(registry) = self.get_registry() {
-                #[cfg(target_os = "macos")]
-                let lib_path = format!("target/release/lib{}.dylib", lib_name);
-                #[cfg(target_os = "linux")]
-                let lib_path = format!("target/release/lib{}.so", lib_name);
-                #[cfg(target_os = "windows")]
-                let lib_path = format!("target/release/{}.dll", lib_name);
-
-                registry.load(&lib_path).map_err(|e| format!("Failed to reload {}: {}", lib_name, e))?;
-                Ok(())
-            } else {
-                Err("registry not set".into())
-            }
-        }
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             if let Some(registry) = self.get_registry() {

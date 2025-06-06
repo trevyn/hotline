@@ -10,6 +10,7 @@ use crate::tlv_support::{TLVManager, find_tlv_sections};
 const RTLD_DEFAULT: *mut libc::c_void = -2isize as *mut libc::c_void;
 const RTLD_LAZY: libc::c_int = 0x1;
 const RTLD_GLOBAL: libc::c_int = 0x8;
+const RTLD_NOLOAD: libc::c_int = 0x10;
 
 #[repr(C)]
 struct MachHeader64 {
@@ -264,6 +265,33 @@ impl MachoLoader {
             tlv_manager: TLVManager::new(),
             lib_path: None,
         }
+    }
+    
+    // crash handler stubs - these should never be called
+    extern "C" fn crash_handler_tlv_bootstrap() {
+        eprintln!("[FATAL] __tlv_bootstrap was called!");
+        eprintln!("This should not happen - TLV thunks were not properly updated");
+        eprintln!("Stack trace:");
+        unsafe { libc::abort(); }
+    }
+    
+    extern "C" fn crash_handler_dyld_stub_binder() {
+        eprintln!("[FATAL] dyld_stub_binder was called!");
+        eprintln!("This should not happen - lazy binding should have been processed eagerly");
+        eprintln!("Stack trace:");
+        
+        // Try to get a backtrace
+        #[cfg(target_os = "macos")]
+        {
+            let mut buffer = [std::ptr::null_mut(); 128];
+            let frames = unsafe { libc::backtrace(buffer.as_mut_ptr(), 128) };
+            eprintln!("Backtrace ({} frames):", frames);
+            for i in 0..frames as usize {
+                eprintln!("  {}: {:?}", i, buffer[i]);
+            }
+        }
+        
+        unsafe { libc::abort(); }
     }
 
     pub unsafe fn load(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -682,13 +710,20 @@ impl MachoLoader {
     }
     
     unsafe fn bind_lazy_pointers(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        eprintln!("[bind_lazy_pointers] Processing lazy pointers for library: {:?}", self.lib_path);
+        
+        let mut _found_lazy_sections = false;
+        
         let Some(indirect_symbols) = &self.indirect_symbols else {
+            eprintln!("[bind_lazy_pointers] No indirect symbols found");
             return Ok(());
         };
         let Some(symtab_symbols) = &self.symtab_symbols else {
+            eprintln!("[bind_lazy_pointers] No symtab symbols found");
             return Ok(());
         };
         let Some(symtab_strings) = &self.symtab_strings else {
+            eprintln!("[bind_lazy_pointers] No symtab strings found");
             return Ok(());
         };
         
@@ -714,6 +749,9 @@ impl MachoLoader {
                     if section_type == S_LAZY_SYMBOL_POINTERS {
                         let ptr_count = section.size / 8;
                         let indirect_offset = section.reserved1 as usize;
+                        
+                        eprintln!("[bind_lazy_pointers] Found lazy pointer section with {} pointers at offset {}", ptr_count, indirect_offset);
+                        _found_lazy_sections = true;
                         
                         // Binding lazy pointers for section
                         
@@ -749,15 +787,23 @@ impl MachoLoader {
                                     let name = unsafe { std::ffi::CStr::from_ptr(name_ptr as *const i8) }.to_string_lossy();
                                     
                                     // resolve the symbol
-                                    match self.resolve_external_symbol(&name, "/usr/lib/libSystem.B.dylib") {
+                                    // eprintln!("[bind_lazy_pointers] resolving lazy symbol: {}", name);
+                                    // For lazy symbols, we don't know which library they come from
+                                    // Use RTLD_DEFAULT to search all loaded libraries
+                                    match self.resolve_symbol_any_library(&name) {
                                         Ok(addr) => {
                                             unsafe {
                                                 let ptr = la_ptr_base.add(i as usize);
+                                                let _old_val = *ptr;
                                                 *ptr = addr as u64;
+                                                // Only log errors, not successful binds
+                                                // eprintln!("[bind_lazy_pointers] bound {} at 0x{:x} (was 0x{:x}, now 0x{:x})", 
+                                                //     name, ptr as usize, old_val, addr);
                                             }
                                             // Bound lazy pointer
                                         }
-                                        Err(_e) => {
+                                        Err(e) => {
+                                            eprintln!("[bind_lazy_pointers] failed to bind {}: {}", name, e);
                                             // Failed to bind lazy pointer
                                         }
                                     }
@@ -1095,6 +1141,8 @@ impl MachoLoader {
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
                         
                         // Binding symbol
+                        eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
+                            symbol_name, ptr as usize, symbol_addr);
                         
                         unsafe { *ptr = symbol_addr as u64 };
                         
@@ -1119,6 +1167,8 @@ impl MachoLoader {
                         let base = self.base_addr.ok_or("base_addr not set")?;
                         let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
+                        eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
+                            symbol_name, ptr as usize, symbol_addr);
                         unsafe { *ptr = symbol_addr as u64 };
                         
                         // Bound symbol
@@ -1144,6 +1194,8 @@ impl MachoLoader {
                         let base = self.base_addr.ok_or("base_addr not set")?;
                         let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                         let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
+                        eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
+                            symbol_name, ptr as usize, symbol_addr);
                         unsafe { *ptr = symbol_addr as u64 };
                         
                         // Bound symbol
@@ -1173,6 +1225,8 @@ impl MachoLoader {
                             let base = self.base_addr.ok_or("base_addr not set")?;
                             let addr = (seg.vmaddr - self.base_vmaddr) + segment_offset;
                             let ptr = unsafe { base.as_ptr().add(addr as usize) as *mut u64 };
+                            eprintln!("[process_bind_info] binding {} at 0x{:x} to 0x{:x}", 
+                                symbol_name, ptr as usize, symbol_addr);
                             unsafe { *ptr = symbol_addr as u64 };
                             
                             // Bound symbol
@@ -1239,20 +1293,23 @@ impl MachoLoader {
     
     fn resolve_external_symbol(&self, symbol: &str, lib_name: &str) -> Result<usize, Box<dyn std::error::Error>> {
         // Resolving symbol
+        // eprintln!("[macho_loader] resolving symbol: {} from {}", symbol, lib_name);
         
         // Special case for __tlv_bootstrap - we don't use the system's version
         if symbol == "__tlv_bootstrap" {
             // We handle TLVs ourselves, so we don't need to resolve this
-            // Return a dummy address - it shouldn't be called since we update the thunks
-            return Ok(0x1000);
+            // Return address of our crash handler
+            eprintln!("[macho_loader] WARNING: returning crash handler for __tlv_bootstrap");
+            return Ok(Self::crash_handler_tlv_bootstrap as usize);
         }
         
         // Special case for dyld_stub_binder
         if symbol == "dyld_stub_binder" {
             // dyld_stub_binder is needed for lazy binding, but since we process
             // lazy binds eagerly, we can skip it
-            // return a dummy address - it shouldn't be called
-            return Ok(0x1000);
+            // Return address of our crash handler
+            eprintln!("[macho_loader] WARNING: returning crash handler for dyld_stub_binder");
+            return Ok(Self::crash_handler_dyld_stub_binder as usize);
         }
         
         // For now, use dlsym to resolve symbols from any external library
@@ -1301,6 +1358,58 @@ impl MachoLoader {
         }
         
         Err(format!("Failed to resolve symbol {} from {}", symbol, lib_name).into())
+    }
+    
+    fn resolve_symbol_any_library(&self, symbol: &str) -> Result<usize, Box<dyn std::error::Error>> {
+        // Special case for __tlv_bootstrap
+        if symbol == "__tlv_bootstrap" {
+            return Ok(Self::crash_handler_tlv_bootstrap as usize);
+        }
+        
+        // Special case for dyld_stub_binder
+        if symbol == "dyld_stub_binder" {
+            return Ok(Self::crash_handler_dyld_stub_binder as usize);
+        }
+        
+        // First try RTLD_DEFAULT
+        let symbol_cstr = std::ffi::CString::new(symbol)?;
+        let addr = unsafe {
+            // RTLD_DEFAULT = -2 on macOS
+            let rtld_default = -2isize as *mut libc::c_void;
+            libc::dlsym(rtld_default, symbol_cstr.as_ptr())
+        };
+        
+        if !addr.is_null() {
+            return Ok(addr as usize);
+        }
+        
+        // If RTLD_DEFAULT fails, try common system libraries
+        let system_libs = [
+            "/usr/lib/libSystem.B.dylib",
+            "/usr/lib/libc++.1.dylib",
+            "/usr/lib/libc++abi.dylib",
+            "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+            "/System/Library/Frameworks/Security.framework/Security",
+        ];
+        
+        for lib_path in &system_libs {
+            match self.resolve_external_symbol(symbol, lib_path) {
+                Ok(addr) => return Ok(addr),
+                Err(_) => continue,
+            }
+        }
+        
+        // SDL symbols might be in the main executable or already loaded libraries
+        // Try opening main executable
+        let main_handle = unsafe { libc::dlopen(std::ptr::null(), RTLD_LAZY | RTLD_NOLOAD) };
+        if !main_handle.is_null() {
+            let addr = unsafe { libc::dlsym(main_handle, symbol_cstr.as_ptr()) };
+            if !addr.is_null() {
+                return Ok(addr as usize);
+            }
+        }
+        
+        Err(format!("Failed to resolve symbol {} in any loaded library", symbol).into())
     }
     
     unsafe fn resolve_symbols(&mut self) -> Result<(), Box<dyn std::error::Error>> {
