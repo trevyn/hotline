@@ -258,13 +258,6 @@ pub mod symbols {
             )
         }
 
-        pub fn build_setter(&self, field_name: &str, field_type: &str) -> String {
-            format!(
-                "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
-                self.type_name, field_name, field_name, field_type, self.rustc_commit
-            )
-        }
-
         pub fn build_constructor(&self) -> String {
             format!("{}__new____to__Box_lt_dyn_HotlineObject_gt__{}", self.type_name, self.rustc_commit)
         }

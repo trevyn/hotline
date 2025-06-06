@@ -218,7 +218,7 @@ fn extract_methods_from_object(
             }
 
             if field.attrs.iter().any(|attr| attr.path().is_ident("setter")) {
-                let builder_name = format!("with_{}", field_name);
+                // Extract param type once for both methods
                 let param_vec = extract_option_type(field_type)
                     .and_then(|inner| match inner {
                         Type::Path(tp)
@@ -230,9 +230,21 @@ fn extract_methods_from_object(
                     })
                     .unwrap_or_else(|| vec![field_type.clone()]);
 
+                // Add setter method (set_*)
+                let setter_name = format!("set_{}", field_name);
+                methods.push((
+                    setter_name,
+                    vec!["value".to_string()], // Use "value" to match FFI wrapper generation
+                    param_vec.clone(),
+                    syn::parse_quote! { () }, // setters return unit
+                    ReceiverType::RefMut,
+                ));
+
+                // Add builder method (with_*)
+                let builder_name = format!("with_{}", field_name);
                 methods.push((
                     builder_name,
-                    vec![field_name.to_string()],
+                    vec!["value".to_string()], // Use "value" to match FFI wrapper generation
                     param_vec,
                     return_type.clone(),
                     ReceiverType::Value,

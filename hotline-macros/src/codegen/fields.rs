@@ -59,7 +59,12 @@ fn generate_accessor_wrapper(
             .body(quote! { instance.#field_name.clone() })
             .build()
     } else {
-        let wrapper_name = format_ident!("{}", symbol.build_setter(&field_name.to_string(), &type_str));
+        // Use build_method() to match what the proxy expects
+        let setter_name = format!("set_{}", field_name);
+        let setter_symbol = SymbolName::new(&struct_name.to_string(), &setter_name, rustc_commit)
+            .with_params(vec![("value".to_string(), type_str)])
+            .with_return_type("unit".to_string());
+        let wrapper_name = format_ident!("{}", setter_symbol.build_method());
         let value_ident = format_ident!("value");
         FfiWrapper::new(struct_name.clone(), wrapper_name)
             .param(value_ident, field_type)

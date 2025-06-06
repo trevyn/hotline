@@ -238,9 +238,25 @@ impl LibraryRegistry {
                 // For custom loader, we need to create a fake Symbol wrapper
                 let loader = loader_arc.lock().unwrap();
                 unsafe {
-                    let addr = loader
-                        .get_symbol(symbol_name)
-                        .ok_or_else(|| format!("symbol '{}' not found in custom loaded library", symbol_name))?;
+                    let addr = loader.get_symbol(symbol_name).ok_or_else(|| {
+                        // Get all available symbols for better error reporting
+                        let available_symbols = loader
+                            .list_symbols()
+                            .into_iter()
+                            .filter(|s| s.contains(&symbol_name[..symbol_name.len().min(20)]))
+                            .take(10)
+                            .collect::<Vec<_>>();
+
+                        if available_symbols.is_empty() {
+                            format!("symbol '{}' not found in custom loaded library", symbol_name)
+                        } else {
+                            format!(
+                                "symbol '{}' not found in custom loaded library. Similar symbols:\n{}",
+                                symbol_name,
+                                available_symbols.join("\n")
+                            )
+                        }
+                    })?;
 
                     // println!("    - Found symbol {} at address: {:p}", symbol_name, addr);
 

@@ -9,6 +9,7 @@ hotline::object!({
         rect: Option<Rect>,
         focused: bool,
         highlight: Option<HighlightLens>,
+        text_renderer: Option<TextRenderer>,
     }
 
     impl CodeEditor {
@@ -20,6 +21,10 @@ hotline::object!({
 
             if self.highlight.is_none() {
                 self.highlight = Some(HighlightLens::new());
+            }
+
+            if self.text_renderer.is_none() {
+                self.text_renderer = Some(TextRenderer::new());
             }
         }
 
@@ -93,14 +98,16 @@ hotline::object!({
 
                 let mut cursor_y = y + 10.0;
                 let line_height = 14.0;
-                for line in self.text.split('\n') {
-                    let mut tr = TextRenderer::new()
-                        .with_text(line.to_string())
-                        .with_x(x + 10.0)
-                        .with_y(cursor_y)
-                        .with_color((255, 255, 255, 255));
-                    tr.render(buffer, buffer_width, buffer_height, pitch);
-                    cursor_y += line_height;
+
+                if let Some(ref mut tr) = self.text_renderer {
+                    tr.set_color((255, 255, 255, 255));
+                    for line in self.text.split('\n') {
+                        tr.set_text(line.to_string());
+                        tr.set_x(x + 10.0);
+                        tr.set_y(cursor_y);
+                        tr.render(buffer, buffer_width, buffer_height, pitch);
+                        cursor_y += line_height;
+                    }
                 }
 
                 if self.focused {

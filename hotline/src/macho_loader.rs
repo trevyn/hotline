@@ -1468,6 +1468,10 @@ impl MachoLoader {
         }
     }
 
+    pub fn list_symbols(&self) -> Vec<String> {
+        self.symbols.keys().cloned().collect()
+    }
+
     // removed call_function - callers should use get_symbol and transmute directly
 }
 

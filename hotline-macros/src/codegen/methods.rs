@@ -228,12 +228,19 @@ fn generate_builder_ffi_method(
             rustc_commit
         )
     } else {
-        let field_name = &config.setter_name.as_ref().unwrap()[4..];
-        let param_type_str = type_to_string(&param_types[0]);
-        format!(
-            "{}__set_{}____obj_mut_dyn_Any__{}_{}__to__unit__{}",
-            type_name, field_name, field_name, param_type_str, rustc_commit
-        )
+        // Builder methods should use build_method() like regular methods
+        let param_specs: Vec<_> = config
+            .param_names
+            .iter()
+            .zip(param_types.iter())
+            .map(|(name, ty)| (name.clone(), type_to_string(ty)))
+            .collect();
+
+        let symbol = SymbolName::new(type_name, &config.setter_name.as_ref().unwrap(), rustc_commit)
+            .with_params(param_specs)
+            .with_return_type("unit".to_string());
+
+        symbol.build_method()
     };
 
     quote! {
@@ -287,8 +294,12 @@ fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_comm
                                 adjusted_param_types.push(quote! { &#generic_name });
                             }
 
-                            // Use &mut dyn Any for FFI
-                            ffi_param_types.push(quote! { &mut dyn std::any::Any });
+                            // Use appropriate reference type for FFI
+                            if type_ref.mutability.is_some() {
+                                ffi_param_types.push(quote! { &mut dyn std::any::Any });
+                            } else {
+                                ffi_param_types.push(quote! { &dyn std::any::Any });
+                            }
                             handled = true;
                         }
                     }
@@ -311,8 +322,12 @@ fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_comm
                                 adjusted_param_types.push(quote! { &#generic_name });
                             }
 
-                            // Use &mut dyn Any for FFI
-                            ffi_param_types.push(quote! { &mut dyn std::any::Any });
+                            // Use appropriate reference type for FFI
+                            if type_ref.mutability.is_some() {
+                                ffi_param_types.push(quote! { &mut dyn std::any::Any });
+                            } else {
+                                ffi_param_types.push(quote! { &dyn std::any::Any });
+                            }
                             handled = true;
                         }
                     }
@@ -348,7 +363,11 @@ fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_comm
                     if let Some(ident) = tp.path.get_ident() {
                         if is_object_type(&ident.to_string()) {
                             // Convert to dyn Any for FFI
-                            return quote! { #name.as_any_mut() };
+                            return if type_ref.mutability.is_some() {
+                                quote! { #name.as_any_mut() }
+                            } else {
+                                quote! { #name.as_any() }
+                            };
                         }
                     }
                 }
@@ -359,7 +378,11 @@ fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_comm
                 if let Some(ident) = tp.path.get_ident() {
                     if is_object_type(&ident.to_string()) {
                         // Convert to dyn Any for FFI
-                        return quote! { #name.as_any_mut() };
+                        return if type_ref.mutability.is_some() {
+                            quote! { #name.as_any_mut() }
+                        } else {
+                            quote! { #name.as_any() }
+                        };
                     }
                 }
             }
