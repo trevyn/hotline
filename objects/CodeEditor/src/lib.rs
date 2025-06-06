@@ -10,6 +10,9 @@ hotline::object!({
         focused: bool,
         highlight: Option<HighlightLens>,
         text_renderer: Option<TextRenderer>,
+        #[setter]
+        #[default((255, 255, 255, 255))]
+        text_color: (u8, u8, u8, u8),
     }
 
     impl CodeEditor {
@@ -24,7 +27,16 @@ hotline::object!({
             }
 
             if self.text_renderer.is_none() {
-                self.text_renderer = Some(TextRenderer::new());
+                let mut tr = TextRenderer::new();
+                tr.set_color(self.text_color);
+                self.text_renderer = Some(tr);
+            }
+        }
+
+        pub fn update_text_color(&mut self, color: (u8, u8, u8, u8)) {
+            self.text_color = color;
+            if let Some(ref mut tr) = self.text_renderer {
+                tr.set_color(color);
             }
         }
 
@@ -100,7 +112,7 @@ hotline::object!({
                 let line_height = 14.0;
 
                 if let Some(ref mut tr) = self.text_renderer {
-                    tr.set_color((255, 255, 255, 255));
+                    tr.set_color(self.text_color);
                     for line in self.text.split('\n') {
                         tr.set_text(line.to_string());
                         tr.set_x(x + 10.0);
