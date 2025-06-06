@@ -1310,21 +1310,17 @@ impl MachoLoader {
         if symbol == "__tlv_bootstrap" {
             // We handle TLVs ourselves, so we don't need to resolve this
             // Return address of our crash handler
-            // This is expected behavior, no need to warn
             return Ok(Self::crash_handler_tlv_bootstrap as usize);
         }
 
         // Special case for dyld_stub_binder
         if symbol == "dyld_stub_binder" {
-            // dyld_stub_binder is needed for lazy binding, but since we process
-            // lazy binds eagerly, we can skip it
+            // dyld_stub_binder is needed for lazy binding, but since we process lazy binds eagerly, we can skip it
             // Return address of our crash handler
-            // This is expected behavior, no need to warn
             return Ok(Self::crash_handler_dyld_stub_binder as usize);
         }
 
-        // For now, use dlsym to resolve symbols from any external library
-        // In a full implementation, we'd parse the export trie of the target library
+        // use dlsym to resolve symbols from any external library
 
         let c_symbol = std::ffi::CString::new(symbol)?;
 
@@ -1342,7 +1338,7 @@ impl MachoLoader {
             }
         }
 
-        // 2. Try without underscore prefix (100% success rate for symbols that need it)
+        // 2. Try without underscore prefix
         if symbol.starts_with('_') {
             let unprefixed = &symbol[1..];
             let c_symbol_unprefixed = std::ffi::CString::new(unprefixed)?;
@@ -1353,7 +1349,7 @@ impl MachoLoader {
             }
         }
 
-        // 3. Try with underscore prefix (also high success rate)
+        // 3. Try with underscore prefix
         if !symbol.starts_with('_') {
             let prefixed_symbol = format!("_{}", symbol);
             let c_symbol_prefixed = std::ffi::CString::new(prefixed_symbol)?;
