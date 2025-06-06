@@ -91,6 +91,7 @@ fn main() -> Result<(), String> {
     
     // Load all libraries from objects directory
     let objects_dir = Path::new("objects");
+    let load_start = std::time::Instant::now();
     if let Ok(entries) = fs::read_dir(objects_dir) {
         for entry in entries {
             if let Ok(entry) = entry {
@@ -116,6 +117,8 @@ fn main() -> Result<(), String> {
             }
         }
     }
+    let load_time = load_start.elapsed();
+    eprintln!("Total library loading time: {:.1}ms", load_time.as_secs_f64() * 1000.0);
     
     // Now create Application
     let app_handle = runtime.create_from_lib("libApplication", "Application")
