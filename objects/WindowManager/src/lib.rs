@@ -152,6 +152,13 @@ hotline::object!({
             }
         }
 
+        pub fn rotate_selected(&mut self, angle: f64) {
+            if let Some(ref mut selected_handle) = self.selected {
+                let new_rot = selected_handle.rotation() + angle;
+                selected_handle.set_rotation(new_rot);
+            }
+        }
+
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             // Render all rects
             for rect_handle in &mut self.rects {
