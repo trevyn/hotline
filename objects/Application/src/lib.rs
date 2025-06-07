@@ -4,6 +4,8 @@ use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
 use sdl2::pixels::{Color, PixelFormatEnum};
 
+use std::time::{Duration, Instant};
+
 #[cfg(target_os = "linux")]
 use png::{BitDepth, ColorType, Encoder};
 #[cfg(target_os = "linux")]
@@ -24,6 +26,12 @@ hotline::object!({
         frame_times: std::collections::VecDeque<std::time::Instant>,
         last_fps_update: Option<std::time::Instant>,
         current_fps: f64,
+        #[default(1)]
+        pixel_multiple: u32,
+        width: u32,
+        height: u32,
+        zoom_display: Option<TextRenderer>,
+        zoom_display_until: Option<std::time::Instant>,
     }
 
     impl Application {
@@ -84,6 +92,15 @@ hotline::object!({
                 fps.set_text("FPS: 0".to_string());
             }
 
+            // Zoom display text
+            self.zoom_display = Some(TextRenderer::new());
+            if let Some(ref mut zoom) = self.zoom_display {
+                zoom.set_x(10.0);
+                zoom.set_y(30.0);
+                zoom.set_color((255, 255, 255, 255));
+                zoom.set_text("1x".to_string());
+            }
+
             // Initialize FPS tracking
             self.frame_times = std::collections::VecDeque::with_capacity(120);
             self.last_fps_update = Some(std::time::Instant::now());
@@ -109,9 +126,16 @@ hotline::object!({
             let mut event_pump = sdl_context.event_pump()?;
             video_subsystem.text_input().start();
 
-            // Create texture
+            let (dw, dh) = canvas.output_size().map_err(|e| e.to_string())?;
+            self.width = dw;
+            self.height = dh;
+
             let mut texture = texture_creator
-                .create_texture_streaming(PixelFormatEnum::ARGB8888, 800, 600)
+                .create_texture_streaming(
+                    PixelFormatEnum::ARGB8888,
+                    self.width / self.pixel_multiple,
+                    self.height / self.pixel_multiple,
+                )
                 .map_err(|e| e.to_string())?;
 
             #[cfg(target_os = "linux")]
@@ -157,6 +181,19 @@ hotline::object!({
                     match event {
                         Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                             break 'running;
+                        }
+                        Event::Window { win_event: sdl2::event::WindowEvent::Resized(_, _), .. }
+                        | Event::Window { win_event: sdl2::event::WindowEvent::SizeChanged(_, _), .. } => {
+                            let (dw, dh) = canvas.window().drawable_size();
+                            self.width = dw;
+                            self.height = dh;
+                            texture = texture_creator
+                                .create_texture_streaming(
+                                    PixelFormatEnum::ARGB8888,
+                                    self.width / self.pixel_multiple,
+                                    self.height / self.pixel_multiple,
+                                )
+                                .map_err(|e| e.to_string())?;
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
                             if let Some(ref mut wm) = self.window_manager {
@@ -216,6 +253,54 @@ hotline::object!({
                                 wm.rotate_selected(0.1);
                             }
                         }
+                        Event::KeyDown { keycode: Some(Keycode::Equals), keymod, .. }
+                        | Event::KeyDown { keycode: Some(Keycode::KpPlus), keymod, .. } => {
+                            #[cfg(target_os = "macos")]
+                            let cmd = keymod.contains(sdl2::keyboard::Mod::LGUIMOD)
+                                || keymod.contains(sdl2::keyboard::Mod::RGUIMOD);
+                            #[cfg(not(target_os = "macos"))]
+                            let cmd = keymod.contains(sdl2::keyboard::Mod::LCTRLMOD)
+                                || keymod.contains(sdl2::keyboard::Mod::RCTRLMOD);
+
+                            if cmd {
+                                self.pixel_multiple += 1;
+                                if let Some(ref mut zoom) = self.zoom_display {
+                                    zoom.set_text(format!("{}x", self.pixel_multiple));
+                                }
+                                self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
+                                texture = texture_creator
+                                    .create_texture_streaming(
+                                        PixelFormatEnum::ARGB8888,
+                                        self.width / self.pixel_multiple,
+                                        self.height / self.pixel_multiple,
+                                    )
+                                    .map_err(|e| e.to_string())?;
+                            }
+                        }
+                        Event::KeyDown { keycode: Some(Keycode::Minus), keymod, .. }
+                        | Event::KeyDown { keycode: Some(Keycode::KpMinus), keymod, .. } => {
+                            #[cfg(target_os = "macos")]
+                            let cmd = keymod.contains(sdl2::keyboard::Mod::LGUIMOD)
+                                || keymod.contains(sdl2::keyboard::Mod::RGUIMOD);
+                            #[cfg(not(target_os = "macos"))]
+                            let cmd = keymod.contains(sdl2::keyboard::Mod::LCTRLMOD)
+                                || keymod.contains(sdl2::keyboard::Mod::RCTRLMOD);
+
+                            if cmd && self.pixel_multiple > 1 {
+                                self.pixel_multiple -= 1;
+                                if let Some(ref mut zoom) = self.zoom_display {
+                                    zoom.set_text(format!("{}x", self.pixel_multiple));
+                                }
+                                self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
+                                texture = texture_creator
+                                    .create_texture_streaming(
+                                        PixelFormatEnum::ARGB8888,
+                                        self.width / self.pixel_multiple,
+                                        self.height / self.pixel_multiple,
+                                    )
+                                    .map_err(|e| e.to_string())?;
+                            }
+                        }
                         Event::KeyDown { keycode: Some(Keycode::S), keymod, .. } => {
                             // Check for Cmd+S (Mac) or Ctrl+S (others)
                             #[cfg(target_os = "macos")]
@@ -269,6 +354,10 @@ hotline::object!({
         }
 
         fn render_frame(&mut self, texture: &mut sdl2::render::Texture) -> Result<(), String> {
+            let query = texture.query();
+            let bw = query.width as i64;
+            let bh = query.height as i64;
+
             texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 // Clear buffer
                 for pixel in buffer.chunks_exact_mut(4) {
@@ -280,21 +369,29 @@ hotline::object!({
 
                 // Render window manager
                 if let Some(ref mut wm) = self.window_manager {
-                    wm.render(buffer, 800, 600, pitch as i64);
+                    wm.render(buffer, bw, bh, pitch as i64);
                 }
 
                 // Render code editor
                 if let Some(ref mut editor) = self.code_editor {
-                    editor.render(buffer, 800, 600, pitch as i64);
+                    editor.render(buffer, bw, bh, pitch as i64);
                 }
 
                 if let Some(ref mut wheel) = self.color_wheel {
-                    wheel.render(buffer, 800, 600, pitch as i64);
+                    wheel.render(buffer, bw, bh, pitch as i64);
                 }
 
                 // Render FPS counter
                 if let Some(ref mut fps) = self.fps_counter {
-                    fps.render(buffer, 800, 600, pitch as i64);
+                    fps.render(buffer, bw, bh, pitch as i64);
+                }
+
+                if let Some(ref mut zoom) = self.zoom_display {
+                    if let Some(until) = self.zoom_display_until {
+                        if Instant::now() <= until {
+                            zoom.render(buffer, bw, bh, pitch as i64);
+                        }
+                    }
                 }
             })?;
             Ok(())
@@ -312,7 +409,10 @@ hotline::object!({
             }
 
             println!("[linux] rendering");
-            let mut png_data = vec![0u8; 800 * 600 * 4];
+            let q = texture.query();
+            let bw = q.width as i64;
+            let bh = q.height as i64;
+            let mut png_data = vec![0u8; (bw * bh * 4) as usize];
             texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 // Clear buffer
                 for pixel in buffer.chunks_exact_mut(4) {
@@ -324,26 +424,26 @@ hotline::object!({
 
                 // Render window manager
                 if let Some(ref mut wm) = self.window_manager {
-                    wm.render(buffer, 800, 600, pitch as i64);
+                    wm.render(buffer, bw, bh, pitch as i64);
                 }
 
                 // Render code editor
                 if let Some(ref mut editor) = self.code_editor {
-                    editor.render(buffer, 800, 600, pitch as i64);
+                    editor.render(buffer, bw, bh, pitch as i64);
                 }
                 if let Some(ref mut wheel) = self.color_wheel {
-                    wheel.render(buffer, 800, 600, pitch as i64);
+                    wheel.render(buffer, bw, bh, pitch as i64);
                 }
 
                 // Render FPS counter
                 if let Some(ref mut fps) = self.fps_counter {
-                    fps.render(buffer, 800, 600, pitch as i64);
+                    fps.render(buffer, bw, bh, pitch as i64);
                 }
 
-                for y in 0..600 {
-                    for x in 0..800 {
-                        let src = y * pitch + x * 4;
-                        let dst = (y * 800 + x) * 4;
+                for y in 0..bh {
+                    for x in 0..bw {
+                        let src = (y * pitch as i64 + x * 4) as usize;
+                        let dst = (y * bw + x) as usize * 4;
                         png_data[dst] = buffer[src + 2];
                         png_data[dst + 1] = buffer[src + 1];
                         png_data[dst + 2] = buffer[src];
@@ -353,7 +453,7 @@ hotline::object!({
             })?;
 
             println!("[linux] saving test_output.png");
-            save_png("test_output.png", 800, 600, &png_data)?;
+            save_png("test_output.png", bw as u32, bh as u32, &png_data)?;
             println!("[linux] image saved");
             Ok(())
         }
