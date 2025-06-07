@@ -308,6 +308,12 @@ hotline::object!({
             }
         }
 
+        pub fn rotate_selected(&mut self, angle: f64) {
+            if let Some(ref mut selected_handle) = self.selected {
+                let new_rot = selected_handle.rotation() + angle;
+                selected_handle.set_rotation(new_rot);
+            }
+        }
         pub fn handle_right_click(&mut self, x: f64, y: f64) {
             let mut menu = self.context_menu.take().unwrap_or_else(ContextMenu::new);
             menu.open(x, y);

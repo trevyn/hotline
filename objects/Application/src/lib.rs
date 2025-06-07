@@ -247,6 +247,11 @@ hotline::object!({
                                 }
                             }
                         }
+                        Event::KeyDown { keycode: Some(Keycode::R), .. } => {
+                            if let Some(ref mut wm) = self.window_manager {
+                                wm.rotate_selected(0.1);
+                            }
+                        }
                         Event::KeyDown { keycode: Some(Keycode::S), keymod, .. } => {
                             // Check for Cmd+S (Mac) or Ctrl+S (others)
                             #[cfg(target_os = "macos")]
