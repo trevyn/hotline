@@ -267,12 +267,12 @@ hotline::object!({
                         rect_clone = handle.clone();
                         self.selected_shape = Some(SelectedShape::Rect(handle));
                     }
-                    SelectedShape::Polygon(handle) => {
+                    SelectedShape::Polygon(mut handle) => {
                         let (bx, by, bw, bh) = handle.bounds();
                         rect_clone.initialize(bx, by, bw, bh);
                         self.selected_shape = Some(SelectedShape::Polygon(handle));
                     }
-                    SelectedShape::Circle(handle) => {
+                    SelectedShape::Circle(mut handle) => {
                         let (bx, by, bw, bh) = handle.bounds();
                         rect_clone.initialize(bx, by, bw, bh);
                         self.selected_shape = Some(SelectedShape::Circle(handle));
@@ -342,7 +342,7 @@ hotline::object!({
                     let new_y = y + self.drag_offset_y;
 
                     match shape {
-                        SelectedShape::Rect(ref mut handle) => {
+                        SelectedShape::Rect(handle) => {
                             let (cx, cy) = handle.position();
                             let dx = new_x - cx;
                             let dy = new_y - cy;
@@ -351,7 +351,7 @@ hotline::object!({
                                 rect.move_by(dx, dy);
                             }
                         }
-                        SelectedShape::Polygon(ref mut handle) => {
+                        SelectedShape::Polygon(handle) => {
                             let (cx, cy) = handle.position();
                             let dx = new_x - cx;
                             let dy = new_y - cy;
@@ -360,7 +360,7 @@ hotline::object!({
                                 rect.move_by(dx, dy);
                             }
                         }
-                        SelectedShape::Circle(ref mut handle) => {
+                        SelectedShape::Circle(handle) => {
                             let (cx, cy) = handle.position();
                             let dx = new_x - cx;
                             let dy = new_y - cy;
@@ -428,19 +428,19 @@ hotline::object!({
                     }
 
                     match shape {
-                        SelectedShape::Rect(ref mut handle) => {
+                        SelectedShape::Rect(handle) => {
                             handle.resize(new_x, new_y, new_w, new_h);
                             if let Some(ref mut rect) = self.selected {
                                 rect.resize(new_x, new_y, new_w, new_h);
                             }
                         }
-                        SelectedShape::Polygon(ref mut handle) => {
+                        SelectedShape::Polygon(handle) => {
                             handle.resize(new_x, new_y, new_w, new_h);
                             if let Some(ref mut rect) = self.selected {
                                 rect.resize(new_x, new_y, new_w, new_h);
                             }
                         }
-                        SelectedShape::Circle(ref mut handle) => {
+                        SelectedShape::Circle(handle) => {
                             handle.resize(new_x, new_y, new_w, new_h);
                             if let Some(ref mut rect) = self.selected {
                                 rect.resize(new_x, new_y, new_w, new_h);

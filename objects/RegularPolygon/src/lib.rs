@@ -64,10 +64,6 @@ hotline::object!({
             self.radius = r.max(1.0);
         }
 
-        pub fn set_rotation(&mut self, angle: f64) {
-            self.rotation = angle;
-        }
-
         pub fn rotation(&mut self) -> f64 {
             self.rotation
         }
