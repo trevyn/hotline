@@ -16,9 +16,14 @@ hotline::object!({
     pub struct Application {
         window_manager: Option<WindowManager>,
         code_editor: Option<CodeEditor>,
+        color_wheel: Option<ColorWheel>,
         gpu_renderer: Option<GPURenderer>,
         gpu_atlases: Vec<AtlasData>,
         gpu_commands: Vec<RenderCommand>,
+        fps_counter: Option<TextRenderer>,
+        frame_times: std::collections::VecDeque<std::time::Instant>,
+        last_fps_update: Option<std::time::Instant>,
+        current_fps: f64,
     }
 
     impl Application {
@@ -61,6 +66,29 @@ hotline::object!({
                 editor.set_rect(editor_rect);
             }
 
+            // Create color wheel
+            self.color_wheel = Some(ColorWheel::new());
+            if let Some(ref mut wheel) = self.color_wheel {
+                let rect = Rect::new();
+                let mut r_ref = rect.clone();
+                r_ref.initialize(50.0, 400.0, 120.0, 120.0);
+                wheel.set_rect(rect);
+            }
+
+            // Create FPS counter
+            self.fps_counter = Some(TextRenderer::new());
+            if let Some(ref mut fps) = self.fps_counter {
+                fps.set_x(10.0);
+                fps.set_y(10.0);
+                fps.set_color((0, 255, 0, 255)); // Green color (BGRA)
+                fps.set_text("FPS: 0".to_string());
+            }
+
+            // Initialize FPS tracking
+            self.frame_times = std::collections::VecDeque::with_capacity(120);
+            self.last_fps_update = Some(std::time::Instant::now());
+            self.current_fps = 0.0;
+
             Ok(())
         }
 
@@ -72,6 +100,7 @@ hotline::object!({
                 .window("hotline - direct calls", 800, 600)
                 .position_centered()
                 .allow_highdpi()
+                .resizable()
                 .build()
                 .map_err(|e| e.to_string())?;
 
@@ -92,6 +121,34 @@ hotline::object!({
             }
 
             'running: loop {
+                // Track frame time
+                let now = std::time::Instant::now();
+                self.frame_times.push_back(now);
+
+                // Remove old frame times (keep last 2 seconds)
+                while let Some(front) = self.frame_times.front() {
+                    if now.duration_since(*front).as_secs_f64() > 2.0 {
+                        self.frame_times.pop_front();
+                    } else {
+                        break;
+                    }
+                }
+
+                // Update FPS every 100ms
+                if let Some(last_update) = self.last_fps_update {
+                    if now.duration_since(last_update).as_millis() >= 100 {
+                        if self.frame_times.len() > 1 {
+                            let duration = now.duration_since(*self.frame_times.front().unwrap()).as_secs_f64();
+                            self.current_fps = (self.frame_times.len() - 1) as f64 / duration;
+
+                            if let Some(ref mut fps) = self.fps_counter {
+                                fps.set_text(format!("FPS: {:.1}", self.current_fps));
+                            }
+                        }
+                        self.last_fps_update = Some(now);
+                    }
+                }
+
                 canvas.set_draw_color(Color::RGB(0, 0, 0));
                 canvas.clear();
 
@@ -108,6 +165,18 @@ hotline::object!({
                             if let Some(ref mut editor) = self.code_editor {
                                 editor.handle_mouse_down(x as f64, y as f64);
                             }
+                            if let Some(ref mut wheel) = self.color_wheel {
+                                if let Some(color) = wheel.handle_mouse_down(x as f64, y as f64) {
+                                    if let Some(ref mut editor) = self.code_editor {
+                                        editor.update_text_color(color);
+                                    }
+                                }
+                            }
+                        }
+                        Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
+                            if let Some(ref mut wm) = self.window_manager {
+                                wm.handle_right_click(x as f64, y as f64);
+                            }
                         }
                         Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
                             if let Some(ref mut wm) = self.window_manager {
@@ -117,6 +186,13 @@ hotline::object!({
                         Event::MouseMotion { x, y, .. } => {
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_motion(x as f64, y as f64);
+                            }
+                        }
+                        Event::MouseWheel { y, .. } => {
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    editor.scroll_by(-y as f64 * 20.0);
+                                }
                             }
                         }
                         Event::TextInput { text, .. } => {
@@ -224,6 +300,15 @@ hotline::object!({
                 if let Some(ref mut editor) = self.code_editor {
                     editor.render(buffer, 800, 600, pitch as i64);
                 }
+
+                if let Some(ref mut wheel) = self.color_wheel {
+                    wheel.render(buffer, 800, 600, pitch as i64);
+                }
+
+                // Render FPS counter
+                if let Some(ref mut fps) = self.fps_counter {
+                    fps.render(buffer, 800, 600, pitch as i64);
+                }
             })?;
             Ok(())
         }
@@ -258,6 +343,14 @@ hotline::object!({
                 // Render code editor
                 if let Some(ref mut editor) = self.code_editor {
                     editor.render(buffer, 800, 600, pitch as i64);
+                }
+                if let Some(ref mut wheel) = self.color_wheel {
+                    wheel.render(buffer, 800, 600, pitch as i64);
+                }
+
+                // Render FPS counter
+                if let Some(ref mut fps) = self.fps_counter {
+                    fps.render(buffer, 800, 600, pitch as i64);
                 }
 
                 for y in 0..600 {

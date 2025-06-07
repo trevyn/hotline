@@ -12,6 +12,12 @@ hotline::object!({
         text_renderer: Option<TextRenderer>,
         cursor: usize,
         selection: Option<(usize, usize)>,
+        #[setter]
+        #[default((255, 255, 255, 255))]
+        text_color: (u8, u8, u8, u8),
+        #[setter]
+        #[default(0.0)]
+        scroll_offset: f64,
     }
 
     impl CodeEditor {
@@ -26,11 +32,20 @@ hotline::object!({
             }
 
             if self.text_renderer.is_none() {
-                self.text_renderer = Some(TextRenderer::new());
+                let mut tr = TextRenderer::new();
+                tr.set_color(self.text_color);
+                self.text_renderer = Some(tr);
             }
 
             self.cursor = self.text.chars().count();
             self.selection = None;
+        }
+
+        pub fn update_text_color(&mut self, color: (u8, u8, u8, u8)) {
+            self.text_color = color;
+            if let Some(ref mut tr) = self.text_renderer {
+                tr.set_color(color);
+            }
         }
 
         pub fn set_rect(&mut self, rect: Rect) {
@@ -129,6 +144,15 @@ hotline::object!({
             }
         }
 
+        pub fn scroll_by(&mut self, delta: f64) {
+            if let Some(ref mut rect) = self.rect {
+                let line_height = 14.0;
+                let total_height = self.text.lines().count() as f64 * line_height;
+                let max_offset = (total_height - rect.bounds().3).max(0.0);
+                self.scroll_offset = (self.scroll_offset + delta).max(0.0).min(max_offset);
+            }
+        }
+
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             if let Some(registry) = self.get_registry() {
                 ::hotline::set_library_registry(registry);
@@ -136,9 +160,10 @@ hotline::object!({
 
             if let Some(ref mut rect) = self.rect {
                 let (x, y, w, h) = rect.bounds();
+                let scroll_bar_width = 8.0;
                 let x_start = x.max(0.0) as u32;
                 let y_start = y.max(0.0) as u32;
-                let x_end = (x + w).min(buffer_width as f64) as u32;
+                let x_end = (x + w - scroll_bar_width).min(buffer_width as f64) as u32;
                 let y_end = (y + h).min(buffer_height as f64) as u32;
 
                 // Draw background
@@ -154,17 +179,72 @@ hotline::object!({
                     }
                 }
 
-                let mut cursor_y = y + 10.0;
                 let line_height = 14.0;
 
+                let mut cursor_y = y + 10.0 - self.scroll_offset;
+
                 if let Some(ref mut tr) = self.text_renderer {
-                    tr.set_color((255, 255, 255, 255));
+                    tr.set_color(self.text_color);
                     for line in self.text.split('\n') {
-                        tr.set_text(line.to_string());
-                        tr.set_x(x + 10.0);
-                        tr.set_y(cursor_y);
-                        tr.render(buffer, buffer_width, buffer_height, pitch);
+                        if cursor_y + line_height >= y && cursor_y <= y + h {
+                            tr.set_text(line.to_string());
+                            tr.set_x(x + 10.0);
+                            tr.set_y(cursor_y);
+                            tr.render(buffer, buffer_width, buffer_height, pitch);
+                        }
                         cursor_y += line_height;
+                    }
+                }
+
+                // Draw text cursor
+                let mut line_idx = 0usize;
+                let mut col_idx = 0usize;
+                for ch in self.text.chars().take(self.cursor) {
+                    if ch == '\n' {
+                        line_idx += 1;
+                        col_idx = 0;
+                    } else {
+                        col_idx += 1;
+                    }
+                }
+                let cursor_x = x + 10.0 + col_idx as f64 * 8.0;
+                let cursor_y_pos = y + 10.0 + line_idx as f64 * line_height - self.scroll_offset;
+                if cursor_y_pos >= y && cursor_y_pos <= y + h {
+                    let px = cursor_x.round() as i64;
+                    let py_start = cursor_y_pos.round() as i64;
+                    let py_end = (cursor_y_pos + line_height).round() as i64;
+                    for py in py_start.max(0)..py_end.min(buffer_height) {
+                        if px >= 0 && px < buffer_width {
+                            let offset = (py * pitch + px * 4) as usize;
+                            if offset + 3 < buffer.len() {
+                                buffer[offset] = 200;
+                                buffer[offset + 1] = 200;
+                                buffer[offset + 2] = 200;
+                                buffer[offset + 3] = 255;
+                            }
+                        }
+                    }
+                }
+
+                let total_height = self.text.lines().count() as f64 * line_height;
+                if total_height > h {
+                    let bar_height = (h / total_height) * h;
+                    let bar_y = y + (self.scroll_offset / total_height) * h;
+                    let bar_x_start = (x + w - scroll_bar_width).max(0.0) as u32;
+                    let bar_x_end = (x + w).min(buffer_width as f64) as u32;
+                    let bar_y_start = bar_y.max(0.0) as u32;
+                    let bar_y_end = (bar_y + bar_height).min(buffer_height as f64).min(y + h) as u32;
+
+                    for py in bar_y_start..bar_y_end {
+                        for px in bar_x_start..bar_x_end {
+                            let offset = (py * (pitch as u32) + px * 4) as usize;
+                            if offset + 3 < buffer.len() {
+                                buffer[offset] = 80;
+                                buffer[offset + 1] = 80;
+                                buffer[offset + 2] = 80;
+                                buffer[offset + 3] = 255;
+                            }
+                        }
                     }
                 }
 
