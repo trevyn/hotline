@@ -36,7 +36,6 @@ hotline::object!({
                 tr.set_color(self.text_color);
                 self.text_renderer = Some(tr);
             }
-
             self.cursor = self.text.chars().count();
             self.selection = None;
         }
@@ -89,6 +88,81 @@ hotline::object!({
             self.text.replace_range(b_start..b_end, "");
         }
 
+        fn line_height(&mut self) -> f64 {
+            if let Some(ref mut tr) = self.text_renderer {
+                if let Some(font) = &mut tr.font {
+                    return (font.size + font.line_gap) as f64;
+                }
+            }
+            14.0
+        }
+
+        fn cursor_line_col(&self) -> (usize, usize) {
+            let mut line = 0usize;
+            let mut col = 0usize;
+            for ch in self.text.chars().take(self.cursor) {
+                if ch == '\n' {
+                    line += 1;
+                    col = 0;
+                } else {
+                    col += 1;
+                }
+            }
+            (line, col)
+        }
+
+        fn line_start_index(&self, line: usize) -> usize {
+            let mut idx = 0usize;
+            for (i, l) in self.text.split('\n').enumerate() {
+                if i == line {
+                    break;
+                }
+                idx += l.chars().count() + 1;
+            }
+            idx
+        }
+
+        fn line_length(&self, line: usize) -> usize {
+            self.text.split('\n').nth(line).map(|l| l.chars().count()).unwrap_or(0)
+        }
+
+        fn column_to_pixel(&mut self, line: usize, col: usize) -> f64 {
+            if let Some(ref mut tr) = self.text_renderer {
+                if let Some(font) = &mut tr.font {
+                    let mut current_line = 0usize;
+                    let mut current_col = 0usize;
+                    let mut px = 0.0;
+                    for ch in self.text.chars() {
+                        if current_line == line {
+                            if current_col == col {
+                                break;
+                            }
+                            if ch == '\n' {
+                                break;
+                            }
+                            if ch == ' ' {
+                                px += font.space_width as f64;
+                            } else if let Some((_, _, _, _, _, _, adv)) = font.glyph(ch) {
+                                px += adv as f64;
+                            } else {
+                                px += font.space_width as f64;
+                            }
+                            current_col += 1;
+                        }
+
+                        if ch == '\n' {
+                            if current_line == line {
+                                break;
+                            }
+                            current_line += 1;
+                        }
+                    }
+                    return px;
+                }
+            }
+            col as f64 * 8.0
+        }
+
         pub fn insert_char(&mut self, ch: char) {
             if self.focused {
                 if let Some((s, e)) = self.selection.take() {
@@ -137,6 +211,47 @@ hotline::object!({
             }
         }
 
+        pub fn move_cursor_up(&mut self, shift: bool) {
+            let (line, col) = self.cursor_line_col();
+            if line == 0 {
+                if shift {
+                    self.update_selection();
+                } else {
+                    self.selection = None;
+                }
+                return;
+            }
+            let new_line = line - 1;
+            let new_col = col.min(self.line_length(new_line));
+            self.cursor = self.line_start_index(new_line) + new_col;
+            if shift {
+                self.update_selection();
+            } else {
+                self.selection = None;
+            }
+        }
+
+        pub fn move_cursor_down(&mut self, shift: bool) {
+            let (line, col) = self.cursor_line_col();
+            let total_lines = self.text.lines().count();
+            if line + 1 >= total_lines {
+                if shift {
+                    self.update_selection();
+                } else {
+                    self.selection = None;
+                }
+                return;
+            }
+            let new_line = line + 1;
+            let new_col = col.min(self.line_length(new_line));
+            self.cursor = self.line_start_index(new_line) + new_col;
+            if shift {
+                self.update_selection();
+            } else {
+                self.selection = None;
+            }
+        }
+
         fn update_selection(&mut self) {
             match self.selection {
                 Some((start, _)) => self.selection = Some((start, self.cursor)),
@@ -146,7 +261,7 @@ hotline::object!({
 
         pub fn scroll_by(&mut self, delta: f64) {
             if let Some(ref mut rect) = self.rect {
-                let line_height = 14.0;
+                let line_height = self.line_height();
                 let total_height = self.text.lines().count() as f64 * line_height;
                 let max_offset = (total_height - rect.bounds().3).max(0.0);
                 self.scroll_offset = (self.scroll_offset + delta).max(0.0).min(max_offset);
@@ -179,7 +294,7 @@ hotline::object!({
                     }
                 }
 
-                let line_height = 14.0;
+                let line_height = self.line_height();
 
                 let mut cursor_y = y + 10.0 - self.scroll_offset;
 
@@ -197,17 +312,9 @@ hotline::object!({
                 }
 
                 // Draw text cursor
-                let mut line_idx = 0usize;
-                let mut col_idx = 0usize;
-                for ch in self.text.chars().take(self.cursor) {
-                    if ch == '\n' {
-                        line_idx += 1;
-                        col_idx = 0;
-                    } else {
-                        col_idx += 1;
-                    }
-                }
-                let cursor_x = x + 10.0 + col_idx as f64 * 8.0;
+                let (line_idx, col_idx) = self.cursor_line_col();
+                let col_px = self.column_to_pixel(line_idx, col_idx);
+                let cursor_x = x + 10.0 + col_px;
                 let cursor_y_pos = y + 10.0 + line_idx as f64 * line_height - self.scroll_offset;
                 if cursor_y_pos >= y && cursor_y_pos <= y + h {
                     let px = cursor_x.round() as i64;
@@ -225,7 +332,6 @@ hotline::object!({
                         }
                     }
                 }
-
                 let total_height = self.text.lines().count() as f64 * line_height;
                 if total_height > h {
                     let bar_height = (h / total_height) * h;

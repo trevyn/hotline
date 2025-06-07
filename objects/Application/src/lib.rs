@@ -229,6 +229,24 @@ hotline::object!({
                                 }
                             }
                         }
+                        Event::KeyDown { keycode: Some(Keycode::Up), keymod, .. } => {
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    let shift = keymod.contains(sdl2::keyboard::Mod::LSHIFTMOD)
+                                        || keymod.contains(sdl2::keyboard::Mod::RSHIFTMOD);
+                                    editor.move_cursor_up(shift);
+                                }
+                            }
+                        }
+                        Event::KeyDown { keycode: Some(Keycode::Down), keymod, .. } => {
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    let shift = keymod.contains(sdl2::keyboard::Mod::LSHIFTMOD)
+                                        || keymod.contains(sdl2::keyboard::Mod::RSHIFTMOD);
+                                    editor.move_cursor_down(shift);
+                                }
+                            }
+                        }
                         Event::KeyDown { keycode: Some(Keycode::S), keymod, .. } => {
                             // Check for Cmd+S (Mac) or Ctrl+S (others)
                             #[cfg(target_os = "macos")]

@@ -32,6 +32,13 @@ hotline::object!({
             self.y += dy;
         }
 
+        pub fn resize(&mut self, x: f64, y: f64, width: f64, height: f64) {
+            self.x = x;
+            self.y = y;
+            self.width = width;
+            self.height = height;
+        }
+
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             // Draw rectangle by setting pixels
             let x_start = (self.x as i32).max(0) as u32;
