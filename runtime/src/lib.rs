@@ -160,3 +160,35 @@ fn find_object_for_file(path: &Path) -> Option<String> {
     }
     None
 }
+
+pub fn compile_all_objects(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    // Collect all object crate names first
+    let mut packages = Vec::new();
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.path().is_dir() {
+            if let Some(name) = entry.file_name().to_str() {
+                packages.push(name.to_string());
+            }
+        }
+    }
+
+    if packages.is_empty() {
+        return Ok(());
+    }
+
+    // Invoke cargo once with multiple -p arguments
+    eprintln!("Compiling objects: {:?}", packages);
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.arg("build").arg("--release");
+    for pkg in &packages {
+        cmd.arg("-p").arg(pkg);
+    }
+
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err("cargo build failed".into());
+    }
+
+    Ok(())
+}
