@@ -10,6 +10,8 @@ hotline::object!({
         focused: bool,
         highlight: Option<HighlightLens>,
         text_renderer: Option<TextRenderer>,
+        cursor: usize,
+        selection: Option<(usize, usize)>,
     }
 
     impl CodeEditor {
@@ -26,6 +28,9 @@ hotline::object!({
             if self.text_renderer.is_none() {
                 self.text_renderer = Some(TextRenderer::new());
             }
+
+            self.cursor = self.text.chars().count();
+            self.selection = None;
         }
 
         pub fn set_rect(&mut self, rect: Rect) {
@@ -59,15 +64,68 @@ hotline::object!({
             }
         }
 
+        fn char_to_byte(&self, idx: usize) -> usize {
+            self.text.char_indices().nth(idx).map(|(b, _)| b).unwrap_or_else(|| self.text.len())
+        }
+
+        fn delete_range(&mut self, start: usize, end: usize) {
+            let b_start = self.char_to_byte(start);
+            let b_end = self.char_to_byte(end);
+            self.text.replace_range(b_start..b_end, "");
+        }
+
         pub fn insert_char(&mut self, ch: char) {
             if self.focused {
-                self.text.push(ch);
+                if let Some((s, e)) = self.selection.take() {
+                    self.delete_range(s.min(e), s.max(e));
+                    self.cursor = s.min(e);
+                }
+                let b = self.char_to_byte(self.cursor);
+                self.text.insert(b, ch);
+                self.cursor += 1;
             }
         }
 
         pub fn backspace(&mut self) {
             if self.focused {
-                self.text.pop();
+                if let Some((s, e)) = self.selection.take() {
+                    self.delete_range(s.min(e), s.max(e));
+                    self.cursor = s.min(e);
+                } else if self.cursor > 0 {
+                    let b_start = self.char_to_byte(self.cursor - 1);
+                    let b_end = self.char_to_byte(self.cursor);
+                    self.text.replace_range(b_start..b_end, "");
+                    self.cursor -= 1;
+                }
+            }
+        }
+
+        pub fn move_cursor_left(&mut self, shift: bool) {
+            if self.cursor > 0 {
+                self.cursor -= 1;
+            }
+            if shift {
+                self.update_selection();
+            } else {
+                self.selection = None;
+            }
+        }
+
+        pub fn move_cursor_right(&mut self, shift: bool) {
+            if self.cursor < self.text.chars().count() {
+                self.cursor += 1;
+            }
+            if shift {
+                self.update_selection();
+            } else {
+                self.selection = None;
+            }
+        }
+
+        fn update_selection(&mut self) {
+            match self.selection {
+                Some((start, _)) => self.selection = Some((start, self.cursor)),
+                None => self.selection = Some((self.cursor, self.cursor)),
             }
         }
 
