@@ -50,6 +50,13 @@ hotline::object!({
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             if let Some(ref mut target) = self.target {
+                let (x, y, width, height) = target.bounds();
+
+                let x_start = (x as i32).max(0) as u32;
+                let y_start = (y as i32).max(0) as u32;
+                let x_end = ((x + width) as i32).min(buffer_width as i32) as u32;
+                let y_end = ((y + height) as i32).min(buffer_height as i32) as u32;
+
                 let corners = target.corners();
                 let (b, g, r, a) = self.highlight_color;
 

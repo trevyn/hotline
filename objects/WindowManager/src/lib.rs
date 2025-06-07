@@ -197,8 +197,7 @@ hotline::object!({
         pub fn handle_mouse_up(&mut self, x: f64, y: f64) {
             if self.context_menu.is_some() {
                 return;
-            }
-            else if self.resizing {
+            } else if self.resizing {
                 self.resizing = false;
                 self.resize_dir = ResizeDir::None;
                 self.resize_start = None;
@@ -314,7 +313,7 @@ hotline::object!({
                 selected_handle.set_rotation(new_rot);
             }
         }
-          
+
         pub fn handle_right_click(&mut self, x: f64, y: f64) {
             let mut menu = self.context_menu.take().unwrap_or_else(ContextMenu::new);
             menu.open(x, y);
