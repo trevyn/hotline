@@ -16,6 +16,7 @@ hotline::object!({
     pub struct Application {
         window_manager: Option<WindowManager>,
         code_editor: Option<CodeEditor>,
+        color_wheel: Option<ColorWheel>,
         gpu_renderer: Option<GPURenderer>,
         gpu_atlases: Vec<AtlasData>,
         gpu_commands: Vec<RenderCommand>,
@@ -63,6 +64,15 @@ hotline::object!({
                     wm.add_rect(editor_rect.clone());
                 }
                 editor.set_rect(editor_rect);
+            }
+
+            // Create color wheel
+            self.color_wheel = Some(ColorWheel::new());
+            if let Some(ref mut wheel) = self.color_wheel {
+                let rect = Rect::new();
+                let mut r_ref = rect.clone();
+                r_ref.initialize(50.0, 400.0, 120.0, 120.0);
+                wheel.set_rect(rect);
             }
 
             // Create FPS counter
@@ -153,6 +163,13 @@ hotline::object!({
                             }
                             if let Some(ref mut editor) = self.code_editor {
                                 editor.handle_mouse_down(x as f64, y as f64);
+                            }
+                            if let Some(ref mut wheel) = self.color_wheel {
+                                if let Some(color) = wheel.handle_mouse_down(x as f64, y as f64) {
+                                    if let Some(ref mut editor) = self.code_editor {
+                                        editor.update_text_color(color);
+                                    }
+                                }
                             }
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
@@ -265,6 +282,10 @@ hotline::object!({
                     editor.render(buffer, 800, 600, pitch as i64);
                 }
 
+                if let Some(ref mut wheel) = self.color_wheel {
+                    wheel.render(buffer, 800, 600, pitch as i64);
+                }
+
                 // Render FPS counter
                 if let Some(ref mut fps) = self.fps_counter {
                     fps.render(buffer, 800, 600, pitch as i64);
@@ -303,6 +324,9 @@ hotline::object!({
                 // Render code editor
                 if let Some(ref mut editor) = self.code_editor {
                     editor.render(buffer, 800, 600, pitch as i64);
+                }
+                if let Some(ref mut wheel) = self.color_wheel {
+                    wheel.render(buffer, 800, 600, pitch as i64);
                 }
 
                 // Render FPS counter
