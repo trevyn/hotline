@@ -119,6 +119,13 @@ hotline::object!({
                                 wm.handle_mouse_motion(x as f64, y as f64);
                             }
                         }
+                        Event::MouseWheel { y, .. } => {
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    editor.scroll_by(-y as f64 * 20.0);
+                                }
+                            }
+                        }
                         Event::TextInput { text, .. } => {
                             if let Some(ref mut editor) = self.code_editor {
                                 if editor.is_focused() {
