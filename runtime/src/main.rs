@@ -1,4 +1,5 @@
 use runtime::DirectRuntime;
+use runtime::compile_all_objects;
 
 fn main() -> Result<(), String> {
     use std::fs;
@@ -21,6 +22,9 @@ fn main() -> Result<(), String> {
     // Start watching objects directory for changes
     runtime.start_watching("objects").map_err(|e| format!("Failed to start file watcher: {}", e))?;
     eprintln!("Started watching objects/ directory for changes");
+
+    // Compile all object crates once at startup
+    compile_all_objects(Path::new("objects")).map_err(|e| format!("Failed to compile objects: {}", e))?;
 
     // Load all libraries from objects directory
     let objects_dir = Path::new("objects");
