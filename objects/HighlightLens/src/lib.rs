@@ -6,6 +6,9 @@ hotline::object!({
         #[setter]
         #[default((0, 255, 0, 255))]
         highlight_color: (u8, u8, u8, u8), // BGRA
+        #[setter]
+        #[default(false)]
+        show_handles: bool,
     }
 
     impl HighlightLens {
@@ -54,6 +57,39 @@ hotline::object!({
                     let (x0, y0) = corners[i];
                     let (x1, y1) = corners[(i + 1) % 4];
                     Self::draw_line(buffer, buffer_width, buffer_height, pitch, b, g, r, a, x0, y0, x1, y1);
+                }
+
+                if self.show_handles {
+                    let handle = 6u32;
+                    let half = handle / 2;
+                    let mid_x = (x_start + x_end) / 2;
+                    let mid_y = (y_start + y_end) / 2;
+                    let mut positions = vec![
+                        (x_start, y_start),
+                        (x_end.saturating_sub(handle), y_start),
+                        (x_start, y_end.saturating_sub(handle)),
+                        (x_end.saturating_sub(handle), y_end.saturating_sub(handle)),
+                        (x_start, mid_y.saturating_sub(half)),
+                        (x_end.saturating_sub(handle), mid_y.saturating_sub(half)),
+                        (mid_x.saturating_sub(half), y_start),
+                        (mid_x.saturating_sub(half), y_end.saturating_sub(handle)),
+                    ];
+
+                    for (hx, hy) in positions.drain(..) {
+                        for py in hy..hy + handle {
+                            for px in hx..hx + handle {
+                                if px < buffer_width as u32 && py < buffer_height as u32 {
+                                    let off = (py * (pitch as u32) + px * 4) as usize;
+                                    if off + 3 < buffer.len() {
+                                        buffer[off] = b;
+                                        buffer[off + 1] = g;
+                                        buffer[off + 2] = r;
+                                        buffer[off + 3] = a;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
