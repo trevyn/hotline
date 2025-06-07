@@ -109,6 +109,11 @@ hotline::object!({
                                 editor.handle_mouse_down(x as f64, y as f64);
                             }
                         }
+                        Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
+                            if let Some(ref mut wm) = self.window_manager {
+                                wm.handle_right_click(x as f64, y as f64);
+                            }
+                        }
                         Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_up(x as f64, y as f64);
