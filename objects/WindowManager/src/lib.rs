@@ -18,9 +18,11 @@ hotline::object!({
     #[derive(Default)]
     pub struct WindowManager {
         rects: Vec<Rect>,
+        polygons: Vec<RegularPolygon>,
         selected: Option<Rect>,
         highlight_lens: Option<HighlightLens>, // HighlightLens for selected rect
         text_renderer: Option<TextRenderer>,   // TextRenderer for displaying text
+        context_menu: Option<ContextMenu>,
         dragging: bool,
         drag_offset_x: f64,
         drag_offset_y: f64,
@@ -99,6 +101,26 @@ hotline::object!({
         }
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
+            if let Some(ref mut menu) = self.context_menu {
+                if let Some(selection) = menu.handle_mouse_down(x, y) {
+                    match selection.as_str() {
+                        "Rect" => {
+                            let mut r = Rect::new();
+                            r.initialize(x, y, 100.0, 100.0);
+                            self.rects.push(r);
+                        }
+                        "RegularPolygon" => {
+                            let mut p = RegularPolygon::new();
+                            p.initialize(x, y, 40.0, 5);
+                            self.polygons.push(p);
+                        }
+                        _ => {}
+                    }
+                }
+                self.context_menu = None;
+                return;
+            }
+
             // First check for hits
             let mut hit_index = None;
             let mut hit_position = (0.0, 0.0);
@@ -173,7 +195,10 @@ hotline::object!({
         }
 
         pub fn handle_mouse_up(&mut self, x: f64, y: f64) {
-            if self.resizing {
+            if self.context_menu.is_some() {
+                return;
+            }
+            else if self.resizing {
                 self.resizing = false;
                 self.resize_dir = ResizeDir::None;
                 self.resize_start = None;
@@ -200,6 +225,9 @@ hotline::object!({
         }
 
         pub fn handle_mouse_motion(&mut self, x: f64, y: f64) {
+            if self.context_menu.is_some() {
+                return;
+            }
             if self.dragging {
                 if let Some(ref mut selected_handle) = self.selected {
                     // Move the selected rect to follow the mouse
@@ -280,10 +308,21 @@ hotline::object!({
             }
         }
 
+        pub fn handle_right_click(&mut self, x: f64, y: f64) {
+            let mut menu = self.context_menu.take().unwrap_or_else(ContextMenu::new);
+            menu.open(x, y);
+            self.context_menu = Some(menu);
+        }
+
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             // Render all rects
             for rect_handle in &mut self.rects {
                 rect_handle.render(buffer, buffer_width, buffer_height, pitch);
+            }
+
+            // Render polygons
+            for poly in &mut self.polygons {
+                poly.render(buffer, buffer_width, buffer_height, pitch);
             }
 
             // Render the highlight lens if we have one (this will render the selected rect with highlight)
@@ -294,6 +333,11 @@ hotline::object!({
             // Render text
             if let Some(ref mut text_renderer) = self.text_renderer {
                 text_renderer.render(buffer, buffer_width, buffer_height, pitch);
+            }
+
+            // Render context menu if visible
+            if let Some(ref mut menu) = self.context_menu {
+                menu.render(buffer, buffer_width, buffer_height, pitch);
             }
         }
 
