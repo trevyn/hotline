@@ -100,6 +100,7 @@ hotline::object!({
                 .window("hotline - direct calls", 800, 600)
                 .position_centered()
                 .allow_highdpi()
+                .resizable()
                 .build()
                 .map_err(|e| e.to_string())?;
 
