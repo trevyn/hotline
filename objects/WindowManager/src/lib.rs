@@ -1,6 +1,20 @@
 use hotline::HotlineObject;
 
 hotline::object!({
+    #[derive(Clone, Copy, PartialEq, Default)]
+    enum ResizeDir {
+        #[default]
+        None,
+        Left,
+        Right,
+        Top,
+        Bottom,
+        TopLeft,
+        TopRight,
+        BottomLeft,
+        BottomRight,
+    }
+
     #[derive(Default)]
     pub struct WindowManager {
         rects: Vec<Rect>,
@@ -15,20 +29,6 @@ hotline::object!({
         resize_dir: ResizeDir,
         resize_start: Option<(f64, f64)>,
         resize_orig: Option<(f64, f64, f64, f64)>,
-    }
-
-    #[derive(Clone, Copy, PartialEq, Default)]
-    enum ResizeDir {
-        #[default]
-        None,
-        Left,
-        Right,
-        Top,
-        Bottom,
-        TopLeft,
-        TopRight,
-        BottomLeft,
-        BottomRight,
     }
 
     impl WindowManager {
@@ -103,6 +103,7 @@ hotline::object!({
             let mut hit_index = None;
             let mut hit_position = (0.0, 0.0);
             let mut resize_dir = ResizeDir::None;
+            let mut resize_bounds = None;
 
             for (i, rect_handle) in self.rects.iter_mut().enumerate().rev() {
                 // Check if this rect contains the point
@@ -135,6 +136,7 @@ hotline::object!({
                 if resize_dir != ResizeDir::None || inside {
                     hit_index = Some(i);
                     hit_position = rect_handle.position();
+                    resize_bounds = Some(rect_handle.bounds());
                     break;
                 }
             }
@@ -144,17 +146,20 @@ hotline::object!({
 
             if let Some(index) = hit_index {
                 // Found a hit - select it
-                let rect_handle = &self.rects[index];
-                self.selected = Some(rect_handle.clone());
+                let mut rect_clone = self.rects[index].clone();
+                self.selected = Some(rect_clone.clone());
 
                 // Create HighlightLens for selected rect
-                self.highlight_lens = Some(HighlightLens::new().with_target(rect_handle));
+                self.highlight_lens = Some(HighlightLens::new().with_target(&rect_clone).with_show_handles(true));
 
                 if resize_dir != ResizeDir::None {
                     self.resizing = true;
                     self.resize_dir = resize_dir;
                     self.resize_start = Some((x, y));
-                    self.resize_orig = Some(rect_handle.bounds());
+                    self.resize_orig = resize_bounds;
+                    if let Some(ref mut lens) = self.highlight_lens {
+                        lens.set_highlight_color((255, 255, 0, 255));
+                    }
                 } else {
                     // Calculate drag offset from click position to rect position
                     self.drag_offset_x = hit_position.0 - x;
@@ -173,6 +178,9 @@ hotline::object!({
                 self.resize_dir = ResizeDir::None;
                 self.resize_start = None;
                 self.resize_orig = None;
+                if let Some(ref mut lens) = self.highlight_lens {
+                    lens.set_highlight_color((0, 255, 0, 255));
+                }
             } else if self.dragging {
                 self.stop_dragging();
             } else if let Some((start_x, start_y)) = self.drag_start {
