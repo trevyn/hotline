@@ -19,6 +19,10 @@ hotline::object!({
         gpu_renderer: Option<GPURenderer>,
         gpu_atlases: Vec<AtlasData>,
         gpu_commands: Vec<RenderCommand>,
+        fps_counter: Option<TextRenderer>,
+        frame_times: std::collections::VecDeque<std::time::Instant>,
+        last_fps_update: Option<std::time::Instant>,
+        current_fps: f64,
     }
 
     impl Application {
@@ -61,6 +65,20 @@ hotline::object!({
                 editor.set_rect(editor_rect);
             }
 
+            // Create FPS counter
+            self.fps_counter = Some(TextRenderer::new());
+            if let Some(ref mut fps) = self.fps_counter {
+                fps.set_x(10.0);
+                fps.set_y(10.0);
+                fps.set_color((0, 255, 0, 255)); // Green color (BGRA)
+                fps.set_text("FPS: 0".to_string());
+            }
+
+            // Initialize FPS tracking
+            self.frame_times = std::collections::VecDeque::with_capacity(120);
+            self.last_fps_update = Some(std::time::Instant::now());
+            self.current_fps = 0.0;
+
             Ok(())
         }
 
@@ -92,6 +110,34 @@ hotline::object!({
             }
 
             'running: loop {
+                // Track frame time
+                let now = std::time::Instant::now();
+                self.frame_times.push_back(now);
+
+                // Remove old frame times (keep last 2 seconds)
+                while let Some(front) = self.frame_times.front() {
+                    if now.duration_since(*front).as_secs_f64() > 2.0 {
+                        self.frame_times.pop_front();
+                    } else {
+                        break;
+                    }
+                }
+
+                // Update FPS every 100ms
+                if let Some(last_update) = self.last_fps_update {
+                    if now.duration_since(last_update).as_millis() >= 100 {
+                        if self.frame_times.len() > 1 {
+                            let duration = now.duration_since(*self.frame_times.front().unwrap()).as_secs_f64();
+                            self.current_fps = (self.frame_times.len() - 1) as f64 / duration;
+
+                            if let Some(ref mut fps) = self.fps_counter {
+                                fps.set_text(format!("FPS: {:.1}", self.current_fps));
+                            }
+                        }
+                        self.last_fps_update = Some(now);
+                    }
+                }
+
                 canvas.set_draw_color(Color::RGB(0, 0, 0));
                 canvas.clear();
 
@@ -206,6 +252,11 @@ hotline::object!({
                 if let Some(ref mut editor) = self.code_editor {
                     editor.render(buffer, 800, 600, pitch as i64);
                 }
+
+                // Render FPS counter
+                if let Some(ref mut fps) = self.fps_counter {
+                    fps.render(buffer, 800, 600, pitch as i64);
+                }
             })?;
             Ok(())
         }
@@ -240,6 +291,11 @@ hotline::object!({
                 // Render code editor
                 if let Some(ref mut editor) = self.code_editor {
                     editor.render(buffer, 800, 600, pitch as i64);
+                }
+
+                // Render FPS counter
+                if let Some(ref mut fps) = self.fps_counter {
+                    fps.render(buffer, 800, 600, pitch as i64);
                 }
 
                 for y in 0..600 {
