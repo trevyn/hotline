@@ -1,0 +1,11 @@
+[package]
+edition = "2024"
+name = "Circle"
+version = "0.1.0"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+hotline = {path = "../../hotline"}
+# do not add additional dependencies here
