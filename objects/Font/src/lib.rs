@@ -66,13 +66,13 @@ hotline::object!({
         pub fn visit_object_field(&mut self, key: &str, value: &str) -> Result<(), String> {
             match key {
                 "chr" => self.current_chr = value.chars().next(),
-                "x" => self.current_x = value.parse().ok(),
-                "y" => self.current_y = value.parse().ok(),
-                "w" => self.current_w = value.parse().ok(),
-                "h" => self.current_h = value.parse().ok(),
-                "off_x" => self.current_off_x = value.parse().ok(),
-                "off_y" => self.current_off_y = value.parse().ok(),
-                "adv" => self.current_adv = value.parse().ok(),
+                "x" => self.current_x = Some(value.parse().map_err(|_| "invalid x")?),
+                "y" => self.current_y = Some(value.parse().map_err(|_| "invalid y")?),
+                "w" => self.current_w = Some(value.parse().map_err(|_| "invalid w")?),
+                "h" => self.current_h = Some(value.parse().map_err(|_| "invalid h")?),
+                "off_x" => self.current_off_x = Some(value.parse().map_err(|_| "invalid off_x")?),
+                "off_y" => self.current_off_y = Some(value.parse().map_err(|_| "invalid off_y")?),
+                "adv" => self.current_adv = Some(value.parse().map_err(|_| "invalid adv")?),
                 _ => {}
             }
             Ok(())
