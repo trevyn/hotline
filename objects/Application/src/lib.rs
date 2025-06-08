@@ -150,6 +150,7 @@ hotline::object!({
                     self.height / self.pixel_multiple,
                 )
                 .map_err(|e| e.to_string())?;
+            texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
 
             #[cfg(target_os = "linux")]
             {
@@ -207,6 +208,7 @@ hotline::object!({
                                     self.height / self.pixel_multiple,
                                 )
                                 .map_err(|e| e.to_string())?;
+                            texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
                             let (win_w, win_h) = canvas.window().size();
@@ -337,6 +339,7 @@ hotline::object!({
                                         self.height / self.pixel_multiple,
                                     )
                                     .map_err(|e| e.to_string())?;
+                                texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                             }
                         }
                         Event::KeyDown { keycode: Some(Keycode::Minus), keymod, .. }
@@ -361,6 +364,7 @@ hotline::object!({
                                         self.height / self.pixel_multiple,
                                     )
                                     .map_err(|e| e.to_string())?;
+                                texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                             }
                         }
                         Event::KeyDown { keycode: Some(Keycode::S), keymod, .. } => {
