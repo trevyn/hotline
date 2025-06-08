@@ -123,6 +123,18 @@ hotline::object!({
             self.dragging = false;
         }
 
+        fn update_highlight(&mut self) {
+            if let (Some(sel), Some(ref mut hl)) = (self.selected, self.highlight_lens.as_mut()) {
+                let bounds = match sel {
+                    SelectedObject::Rect(i) => self.rects[i].bounds(),
+                    SelectedObject::Polygon(i) => self.polygons[i].bounds(),
+                };
+                let mut r = Rect::new();
+                r.initialize(bounds.0, bounds.1, bounds.2, bounds.3);
+                hl.set_target(&r);
+            }
+        }
+
         pub fn get_selected_handle(&mut self) -> Option<SelectedObject> {
             self.selected
         }
@@ -338,6 +350,7 @@ hotline::object!({
                             self.polygons[i].move_by(dx, dy);
                         }
                     }
+                    self.update_highlight();
                 }
             } else if self.resizing {
                 if let (Some(sel), Some((start_x, start_y)), Some((orig_x, orig_y, orig_w, orig_h))) =
@@ -403,6 +416,7 @@ hotline::object!({
                             self.polygons[i].resize(new_x, new_y, new_w, new_h);
                         }
                     }
+                    self.update_highlight();
                 }
             }
         }
@@ -419,6 +433,7 @@ hotline::object!({
                         self.polygons[i].set_rotation(new_rot);
                     }
                 }
+                self.update_highlight();
             }
         }
 
