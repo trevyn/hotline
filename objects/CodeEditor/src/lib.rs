@@ -97,10 +97,10 @@ hotline::object!({
             14.0
         }
 
-        fn cursor_line_col(&self) -> (usize, usize) {
+        fn index_to_line_col(&self, idx: usize) -> (usize, usize) {
             let mut line = 0usize;
             let mut col = 0usize;
-            for ch in self.text.chars().take(self.cursor) {
+            for ch in self.text.chars().take(idx) {
                 if ch == '\n' {
                     line += 1;
                     col = 0;
@@ -109,6 +109,10 @@ hotline::object!({
                 }
             }
             (line, col)
+        }
+
+        fn cursor_line_col(&self) -> (usize, usize) {
+            self.index_to_line_col(self.cursor)
         }
 
         fn line_start_index(&self, line: usize) -> usize {
@@ -268,15 +272,6 @@ hotline::object!({
             }
         }
 
-        pub fn scroll_by(&mut self, delta: f64) {
-            if let Some(ref mut rect) = self.rect {
-                let line_height = 14.0;
-                let total_height = self.text.lines().count() as f64 * line_height;
-                let max_offset = (total_height - rect.bounds().3).max(0.0);
-                self.scroll_offset = (self.scroll_offset + delta).max(0.0).min(max_offset);
-            }
-        }
-
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             if let Some(registry) = self.get_registry() {
                 ::hotline::set_library_registry(registry);
@@ -304,6 +299,43 @@ hotline::object!({
                 }
 
                 let line_height = self.line_height();
+
+                if let Some((start, end)) = self.selection {
+                    let (start, end) = if start <= end { (start, end) } else { (end, start) };
+                    let mut char_index = 0usize;
+                    let mut line_idx = 0usize;
+                    for line in self.text.split('\n') {
+                        let len = line.chars().count();
+                        let line_start = char_index;
+                        let line_end = char_index + len;
+                        if line_end >= start && line_start <= end {
+                            let s_col = if start > line_start { start - line_start } else { 0 };
+                            let e_col = if end < line_end { end - line_start } else { len };
+                            let line_y = y + 10.0 + line_idx as f64 * line_height - self.scroll_offset;
+                            if line_y + line_height >= y && line_y <= y + h {
+                                let x0 = x + 10.0 + self.column_to_pixel(line_idx, s_col);
+                                let x1 = x + 10.0 + self.column_to_pixel(line_idx, e_col);
+                                let px0 = x0.round() as i64;
+                                let px1 = x1.round() as i64;
+                                let py0 = line_y.round() as i64;
+                                let py1 = (line_y + line_height).round() as i64;
+                                for py in py0.max(0)..py1.min(buffer_height) {
+                                    for px in px0.max(0)..px1.min(buffer_width) {
+                                        let off = (py * pitch + px * 4) as usize;
+                                        if off + 3 < buffer.len() {
+                                            buffer[off] = 60;
+                                            buffer[off + 1] = 60;
+                                            buffer[off + 2] = 120;
+                                            buffer[off + 3] = 255;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        char_index += len + 1;
+                        line_idx += 1;
+                    }
+                }
 
                 let mut cursor_y = y + 10.0 - self.scroll_offset;
 
