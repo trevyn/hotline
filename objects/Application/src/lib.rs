@@ -148,6 +148,22 @@ hotline::object!({
                 let now = std::time::Instant::now();
                 self.frame_times.push_back(now);
 
+                // Check for window resize every frame to avoid stretching during
+                // interactive resizes. SDL may not emit resize events until the
+                // user releases the mouse button.
+                let (dw, dh) = canvas.window().drawable_size();
+                if dw != self.width || dh != self.height {
+                    self.width = dw;
+                    self.height = dh;
+                    texture = texture_creator
+                        .create_texture_streaming(
+                            PixelFormatEnum::ARGB8888,
+                            self.width / self.pixel_multiple,
+                            self.height / self.pixel_multiple,
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
+
                 // Remove old frame times (keep last 2 seconds)
                 while let Some(front) = self.frame_times.front() {
                     if now.duration_since(*front).as_secs_f64() > 2.0 {
