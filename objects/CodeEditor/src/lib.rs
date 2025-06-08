@@ -88,8 +88,8 @@ hotline::object!({
             self.text.replace_range(b_start..b_end, "");
         }
 
-        fn line_height(&self) -> f64 {
-            14.0
+        fn line_height(&mut self) -> f64 {
+            if let Some(ref mut tr) = self.text_renderer { tr.line_height() } else { 14.0 }
         }
 
         fn index_to_line_col(&self, idx: usize) -> (usize, usize) {
@@ -123,10 +123,6 @@ hotline::object!({
 
         fn line_length(&self, line: usize) -> usize {
             self.text.split('\n').nth(line).map(|l| l.chars().count()).unwrap_or(0)
-        }
-
-        fn column_to_pixel(&self, _line: usize, col: usize) -> f64 {
-            col as f64 * 8.0
         }
 
         pub fn insert_char(&mut self, ch: char) {
@@ -265,10 +261,11 @@ hotline::object!({
             }
 
             if let Some((start, end)) = self.selection {
+                let text = self.text.clone();
                 let (start, end) = if start <= end { (start, end) } else { (end, start) };
                 let mut char_index = 0usize;
                 let mut line_idx = 0usize;
-                for line in self.text.split('\n') {
+                for line in text.split('\n') {
                     let len = line.chars().count();
                     let line_start = char_index;
                     let line_end = char_index + len;
@@ -277,8 +274,20 @@ hotline::object!({
                         let e_col = if end < line_end { end - line_start } else { len };
                         let line_y = y + 10.0 + line_idx as f64 * line_height - self.scroll_offset;
                         if line_y + line_height >= y && line_y <= y + h {
-                            let x0 = x + 10.0 + self.column_to_pixel(line_idx, s_col);
-                            let x1 = x + 10.0 + self.column_to_pixel(line_idx, e_col);
+                            let x0 = x
+                                + 10.0
+                                + self
+                                    .text_renderer
+                                    .as_mut()
+                                    .map(|tr| tr.measure_text(&line.chars().take(s_col).collect::<String>()))
+                                    .unwrap_or(s_col as f64 * 8.0);
+                            let x1 = x
+                                + 10.0
+                                + self
+                                    .text_renderer
+                                    .as_mut()
+                                    .map(|tr| tr.measure_text(&line.chars().take(e_col).collect::<String>()))
+                                    .unwrap_or(e_col as f64 * 8.0);
                             let px0 = x0.round() as i64;
                             let px1 = x1.round() as i64;
                             let py0 = line_y.round() as i64;
@@ -318,7 +327,9 @@ hotline::object!({
 
             // Draw text cursor
             let (line_idx, col_idx) = self.cursor_line_col();
-            let col_px = self.column_to_pixel(line_idx, col_idx);
+            let line_text = self.text.split('\n').nth(line_idx).unwrap_or("");
+            let prefix: String = line_text.chars().take(col_idx).collect();
+            let col_px = self.text_renderer.as_mut().map(|tr| tr.measure_text(&prefix)).unwrap_or(col_idx as f64 * 8.0);
             let cursor_x = x + 10.0 + col_px;
             let cursor_y_pos = y + 10.0 + line_idx as f64 * line_height - self.scroll_offset;
             if cursor_y_pos >= y && cursor_y_pos <= y + h {

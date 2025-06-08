@@ -1,6 +1,11 @@
 use hotline::HotlineObject;
 
-// New object that moves rects toward the mouse cursor
+#[derive(Clone, Copy, PartialEq)]
+pub enum SelectedObject {
+    Rect(usize),
+    Polygon(usize),
+}
+
 hotline::object!({
     #[derive(Clone, Copy, PartialEq, Default)]
     enum ResizeDir {
@@ -21,10 +26,11 @@ hotline::object!({
         rects: Vec<Rect>,
         rect_movers: Vec<RectMover>,
         polygons: Vec<RegularPolygon>,
-        selected: Option<Rect>,
+        selected: Option<SelectedObject>,
         highlight_lens: Option<HighlightLens>, // HighlightLens for selected rect
         text_renderer: Option<TextRenderer>,   // TextRenderer for displaying text
         context_menu: Option<ContextMenu>,
+        polygon_menu: Option<PolygonMenu>,
         click_inspector: Option<ClickInspector>,
         dragging: bool,
         drag_offset_x: f64,
@@ -53,6 +59,7 @@ hotline::object!({
 
                 // Create click inspector
                 self.click_inspector = Some(ClickInspector::new());
+                self.polygon_menu = Some(PolygonMenu::new());
             } else {
                 panic!("WindowManager registry not initialized");
             }
@@ -107,8 +114,8 @@ hotline::object!({
             self.drag_offset_y = y;
         }
 
-        pub fn start_dragging(&mut self, rect: Rect) {
-            self.selected = Some(rect);
+        pub fn start_dragging(&mut self, selection: SelectedObject) {
+            self.selected = Some(selection);
             self.dragging = true;
         }
 
@@ -116,8 +123,8 @@ hotline::object!({
             self.dragging = false;
         }
 
-        pub fn get_selected_handle(&mut self) -> Option<Rect> {
-            self.selected.clone()
+        pub fn get_selected_handle(&mut self) -> Option<SelectedObject> {
+            self.selected
         }
 
         pub fn get_rects_count(&mut self) -> i64 {
@@ -137,6 +144,18 @@ hotline::object!({
         }
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
+            if let Some(ref mut pm) = self.polygon_menu {
+                if pm.is_visible() {
+                    if let Some(sides) = pm.handle_mouse_down(x, y) {
+                        let mut p = RegularPolygon::new();
+                        p.initialize(x, y, 40.0, sides);
+                        self.polygons.push(p);
+                    }
+                    self.context_menu = None;
+                    return;
+                }
+            }
+
             if let Some(ref mut menu) = self.context_menu {
                 if let Some(selection) = menu.handle_mouse_down(x, y) {
                     match selection.as_str() {
@@ -146,22 +165,23 @@ hotline::object!({
                             self.add_rect(r);
                         }
                         "RegularPolygon" => {
-                            let mut p = RegularPolygon::new();
-                            p.initialize(x, y, 40.0, 5);
-                            self.polygons.push(p);
+                            if let Some(ref mut pm) = self.polygon_menu {
+                                pm.open(x + 100.0, y);
+                            }
                         }
                         _ => {}
                     }
                 }
-                self.context_menu = None;
+                let hide_menu = if let Some(pm) = self.polygon_menu.as_mut() { !pm.is_visible() } else { true };
+                if hide_menu {
+                    self.context_menu = None;
+                }
                 return;
             }
 
             // First check for hits
-            let mut hit_index = None;
-            let mut hit_position = (0.0, 0.0);
+            let mut hit: Option<(SelectedObject, (f64, f64), (f64, f64, f64, f64))> = None;
             let mut resize_dir = ResizeDir::None;
-            let mut resize_bounds = None;
 
             for (i, rect_handle) in self.rects.iter_mut().enumerate().rev() {
                 // Check if this rect contains the point
@@ -192,36 +212,67 @@ hotline::object!({
                 }
 
                 if resize_dir != ResizeDir::None || inside {
-                    hit_index = Some(i);
-                    hit_position = rect_handle.position();
-                    resize_bounds = Some(rect_handle.bounds());
+                    hit = Some((SelectedObject::Rect(i), rect_handle.position(), rect_handle.bounds()));
                     break;
+                }
+            }
+
+            if hit.is_none() {
+                for (i, poly) in self.polygons.iter_mut().enumerate().rev() {
+                    let (rx, ry, rw, rh) = poly.bounds();
+                    let margin = 5.0;
+                    let inside = poly.contains_point(x, y);
+                    let near_left = (x - rx).abs() <= margin && y >= ry - margin && y <= ry + rh + margin;
+                    let near_right = (x - (rx + rw)).abs() <= margin && y >= ry - margin && y <= ry + rh + margin;
+                    let near_top = (y - ry).abs() <= margin && x >= rx - margin && x <= rx + rw + margin;
+                    let near_bottom = (y - (ry + rh)).abs() <= margin && x >= rx - margin && x <= rx + rw + margin;
+
+                    resize_dir = ResizeDir::None;
+                    if near_left && near_top {
+                        resize_dir = ResizeDir::TopLeft;
+                    } else if near_right && near_top {
+                        resize_dir = ResizeDir::TopRight;
+                    } else if near_left && near_bottom {
+                        resize_dir = ResizeDir::BottomLeft;
+                    } else if near_right && near_bottom {
+                        resize_dir = ResizeDir::BottomRight;
+                    } else if near_left {
+                        resize_dir = ResizeDir::Left;
+                    } else if near_right {
+                        resize_dir = ResizeDir::Right;
+                    } else if near_top {
+                        resize_dir = ResizeDir::Top;
+                    } else if near_bottom {
+                        resize_dir = ResizeDir::Bottom;
+                    }
+
+                    if resize_dir != ResizeDir::None || inside {
+                        hit = Some((SelectedObject::Polygon(i), poly.position(), poly.bounds()));
+                        break;
+                    }
                 }
             }
 
             // Clear previous selection
             self.clear_selection();
 
-            if let Some(index) = hit_index {
-                // Found a hit - select it
-                let mut rect_clone = self.rects[index].clone();
-                self.selected = Some(rect_clone.clone());
-
-                // Create HighlightLens for selected rect
+            if let Some((sel, pos, bounds)) = hit {
+                let mut rect_clone = Rect::new();
+                rect_clone.initialize(bounds.0, bounds.1, bounds.2, bounds.3);
+                self.selected = Some(sel);
                 self.highlight_lens = Some(HighlightLens::new().with_target(&rect_clone).with_show_handles(true));
 
                 if resize_dir != ResizeDir::None {
                     self.resizing = true;
                     self.resize_dir = resize_dir;
                     self.resize_start = Some((x, y));
-                    self.resize_orig = resize_bounds;
+                    self.resize_orig = Some(bounds);
                     if let Some(ref mut lens) = self.highlight_lens {
                         lens.set_highlight_color((255, 255, 0, 255));
                     }
                 } else {
-                    // Calculate drag offset from click position to rect position
-                    self.drag_offset_x = hit_position.0 - x;
-                    self.drag_offset_y = hit_position.1 - y;
+                    self.drag_offset_x = pos.0 - x;
+                    self.drag_offset_y = pos.1 - y;
                     self.dragging = true;
                 }
             } else {
@@ -260,31 +311,37 @@ hotline::object!({
         }
 
         pub fn handle_mouse_motion(&mut self, x: f64, y: f64) {
+            if let Some(ref mut pm) = self.polygon_menu {
+                if pm.is_visible() {
+                    pm.handle_mouse_move(x, y);
+                    return;
+                }
+            }
             if self.context_menu.is_some() {
                 return;
             }
             if self.dragging {
-                if let Some(ref mut selected_handle) = self.selected {
-                    // Move the selected rect to follow the mouse
+                if let Some(sel) = self.selected {
                     let new_x = x + self.drag_offset_x;
                     let new_y = y + self.drag_offset_y;
-
-                    // Get current position
-                    let (current_x, current_y) = selected_handle.position();
-
-                    // Calculate delta movement
-                    let dx = new_x - current_x;
-                    let dy = new_y - current_y;
-
-                    // Move the rect
-                    selected_handle.move_by(dx, dy);
+                    match sel {
+                        SelectedObject::Rect(i) => {
+                            let (cx, cy) = self.rects[i].position();
+                            let dx = new_x - cx;
+                            let dy = new_y - cy;
+                            self.rects[i].move_by(dx, dy);
+                        }
+                        SelectedObject::Polygon(i) => {
+                            let (cx, cy) = self.polygons[i].position();
+                            let dx = new_x - cx;
+                            let dy = new_y - cy;
+                            self.polygons[i].move_by(dx, dy);
+                        }
+                    }
                 }
             } else if self.resizing {
-                if let (
-                    Some(ref mut selected_handle),
-                    Some((start_x, start_y)),
-                    Some((orig_x, orig_y, orig_w, orig_h)),
-                ) = (self.selected.as_mut(), self.resize_start, self.resize_orig)
+                if let (Some(sel), Some((start_x, start_y)), Some((orig_x, orig_y, orig_w, orig_h))) =
+                    (self.selected, self.resize_start, self.resize_orig)
                 {
                     let dx = x - start_x;
                     let dy = y - start_y;
@@ -338,19 +395,37 @@ hotline::object!({
                         new_h = 1.0;
                     }
 
-                    selected_handle.resize(new_x, new_y, new_w, new_h);
+                    match sel {
+                        SelectedObject::Rect(i) => {
+                            self.rects[i].resize(new_x, new_y, new_w, new_h);
+                        }
+                        SelectedObject::Polygon(i) => {
+                            self.polygons[i].resize(new_x, new_y, new_w, new_h);
+                        }
+                    }
                 }
             }
         }
 
         pub fn rotate_selected(&mut self, angle: f64) {
-            if let Some(ref mut selected_handle) = self.selected {
-                let new_rot = selected_handle.rotation() + angle;
-                selected_handle.set_rotation(new_rot);
+            if let Some(sel) = self.selected {
+                match sel {
+                    SelectedObject::Rect(i) => {
+                        let new_rot = self.rects[i].rotation() + angle;
+                        self.rects[i].set_rotation(new_rot);
+                    }
+                    SelectedObject::Polygon(i) => {
+                        let new_rot = self.polygons[i].rotation() + angle;
+                        self.polygons[i].set_rotation(new_rot);
+                    }
+                }
             }
         }
 
         pub fn handle_right_click(&mut self, x: f64, y: f64) {
+            if let Some(ref mut pm) = self.polygon_menu {
+                pm.close();
+            }
             let mut menu = self.context_menu.take().unwrap_or_else(ContextMenu::new);
             menu.open(x, y);
             self.context_menu = Some(menu);
@@ -386,6 +461,12 @@ hotline::object!({
             // Render context menu if visible
             if let Some(ref mut menu) = self.context_menu {
                 menu.render(buffer, buffer_width, buffer_height, pitch);
+            }
+
+            if let Some(ref mut pm) = self.polygon_menu {
+                if pm.is_visible() {
+                    pm.render(buffer, buffer_width, buffer_height, pitch);
+                }
             }
 
             if let Some(ref mut inspector) = self.click_inspector {
