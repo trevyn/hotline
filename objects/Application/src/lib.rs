@@ -21,6 +21,7 @@ hotline::object!({
         gpu_atlases: Vec<AtlasData>,
         gpu_commands: Vec<RenderCommand>,
         fps_counter: Option<TextRenderer>,
+        autonomy_checkbox: Option<Checkbox>,
         frame_times: std::collections::VecDeque<std::time::Instant>,
         last_fps_update: Option<std::time::Instant>,
         current_fps: f64,
@@ -75,6 +76,16 @@ hotline::object!({
                 let mut r_ref = rect.clone();
                 r_ref.initialize(50.0, 400.0, 120.0, 120.0);
                 wheel.set_rect(rect);
+            }
+
+            // Create autonomy checkbox
+            self.autonomy_checkbox = Some(Checkbox::new());
+            if let Some(ref mut cb) = self.autonomy_checkbox {
+                let rect = Rect::new();
+                let mut r_ref = rect.clone();
+                r_ref.initialize(20.0, 60.0, 20.0, 20.0);
+                cb.set_rect(rect);
+                cb.set_label("Autonomy".to_string());
             }
 
             // Create FPS counter
@@ -176,6 +187,9 @@ hotline::object!({
                                     }
                                 }
                             }
+                            if let Some(ref mut cb) = self.autonomy_checkbox {
+                                cb.handle_mouse_down(x as f64, y as f64);
+                            }
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
                             if let Some(ref mut wm) = self.window_manager {
@@ -247,8 +261,10 @@ hotline::object!({
                     }
                 }
 
-                if let Some(ref mut wm) = self.window_manager {
-                    wm.update_autonomy(self.mouse_x, self.mouse_y);
+                if let (Some(wm), Some(cb)) = (&mut self.window_manager, &mut self.autonomy_checkbox) {
+                    if cb.checked() {
+                        wm.update_autonomy(self.mouse_x, self.mouse_y);
+                    }
                 }
 
                 // Render
@@ -306,6 +322,10 @@ hotline::object!({
                     wheel.render(buffer, 800, 600, pitch as i64);
                 }
 
+                if let Some(ref mut cb) = self.autonomy_checkbox {
+                    cb.render(buffer, 800, 600, pitch as i64);
+                }
+
                 // Render FPS counter
                 if let Some(ref mut fps) = self.fps_counter {
                     fps.render(buffer, 800, 600, pitch as i64);
@@ -347,6 +367,10 @@ hotline::object!({
                 }
                 if let Some(ref mut wheel) = self.color_wheel {
                     wheel.render(buffer, 800, 600, pitch as i64);
+                }
+
+                if let Some(ref mut cb) = self.autonomy_checkbox {
+                    cb.render(buffer, 800, 600, pitch as i64);
                 }
 
                 // Render FPS counter

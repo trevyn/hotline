@@ -112,7 +112,7 @@ hotline::object!({
                         "Rect" => {
                             let mut r = Rect::new();
                             r.initialize(x, y, 100.0, 100.0);
-                            self.rects.push(r);
+                            self.add_rect(r);
                         }
                         "RegularPolygon" => {
                             let mut p = RegularPolygon::new();
