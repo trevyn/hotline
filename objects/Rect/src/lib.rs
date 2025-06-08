@@ -119,5 +119,17 @@ hotline::object!({
                 }
             }
         }
+
+        pub fn generate_commands(&mut self, gpu_renderer: &mut GPURenderer) {
+            let color = (120, 0, 0, 255);
+            gpu_renderer.add_command(RenderCommand::Rect {
+                x: self.x,
+                y: self.y,
+                width: self.width,
+                height: self.height,
+                rotation: self.rotation,
+                color,
+            });
+        }
     }
 });

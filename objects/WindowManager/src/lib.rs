@@ -554,6 +554,14 @@ hotline::object!({
         pub fn render_gpu(&mut self, gpu_renderer: &mut GPURenderer) {
             gpu_renderer.clear_commands();
 
+            for rect_handle in &mut self.rects {
+                rect_handle.generate_commands(gpu_renderer);
+            }
+
+            for poly in &mut self.polygons {
+                poly.generate_commands(gpu_renderer);
+            }
+
             // Generate render commands from text renderer
             if let Some(ref mut text_renderer) = self.text_renderer {
                 text_renderer.generate_commands(gpu_renderer);
