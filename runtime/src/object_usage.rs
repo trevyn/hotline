@@ -2,18 +2,78 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use syn::visit::{self, Visit};
-use syn::{Expr, File, ItemMacro, Local, Pat, Type};
+use syn::{
+    Expr, File, Item, ItemImpl, ItemMacro, ItemStruct, Local, Pat, Type, braced,
+    parse::{Parse, ParseStream},
+};
 
 struct UsageVisitor<'a> {
     object_names: &'a HashSet<String>,
     crate_name: &'a str,
     var_types: HashMap<String, String>,
+    field_types: HashMap<String, String>,
     result: HashMap<String, HashSet<String>>,
+}
+
+struct ObjectInput {
+    type_defs: Vec<Item>,
+    struct_item: ItemStruct,
+    impl_blocks: Vec<ItemImpl>,
+}
+
+impl Parse for ObjectInput {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let content;
+        braced!(content in input);
+
+        let mut type_defs = Vec::new();
+        let mut struct_item = None;
+        let mut impl_blocks = Vec::new();
+        let mut found_main_struct = false;
+
+        while !content.is_empty() {
+            let item: Item = content.parse()?;
+            match &item {
+                Item::Struct(s) if !found_main_struct => {
+                    let fork = content.fork();
+                    if fork.peek(syn::Token![impl]) {
+                        struct_item = Some(s.clone());
+                        found_main_struct = true;
+                    } else {
+                        type_defs.push(item);
+                    }
+                }
+                Item::Impl(i) if found_main_struct => {
+                    impl_blocks.push(i.clone());
+                }
+                _ if !found_main_struct => {
+                    type_defs.push(item);
+                }
+                _ => {
+                    return Err(syn::Error::new_spanned(&item, "Unexpected item after impl blocks"));
+                }
+            }
+        }
+
+        let struct_item = struct_item
+            .ok_or_else(|| syn::Error::new(content.span(), "Expected a main struct definition with impl blocks"))?;
+        if impl_blocks.is_empty() {
+            return Err(syn::Error::new(content.span(), "Expected at least one impl block after the struct"));
+        }
+
+        Ok(ObjectInput { type_defs, struct_item, impl_blocks })
+    }
 }
 
 impl<'a> UsageVisitor<'a> {
     fn new(object_names: &'a HashSet<String>, crate_name: &'a str) -> Self {
-        Self { object_names, crate_name, var_types: HashMap::new(), result: HashMap::new() }
+        Self {
+            object_names,
+            crate_name,
+            var_types: HashMap::new(),
+            field_types: HashMap::new(),
+            result: HashMap::new(),
+        }
     }
 
     fn insert_call(&mut self, obj: &str, method: &str) {
@@ -61,6 +121,55 @@ fn receiver_ident(expr: &Expr) -> Option<String> {
     None
 }
 
+fn find_object_ident(ty: &Type, object_names: &HashSet<String>) -> Option<String> {
+    match ty {
+        Type::Path(tp) => {
+            for segment in &tp.path.segments {
+                if object_names.contains(&segment.ident.to_string()) {
+                    return Some(segment.ident.to_string());
+                }
+                if let syn::PathArguments::AngleBracketed(ab) = &segment.arguments {
+                    for arg in &ab.args {
+                        if let syn::GenericArgument::Type(t) = arg {
+                            if let Some(name) = find_object_ident(t, object_names) {
+                                return Some(name);
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn extract_ident(pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Ident(id) => Some(id.ident.to_string()),
+        Pat::Reference(r) => extract_ident(&r.pat),
+        Pat::TupleStruct(ts) if ts.elems.len() == 1 => extract_ident(&ts.elems[0]),
+        Pat::Tuple(t) if t.elems.len() == 1 => extract_ident(&t.elems[0]),
+        Pat::Paren(p) => extract_ident(&p.pat),
+        _ => None,
+    }
+}
+
+fn field_expr_object(expr: &Expr, field_types: &HashMap<String, String>) -> Option<String> {
+    if let Expr::Field(f) = expr {
+        if let Expr::Path(base) = &*f.base {
+            if base.path.is_ident("self") {
+                if let syn::Member::Named(ident) = &f.member {
+                    if let Some(t) = field_types.get(&ident.to_string()) {
+                        return Some(t.clone());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 impl<'ast, 'a> Visit<'ast> for UsageVisitor<'a> {
     fn visit_item_macro(&mut self, node: &'ast ItemMacro) {
         if node.mac.path.is_ident("object")
@@ -68,11 +177,30 @@ impl<'ast, 'a> Visit<'ast> for UsageVisitor<'a> {
                 && node.mac.path.segments[0].ident == "hotline"
                 && node.mac.path.segments[1].ident == "object")
         {
-            if let Ok(file) = syn::parse2::<File>(node.mac.tokens.clone()) {
-                self.visit_file(&file);
+            if let Ok(obj) = syn::parse2::<ObjectInput>(node.mac.tokens.clone()) {
+                for item in &obj.type_defs {
+                    self.visit_item(item);
+                }
+                self.visit_item_struct(&obj.struct_item);
+                for imp in &obj.impl_blocks {
+                    self.visit_item_impl(imp);
+                }
             }
         }
         visit::visit_item_macro(self, node);
+    }
+
+    fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
+        if node.ident == self.crate_name {
+            for field in &node.fields {
+                if let Some(ident) = &field.ident {
+                    if let Some(obj) = find_object_ident(&field.ty, self.object_names) {
+                        self.field_types.insert(ident.to_string(), obj);
+                    }
+                }
+            }
+        }
+        visit::visit_item_struct(self, node);
     }
 
     fn visit_local(&mut self, node: &'ast Local) {
@@ -109,12 +237,26 @@ impl<'ast, 'a> Visit<'ast> for UsageVisitor<'a> {
         visit::visit_local(self, node);
     }
 
+    fn visit_expr_let(&mut self, node: &'ast syn::ExprLet) {
+        if let Some(var) = extract_ident(&node.pat) {
+            if let Some(obj) = expr_object_call(&node.expr)
+                .and_then(|(o, _)| if self.object_names.contains(&o) { Some(o) } else { None })
+                .or_else(|| field_expr_object(&node.expr, &self.field_types))
+            {
+                self.var_types.insert(var.clone(), obj);
+            }
+        }
+        visit::visit_expr_let(self, node);
+    }
+
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
         if let Some(var) = receiver_ident(&node.receiver) {
             if let Some(obj) = self.var_types.get(&var) {
-                let obj_name = obj.clone();
-                self.insert_call(&obj_name, &node.method.to_string());
+                let name = obj.clone();
+                self.insert_call(&name, &node.method.to_string());
             }
+        } else if let Some(obj) = field_expr_object(&node.receiver, &self.field_types) {
+            self.insert_call(&obj, &node.method.to_string());
         }
         visit::visit_expr_method_call(self, node);
     }
@@ -127,6 +269,9 @@ impl<'ast, 'a> Visit<'ast> for UsageVisitor<'a> {
                 }
             }
         }
+        if let Some(obj) = field_expr_object(&node.func, &self.field_types) {
+            self.insert_call(&obj, "call");
+        }
         visit::visit_expr_call(self, node);
     }
 }
@@ -136,6 +281,7 @@ fn analyze_file(path: &Path, object_names: &HashSet<String>, crate_name: &str) -
     let file = syn::parse_file(&content).expect("parse file");
     let mut visitor = UsageVisitor::new(object_names, crate_name);
     visitor.visit_file(&file);
+    // debug output: eprintln!("fields of {}: {:?}", crate_name, visitor.field_types);
     visitor.result
 }
 
