@@ -58,8 +58,11 @@ fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
 
-    let mut window_builder = video_subsystem
-        .window("hotline - direct calls", 800, 600);
+    if video_subsystem.current_video_driver() == "offscreen" {
+        return Err("offscreen SDL video driver cannot create Vulkan surfaces".into());
+    }
+
+    let mut window_builder = video_subsystem.window("hotline - direct calls", 800, 600);
     window_builder.position_centered();
     #[cfg(target_os = "macos")]
     {
@@ -69,9 +72,7 @@ fn main() -> Result<(), String> {
     {
         window_builder.vulkan();
     }
-    let window = window_builder
-        .build()
-        .map_err(|e| e.to_string())?;
+    let window = window_builder.build().map_err(|e| e.to_string())?;
 
     let mut event_pump = sdl_context.event_pump()?;
 
