@@ -24,6 +24,8 @@ hotline::object!({
         frame_times: std::collections::VecDeque<std::time::Instant>,
         last_fps_update: Option<std::time::Instant>,
         current_fps: f64,
+        mouse_x: f64,
+        mouse_y: f64,
     }
 
     impl Application {
@@ -162,6 +164,8 @@ hotline::object!({
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_down(x as f64, y as f64);
                             }
+                            self.mouse_x = x as f64;
+                            self.mouse_y = y as f64;
                             if let Some(ref mut editor) = self.code_editor {
                                 editor.handle_mouse_down(x as f64, y as f64);
                             }
@@ -177,16 +181,22 @@ hotline::object!({
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_right_click(x as f64, y as f64);
                             }
+                            self.mouse_x = x as f64;
+                            self.mouse_y = y as f64;
                         }
                         Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_up(x as f64, y as f64);
                             }
+                            self.mouse_x = x as f64;
+                            self.mouse_y = y as f64;
                         }
                         Event::MouseMotion { x, y, .. } => {
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_motion(x as f64, y as f64);
                             }
+                            self.mouse_x = x as f64;
+                            self.mouse_y = y as f64;
                         }
                         Event::MouseWheel { y, .. } => {
                             if let Some(ref mut editor) = self.code_editor {
@@ -235,6 +245,10 @@ hotline::object!({
                         }
                         _ => {}
                     }
+                }
+
+                if let Some(ref mut wm) = self.window_manager {
+                    wm.update_autonomy(self.mouse_x, self.mouse_y);
                 }
 
                 // Render
