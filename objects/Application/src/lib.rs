@@ -161,6 +161,10 @@ hotline::object!({
                         Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_down(x as f64, y as f64);
+                                let hits = wm.inspect_click(x as f64, y as f64);
+                                if !hits.is_empty() {
+                                    wm.open_inspector(x as f64, y as f64, hits);
+                                }
                             }
                             if let Some(ref mut editor) = self.code_editor {
                                 editor.handle_mouse_down(x as f64, y as f64);
