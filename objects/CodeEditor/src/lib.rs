@@ -59,6 +59,37 @@ hotline::object!({
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
             if let Some(ref mut r) = self.rect {
                 self.focused = r.contains_point(x, y);
+                if self.focused {
+                    let (rx, ry, _rw, _rh) = r.bounds();
+                    let local_y = y - (ry + 10.0) + self.scroll_offset;
+                    let line_height = self.line_height();
+                    let mut line = (local_y / line_height).floor() as usize;
+                    let lines: Vec<&str> = self.text.split('\n').collect();
+                    if line >= lines.len() {
+                        line = lines.len().saturating_sub(1);
+                    }
+                    let local_x = x - (rx + 10.0);
+                    let line_text = lines.get(line).copied().unwrap_or("");
+                    let mut col = 0usize;
+                    let mut pos_x = 0.0;
+                    if let Some(ref mut tr) = self.text_renderer {
+                        for ch in line_text.chars() {
+                            let cw = tr.char_width(ch);
+                            if local_x < pos_x + cw / 2.0 {
+                                break;
+                            }
+                            pos_x += cw;
+                            col += 1;
+                        }
+                        if local_x > pos_x {
+                            col = line_text.chars().count();
+                        }
+                    } else {
+                        col = ((local_x / 8.0).round() as usize).min(line_text.chars().count());
+                    }
+                    self.cursor = self.line_start_index(line) + col;
+                    self.selection = None;
+                }
             }
         }
 
