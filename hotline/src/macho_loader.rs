@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::Read;
 use std::ptr;
 use std::slice;
+use std::sync::{Mutex, OnceLock};
 
 // constants for dlsym and dlopen
 #[cfg(target_os = "macos")]
@@ -11,6 +12,23 @@ const RTLD_DEFAULT: *mut libc::c_void = -2isize as *mut libc::c_void;
 const RTLD_LAZY: libc::c_int = 0x1;
 const RTLD_GLOBAL: libc::c_int = 0x8;
 const RTLD_NOLOAD: libc::c_int = 0x10;
+
+static DLOPEN_CACHE: OnceLock<Mutex<HashMap<String, *mut libc::c_void>>> = OnceLock::new();
+
+fn cached_dlopen(path: &str) -> Result<*mut libc::c_void, Box<dyn std::error::Error>> {
+    let cache = DLOPEN_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().unwrap();
+    if let Some(&handle) = cache.get(path) {
+        return Ok(handle);
+    }
+    let c_path = std::ffi::CString::new(path)?;
+    let handle = unsafe { libc::dlopen(c_path.as_ptr(), RTLD_LAZY | RTLD_GLOBAL) };
+    if handle.is_null() {
+        return Err(format!("failed to dlopen {}", path).into());
+    }
+    cache.insert(path.to_string(), handle);
+    Ok(handle)
+}
 
 #[repr(C)]
 struct MachHeader64 {
@@ -1328,13 +1346,10 @@ impl MachoLoader {
 
         // 1. If we have a specific library path, try it first (likely to succeed)
         if !lib_name.is_empty() && std::path::Path::new(lib_name).exists() {
-            let lib_c_str = std::ffi::CString::new(lib_name)?;
-            let handle = unsafe { libc::dlopen(lib_c_str.as_ptr(), RTLD_LAZY | RTLD_GLOBAL) };
-            if !handle.is_null() {
-                let addr = unsafe { libc::dlsym(handle, c_symbol.as_ptr()) };
-                if !addr.is_null() {
-                    return Ok(addr as usize);
-                }
+            let handle = cached_dlopen(lib_name)?;
+            let addr = unsafe { libc::dlsym(handle, c_symbol.as_ptr()) };
+            if !addr.is_null() {
+                return Ok(addr as usize);
             }
         }
 
