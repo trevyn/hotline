@@ -195,14 +195,20 @@ hotline::object!({
                                 .map_err(|e| e.to_string())?;
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
+                            let (win_w, win_h) = canvas.window().size();
+                            let scale_x = self.width as f64 / win_w as f64;
+                            let scale_y = self.height as f64 / win_h as f64;
+                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
+                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_mouse_down(x as f64, y as f64);
+                                wm.handle_mouse_down(adj_x, adj_y);
                             }
                             if let Some(ref mut editor) = self.code_editor {
-                                editor.handle_mouse_down(x as f64, y as f64);
+                                editor.handle_mouse_down(adj_x, adj_y);
                             }
                             if let Some(ref mut wheel) = self.color_wheel {
-                                if let Some(color) = wheel.handle_mouse_down(x as f64, y as f64) {
+                                if let Some(color) = wheel.handle_mouse_down(adj_x, adj_y) {
                                     if let Some(ref mut editor) = self.code_editor {
                                         editor.update_text_color(color);
                                     }
@@ -210,24 +216,42 @@ hotline::object!({
                             }
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
+                            let (win_w, win_h) = canvas.window().size();
+                            let scale_x = self.width as f64 / win_w as f64;
+                            let scale_y = self.height as f64 / win_h as f64;
+                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
+                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_right_click(x as f64, y as f64);
+                                wm.handle_right_click(adj_x, adj_y);
                             }
                         }
                         Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
+                            let (win_w, win_h) = canvas.window().size();
+                            let scale_x = self.width as f64 / win_w as f64;
+                            let scale_y = self.height as f64 / win_h as f64;
+                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
+                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_mouse_up(x as f64, y as f64);
+                                wm.handle_mouse_up(adj_x, adj_y);
                             }
                             if let Some(ref mut wheel) = self.color_wheel {
                                 wheel.handle_mouse_up();
                             }
                         }
                         Event::MouseMotion { x, y, .. } => {
+                            let (win_w, win_h) = canvas.window().size();
+                            let scale_x = self.width as f64 / win_w as f64;
+                            let scale_y = self.height as f64 / win_h as f64;
+                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
+                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_mouse_motion(x as f64, y as f64);
+                                wm.handle_mouse_motion(adj_x, adj_y);
                             }
                             if let Some(ref mut wheel) = self.color_wheel {
-                                if let Some(color) = wheel.handle_mouse_move(x as f64, y as f64) {
+                                if let Some(color) = wheel.handle_mouse_move(adj_x, adj_y) {
                                     if let Some(ref mut editor) = self.code_editor {
                                         editor.update_text_color(color);
                                     }
