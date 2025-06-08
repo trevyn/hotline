@@ -18,6 +18,7 @@ hotline::object!({
         #[setter]
         #[default(0.0)]
         scroll_offset: f64,
+        file_menu: Option<ContextMenu>,
     }
 
     impl CodeEditor {
@@ -56,7 +57,21 @@ hotline::object!({
             self.focused
         }
 
+        pub fn contains_point(&mut self, x: f64, y: f64) -> bool {
+            if let Some(ref mut r) = self.rect { r.contains_point(x, y) } else { false }
+        }
+
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
+            if let Some(ref mut menu) = self.file_menu {
+                if menu.is_visible() {
+                    if let Some(sel) = menu.handle_mouse_down(x, y) {
+                        let path = format!("objects/{}/src/lib.rs", sel);
+                        let _ = self.open(&path);
+                    }
+                    return;
+                }
+            }
+
             if let Some(ref mut r) = self.rect {
                 self.focused = r.contains_point(x, y);
                 if self.focused {
@@ -107,6 +122,24 @@ hotline::object!({
             } else {
                 Err("no file loaded".into())
             }
+        }
+
+        pub fn open_file_menu(&mut self, x: f64, y: f64) -> Result<(), String> {
+            let mut menu = self.file_menu.take().unwrap_or_else(ContextMenu::new);
+            let mut items = Vec::new();
+            for entry in std::fs::read_dir("objects").map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                if entry.path().is_dir() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        items.push(name.to_string());
+                    }
+                }
+            }
+            items.sort();
+            menu.set_items(items);
+            menu.open(x, y);
+            self.file_menu = Some(menu);
+            Ok(())
         }
 
         fn char_to_byte(&self, idx: usize) -> usize {
@@ -408,6 +441,10 @@ hotline::object!({
                         hl.render(buffer, buffer_width, buffer_height, pitch);
                     }
                 }
+            }
+
+            if let Some(ref mut menu) = self.file_menu {
+                menu.render(buffer, buffer_width, buffer_height, pitch);
             }
         }
     }

@@ -33,8 +33,30 @@ hotline::object!({
             self.visible = true;
         }
 
+        pub fn open_with_items(&mut self, items: Vec<String>, x: f64, y: f64) {
+            self.set_items(items);
+            self.x = x;
+            self.y = y;
+            self.visible = true;
+        }
+
         pub fn close(&mut self) {
             self.visible = false;
+        }
+
+        pub fn set_items(&mut self, items: Vec<String>) {
+            self.items = items;
+            self.renderers.clear();
+            if let Some(registry) = self.get_registry() {
+                ::hotline::set_library_registry(registry);
+            }
+            for item in &self.items {
+                self.renderers.push(TextRenderer::new().with_text(item.clone()).with_color((255, 255, 255, 255)));
+            }
+        }
+
+        pub fn is_visible(&self) -> bool {
+            self.visible
         }
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) -> Option<String> {
