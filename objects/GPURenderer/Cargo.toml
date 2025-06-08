@@ -8,4 +8,4 @@ crate-type = ["dylib"]
 
 [dependencies]
 hotline = { path = "../../hotline" }
-sdl2 = "0.37"
+sdl3 = { version = "0.14", features = ["build-from-source"] }
