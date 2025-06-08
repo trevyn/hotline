@@ -41,6 +41,11 @@ hotline::object!({
             verts
         }
 
+        pub fn contains_point(&self, x: f64, y: f64) -> bool {
+            let verts = self.vertices();
+            self.point_in_polygon(x, y, &verts)
+        }
+
         fn point_in_polygon(&self, px: f64, py: f64, verts: &[(f64, f64)]) -> bool {
             let mut inside = false;
             let mut j = verts.len() - 1;

@@ -23,6 +23,7 @@ hotline::object!({
         highlight_lens: Option<HighlightLens>, // HighlightLens for selected rect
         text_renderer: Option<TextRenderer>,   // TextRenderer for displaying text
         context_menu: Option<ContextMenu>,
+        click_inspector: Option<ClickInspector>,
         dragging: bool,
         drag_offset_x: f64,
         drag_offset_y: f64,
@@ -47,6 +48,9 @@ hotline::object!({
                     .with_y(20.0)
                     .with_color((0, 255, 255, 255)); // Yellow text in BGRA format
                 self.text_renderer = Some(text_renderer);
+
+                // Create click inspector
+                self.click_inspector = Some(ClickInspector::new());
             } else {
                 panic!("WindowManager registry not initialized");
             }
@@ -54,6 +58,33 @@ hotline::object!({
 
         pub fn add_rect(&mut self, rect: Rect) {
             self.rects.push(rect);
+        }
+
+        pub fn inspect_click(&mut self, x: f64, y: f64) -> Vec<String> {
+            let mut hits = Vec::new();
+            for rect in &mut self.rects {
+                if rect.contains_point(x, y) {
+                    hits.push("Rect".to_string());
+                }
+            }
+            for poly in &mut self.polygons {
+                if poly.contains_point(x, y) {
+                    hits.push("RegularPolygon".to_string());
+                }
+            }
+            hits
+        }
+
+        pub fn open_inspector(&mut self, x: f64, y: f64, items: Vec<String>) {
+            if let Some(ref mut inspector) = self.click_inspector {
+                inspector.open(x, y, items);
+            }
+        }
+
+        pub fn close_inspector(&mut self) {
+            if let Some(ref mut inspector) = self.click_inspector {
+                inspector.close();
+            }
         }
 
         pub fn clear_selection(&mut self) {
@@ -101,6 +132,8 @@ hotline::object!({
         }
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
+            self.close_inspector();
+
             if let Some(ref mut menu) = self.context_menu {
                 if let Some(selection) = menu.handle_mouse_down(x, y) {
                     match selection.as_str() {
@@ -195,6 +228,7 @@ hotline::object!({
         }
 
         pub fn handle_mouse_up(&mut self, x: f64, y: f64) {
+            self.close_inspector();
             if self.context_menu.is_some() {
                 return;
             } else if self.resizing {
@@ -344,6 +378,10 @@ hotline::object!({
             // Render context menu if visible
             if let Some(ref mut menu) = self.context_menu {
                 menu.render(buffer, buffer_width, buffer_height, pitch);
+            }
+
+            if let Some(ref mut inspector) = self.click_inspector {
+                inspector.render(buffer, buffer_width, buffer_height, pitch);
             }
         }
 

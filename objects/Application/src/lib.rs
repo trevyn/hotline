@@ -175,6 +175,8 @@ hotline::object!({
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
                             if let Some(ref mut wm) = self.window_manager {
+                                let hits = wm.inspect_click(x as f64, y as f64);
+                                wm.open_inspector(x as f64, y as f64, hits);
                                 wm.handle_right_click(x as f64, y as f64);
                             }
                         }
