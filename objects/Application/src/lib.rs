@@ -195,8 +195,7 @@ hotline::object!({
                         Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                             break 'running;
                         }
-                        Event::Window { win_event: sdl3::event::WindowEvent::Resized(_, _), .. }
-                        | Event::Window { win_event: sdl3::event::WindowEvent::PixelSizeChanged(_, _), .. } => {
+                        Event::Window { win_event: sdl3::event::WindowEvent::Resized(_, _), .. } => {
                             let (dw, dh) = canvas.window().size_in_pixels();
                             self.width = dw;
                             self.height = dh;
@@ -207,6 +206,22 @@ hotline::object!({
                                     self.height / self.pixel_multiple,
                                 )
                                 .map_err(|e| e.to_string())?;
+                        }
+                        Event::Window { win_event: sdl3::event::WindowEvent::PixelSizeChanged(_, _), .. } => {
+                            let (dw, dh) = canvas.window().size_in_pixels();
+                            self.width = dw;
+                            self.height = dh;
+                            texture = texture_creator
+                                .create_texture_streaming(
+                                    PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_ARGB8888).unwrap(),
+                                    self.width / self.pixel_multiple,
+                                    self.height / self.pixel_multiple,
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            self.render_frame(&mut texture)?;
+                            canvas.copy(&texture, None, None).map_err(|e| e.to_string())?;
+                            canvas.present();
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
                             let (win_w, win_h) = canvas.window().size();
