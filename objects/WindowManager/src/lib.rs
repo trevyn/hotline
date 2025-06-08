@@ -282,13 +282,6 @@ hotline::object!({
         }
 
         pub fn handle_mouse_up(&mut self, x: f64, y: f64) {
-            if let Some(ref mut pm) = self.polygon_menu {
-                if pm.is_visible() {
-                    pm.close();
-                    self.context_menu = None;
-                    return;
-                }
-            }
             if self.context_menu.is_some() {
                 return;
             } else if self.resizing {
