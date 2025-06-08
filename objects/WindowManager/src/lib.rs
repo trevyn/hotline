@@ -1,5 +1,6 @@
 use hotline::HotlineObject;
 
+// New object that moves rects toward the mouse cursor
 hotline::object!({
     #[derive(Clone, Copy, PartialEq, Default)]
     enum ResizeDir {
@@ -18,11 +19,13 @@ hotline::object!({
     #[derive(Default)]
     pub struct WindowManager {
         rects: Vec<Rect>,
+        rect_movers: Vec<RectMover>,
         polygons: Vec<RegularPolygon>,
         selected: Option<Rect>,
         highlight_lens: Option<HighlightLens>, // HighlightLens for selected rect
         text_renderer: Option<TextRenderer>,   // TextRenderer for displaying text
         context_menu: Option<ContextMenu>,
+        click_inspector: Option<ClickInspector>,
         dragging: bool,
         drag_offset_x: f64,
         drag_offset_y: f64,
@@ -47,13 +50,46 @@ hotline::object!({
                     .with_y(20.0)
                     .with_color((0, 255, 255, 255)); // Yellow text in BGRA format
                 self.text_renderer = Some(text_renderer);
+
+                // Create click inspector
+                self.click_inspector = Some(ClickInspector::new());
             } else {
                 panic!("WindowManager registry not initialized");
             }
         }
 
         pub fn add_rect(&mut self, rect: Rect) {
+            let mut mover = RectMover::new();
+            mover.set_target(rect.clone());
+            self.rect_movers.push(mover);
             self.rects.push(rect);
+        }
+
+        pub fn inspect_click(&mut self, x: f64, y: f64) -> Vec<String> {
+            let mut hits = Vec::new();
+            for rect in &mut self.rects {
+                if rect.contains_point(x, y) {
+                    hits.extend(rect.info_lines());
+                }
+            }
+            for poly in &mut self.polygons {
+                if poly.contains_point(x, y) {
+                    hits.extend(poly.info_lines());
+                }
+            }
+            hits
+        }
+
+        pub fn open_inspector(&mut self, items: Vec<String>) {
+            if let Some(ref mut inspector) = self.click_inspector {
+                inspector.open(items);
+            }
+        }
+
+        pub fn close_inspector(&mut self) {
+            if let Some(ref mut inspector) = self.click_inspector {
+                inspector.close();
+            }
         }
 
         pub fn clear_selection(&mut self) {
@@ -107,7 +143,7 @@ hotline::object!({
                         "Rect" => {
                             let mut r = Rect::new();
                             r.initialize(x, y, 100.0, 100.0);
-                            self.rects.push(r);
+                            self.add_rect(r);
                         }
                         "RegularPolygon" => {
                             let mut p = RegularPolygon::new();
@@ -197,8 +233,7 @@ hotline::object!({
         pub fn handle_mouse_up(&mut self, x: f64, y: f64) {
             if self.context_menu.is_some() {
                 return;
-            }
-            if self.resizing {
+            } else if self.resizing {
                 self.resizing = false;
                 self.resize_dir = ResizeDir::None;
                 self.resize_start = None;
@@ -314,10 +349,17 @@ hotline::object!({
                 selected_handle.set_rotation(new_rot);
             }
         }
+
         pub fn handle_right_click(&mut self, x: f64, y: f64) {
             let mut menu = self.context_menu.take().unwrap_or_else(ContextMenu::new);
             menu.open(x, y);
             self.context_menu = Some(menu);
+        }
+
+        pub fn update_autonomy(&mut self, mouse_x: f64, mouse_y: f64) {
+            for mover in &mut self.rect_movers {
+                mover.update(mouse_x, mouse_y);
+            }
         }
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
@@ -344,6 +386,10 @@ hotline::object!({
             // Render context menu if visible
             if let Some(ref mut menu) = self.context_menu {
                 menu.render(buffer, buffer_width, buffer_height, pitch);
+            }
+
+            if let Some(ref mut inspector) = self.click_inspector {
+                inspector.render(buffer, buffer_width, buffer_height, pitch);
             }
         }
 
