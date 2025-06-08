@@ -126,8 +126,13 @@ hotline::object!({
             let sdl_context = sdl3::init().map_err(|e| e.to_string())?;
             let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
 
+            let display = video_subsystem.get_primary_display().map_err(|e| e.to_string())?;
+            let usable_bounds = display.get_usable_bounds().map_err(|e| e.to_string())?;
+            let win_w = (usable_bounds.width() as f32 * 0.9) as u32;
+            let win_h = (usable_bounds.height() as f32 * 0.9) as u32;
+
             let window = video_subsystem
-                .window("hotline - direct calls", 800, 600)
+                .window("hotline - direct calls", win_w, win_h)
                 .position_centered()
                 .high_pixel_density()
                 .resizable()
