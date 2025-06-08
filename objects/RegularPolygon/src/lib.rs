@@ -67,7 +67,6 @@ hotline::object!({
         pub fn rotation(&mut self) -> f64 {
             self.rotation
         }
-
         fn vertices(&self) -> Vec<(f64, f64)> {
             let mut verts = Vec::new();
             let sides = self.sides.max(3) as usize;

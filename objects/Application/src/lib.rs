@@ -73,11 +73,11 @@ hotline::object!({
                 let mut r_ref = rect.clone();
                 r_ref.initialize(50.0, 400.0, 120.0, 120.0);
                 wheel.set_rect(rect);
-            }
 
-            // Touch new shapes so wrappers are generated
-            let _ = RegularPolygon::new();
-            let _ = Circle::new();
+                // Touch new shapes so wrappers are generated
+                let _ = RegularPolygon::new();
+                let _ = Circle::new();
+            }
 
             // Create FPS counter
             self.fps_counter = Some(TextRenderer::new());

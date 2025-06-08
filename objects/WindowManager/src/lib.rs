@@ -21,7 +21,6 @@ hotline::object!({
         Polygon(RegularPolygon),
         Circle(Circle),
     }
-
     #[derive(Default)]
     pub struct WindowManager {
         rects: Vec<Rect>,
@@ -448,6 +447,67 @@ hotline::object!({
                         }
                     }
                 }
+            } else if self.resizing {
+                if let (
+                    Some(ref mut selected_handle),
+                    Some((start_x, start_y)),
+                    Some((orig_x, orig_y, orig_w, orig_h)),
+                ) = (self.selected.as_mut(), self.resize_start, self.resize_orig)
+                {
+                    let dx = x - start_x;
+                    let dy = y - start_y;
+                    let mut new_x = orig_x;
+                    let mut new_y = orig_y;
+                    let mut new_w = orig_w;
+                    let mut new_h = orig_h;
+
+                    match self.resize_dir {
+                        ResizeDir::Left => {
+                            new_x = orig_x + dx;
+                            new_w = orig_w - dx;
+                        }
+                        ResizeDir::Right => {
+                            new_w = orig_w + dx;
+                        }
+                        ResizeDir::Top => {
+                            new_y = orig_y + dy;
+                            new_h = orig_h - dy;
+                        }
+                        ResizeDir::Bottom => {
+                            new_h = orig_h + dy;
+                        }
+                        ResizeDir::TopLeft => {
+                            new_x = orig_x + dx;
+                            new_w = orig_w - dx;
+                            new_y = orig_y + dy;
+                            new_h = orig_h - dy;
+                        }
+                        ResizeDir::TopRight => {
+                            new_w = orig_w + dx;
+                            new_y = orig_y + dy;
+                            new_h = orig_h - dy;
+                        }
+                        ResizeDir::BottomLeft => {
+                            new_x = orig_x + dx;
+                            new_w = orig_w - dx;
+                            new_h = orig_h + dy;
+                        }
+                        ResizeDir::BottomRight => {
+                            new_w = orig_w + dx;
+                            new_h = orig_h + dy;
+                        }
+                        ResizeDir::None => {}
+                    }
+
+                    if new_w < 1.0 {
+                        new_w = 1.0;
+                    }
+                    if new_h < 1.0 {
+                        new_h = 1.0;
+                    }
+
+                    selected_handle.resize(new_x, new_y, new_w, new_h);
+                }
             }
         }
 
@@ -479,7 +539,6 @@ hotline::object!({
             for circle in &mut self.circles {
                 circle.render(buffer, buffer_width, buffer_height, pitch);
             }
-
             // Render the highlight lens if we have one (this will render the selected rect with highlight)
             if let Some(ref mut hl_handle) = self.highlight_lens {
                 hl_handle.render(buffer, buffer_width, buffer_height, pitch);
