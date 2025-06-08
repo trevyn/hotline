@@ -219,6 +219,37 @@ hotline::object!({
             }
         }
 
+        pub fn char_width(&mut self, ch: char) -> f64 {
+            if !self.initialized {
+                self.initialize();
+            }
+
+            let font = match &mut self.font {
+                Some(f) => f,
+                None => return 0.0,
+            };
+
+            if ch == ' ' {
+                font.space_width() as f64
+            } else if let Some((_x, _y, _w, _h, _off_x, _off_y, adv)) = font.glyph(ch) {
+                adv as f64
+            } else {
+                font.space_width() as f64
+            }
+        }
+
+        pub fn measure_text(&mut self, text: &str) -> f64 {
+            text.chars().map(|c| self.char_width(c)).sum()
+        }
+
+        pub fn line_height(&mut self) -> f64 {
+            if !self.initialized {
+                self.initialize();
+            }
+
+            if let Some(font) = self.font.as_mut() { (font.size() + font.line_gap()) as f64 } else { 14.0 }
+        }
+
         pub fn atlas_data(&self) -> Vec<u8> {
             self.atlas.clone()
         }

@@ -253,6 +253,19 @@ hotline::object!({
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
                         }
+                        Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
+                            let (win_w, win_h) = canvas.window().size();
+                            let scale_x = self.width as f64 / win_w as f64;
+                            let scale_y = self.height as f64 / win_h as f64;
+                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
+                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+
+                            if let Some(ref mut wm) = self.window_manager {
+                                wm.handle_right_click(adj_x, adj_y);
+                            }
+                            self.mouse_x = x as f64;
+                            self.mouse_y = y as f64;
+                        }
                         Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
                             let (win_w, win_h) = canvas.window().size();
                             let scale_x = self.width as f64 / win_w as f64;
@@ -309,6 +322,42 @@ hotline::object!({
                             if let Some(ref mut editor) = self.code_editor {
                                 if editor.is_focused() {
                                     editor.backspace();
+                                }
+                            }
+                        }
+                        Event::KeyDown { keycode: Some(Keycode::Left), keymod, .. } => {
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    let shift = keymod.contains(sdl3::keyboard::Mod::LSHIFTMOD)
+                                        || keymod.contains(sdl3::keyboard::Mod::RSHIFTMOD);
+                                    editor.move_cursor_left(shift);
+                                }
+                            }
+                        }
+                        Event::KeyDown { keycode: Some(Keycode::Right), keymod, .. } => {
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    let shift = keymod.contains(sdl3::keyboard::Mod::LSHIFTMOD)
+                                        || keymod.contains(sdl3::keyboard::Mod::RSHIFTMOD);
+                                    editor.move_cursor_right(shift);
+                                }
+                            }
+                        }
+                        Event::KeyDown { keycode: Some(Keycode::Up), keymod, .. } => {
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    let shift = keymod.contains(sdl3::keyboard::Mod::LSHIFTMOD)
+                                        || keymod.contains(sdl3::keyboard::Mod::RSHIFTMOD);
+                                    editor.move_cursor_up(shift);
+                                }
+                            }
+                        }
+                        Event::KeyDown { keycode: Some(Keycode::Down), keymod, .. } => {
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    let shift = keymod.contains(sdl3::keyboard::Mod::LSHIFTMOD)
+                                        || keymod.contains(sdl3::keyboard::Mod::RSHIFTMOD);
+                                    editor.move_cursor_down(shift);
                                 }
                             }
                         }
