@@ -1,8 +1,9 @@
 use hotline::HotlineObject;
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
-use sdl2::mouse::MouseButton;
-use sdl2::pixels::{Color, PixelFormatEnum};
+use sdl3::event::Event;
+use sdl3::keyboard::Keycode;
+use sdl3::mouse::MouseButton;
+use sdl3::pixels::{Color, PixelFormat};
+use std::convert::TryFrom;
 
 use std::time::{Duration, Instant};
 
@@ -122,21 +123,21 @@ hotline::object!({
         }
 
         pub fn run(&mut self) -> Result<(), String> {
-            let sdl_context = sdl2::init()?;
-            let video_subsystem = sdl_context.video()?;
+            let sdl_context = sdl3::init().map_err(|e| e.to_string())?;
+            let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
 
             let window = video_subsystem
                 .window("hotline - direct calls", 800, 600)
                 .position_centered()
-                .allow_highdpi()
+                .high_pixel_density()
                 .resizable()
                 .build()
                 .map_err(|e| e.to_string())?;
 
-            let mut canvas = window.into_canvas().present_vsync().build().map_err(|e| e.to_string())?;
+            let mut canvas = sdl3::render::create_renderer(window, None).map_err(|e| e.to_string())?;
             let texture_creator = canvas.texture_creator();
-            let mut event_pump = sdl_context.event_pump()?;
-            video_subsystem.text_input().start();
+            let mut event_pump = sdl_context.event_pump().map_err(|e| e.to_string())?;
+            video_subsystem.text_input().start(canvas.window());
 
             let (dw, dh) = canvas.output_size().map_err(|e| e.to_string())?;
             self.width = dw;
@@ -144,11 +145,12 @@ hotline::object!({
 
             let mut texture = texture_creator
                 .create_texture_streaming(
-                    PixelFormatEnum::ARGB8888,
+                    PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_ARGB8888).unwrap(),
                     self.width / self.pixel_multiple,
                     self.height / self.pixel_multiple,
                 )
                 .map_err(|e| e.to_string())?;
+            texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
 
             #[cfg(target_os = "linux")]
             {
@@ -194,18 +196,19 @@ hotline::object!({
                         Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                             break 'running;
                         }
-                        Event::Window { win_event: sdl2::event::WindowEvent::Resized(_, _), .. }
-                        | Event::Window { win_event: sdl2::event::WindowEvent::SizeChanged(_, _), .. } => {
-                            let (dw, dh) = canvas.window().drawable_size();
+                        Event::Window { win_event: sdl3::event::WindowEvent::Resized(_, _), .. }
+                        | Event::Window { win_event: sdl3::event::WindowEvent::PixelSizeChanged(_, _), .. } => {
+                            let (dw, dh) = canvas.window().size_in_pixels();
                             self.width = dw;
                             self.height = dh;
                             texture = texture_creator
                                 .create_texture_streaming(
-                                    PixelFormatEnum::ARGB8888,
+                                    PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_ARGB8888).unwrap(),
                                     self.width / self.pixel_multiple,
                                     self.height / self.pixel_multiple,
                                 )
                                 .map_err(|e| e.to_string())?;
+                            texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
                             let (win_w, win_h) = canvas.window().size();
@@ -234,7 +237,7 @@ hotline::object!({
                                 }
                             }
                             if let Some(ref mut cb) = self.autonomy_checkbox {
-                                cb.handle_mouse_down(x as f64, y as f64);
+                                cb.handle_mouse_down(adj_x, adj_y);
                             }
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
@@ -317,11 +320,11 @@ hotline::object!({
                         Event::KeyDown { keycode: Some(Keycode::Equals), keymod, .. }
                         | Event::KeyDown { keycode: Some(Keycode::KpPlus), keymod, .. } => {
                             #[cfg(target_os = "macos")]
-                            let cmd = keymod.contains(sdl2::keyboard::Mod::LGUIMOD)
-                                || keymod.contains(sdl2::keyboard::Mod::RGUIMOD);
+                            let cmd = keymod.contains(sdl3::keyboard::Mod::LGUIMOD)
+                                || keymod.contains(sdl3::keyboard::Mod::RGUIMOD);
                             #[cfg(not(target_os = "macos"))]
-                            let cmd = keymod.contains(sdl2::keyboard::Mod::LCTRLMOD)
-                                || keymod.contains(sdl2::keyboard::Mod::RCTRLMOD);
+                            let cmd = keymod.contains(sdl3::keyboard::Mod::LCTRLMOD)
+                                || keymod.contains(sdl3::keyboard::Mod::RCTRLMOD);
 
                             if cmd {
                                 self.pixel_multiple += 1;
@@ -331,21 +334,22 @@ hotline::object!({
                                 self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
                                 texture = texture_creator
                                     .create_texture_streaming(
-                                        PixelFormatEnum::ARGB8888,
+                                        PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_ARGB8888).unwrap(),
                                         self.width / self.pixel_multiple,
                                         self.height / self.pixel_multiple,
                                     )
                                     .map_err(|e| e.to_string())?;
+                                texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                             }
                         }
                         Event::KeyDown { keycode: Some(Keycode::Minus), keymod, .. }
                         | Event::KeyDown { keycode: Some(Keycode::KpMinus), keymod, .. } => {
                             #[cfg(target_os = "macos")]
-                            let cmd = keymod.contains(sdl2::keyboard::Mod::LGUIMOD)
-                                || keymod.contains(sdl2::keyboard::Mod::RGUIMOD);
+                            let cmd = keymod.contains(sdl3::keyboard::Mod::LGUIMOD)
+                                || keymod.contains(sdl3::keyboard::Mod::RGUIMOD);
                             #[cfg(not(target_os = "macos"))]
-                            let cmd = keymod.contains(sdl2::keyboard::Mod::LCTRLMOD)
-                                || keymod.contains(sdl2::keyboard::Mod::RCTRLMOD);
+                            let cmd = keymod.contains(sdl3::keyboard::Mod::LCTRLMOD)
+                                || keymod.contains(sdl3::keyboard::Mod::RCTRLMOD);
 
                             if cmd && self.pixel_multiple > 1 {
                                 self.pixel_multiple -= 1;
@@ -355,21 +359,22 @@ hotline::object!({
                                 self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
                                 texture = texture_creator
                                     .create_texture_streaming(
-                                        PixelFormatEnum::ARGB8888,
+                                        PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_ARGB8888).unwrap(),
                                         self.width / self.pixel_multiple,
                                         self.height / self.pixel_multiple,
                                     )
                                     .map_err(|e| e.to_string())?;
+                                texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                             }
                         }
                         Event::KeyDown { keycode: Some(Keycode::S), keymod, .. } => {
                             // Check for Cmd+S (Mac) or Ctrl+S (others)
                             #[cfg(target_os = "macos")]
-                            let save_key = keymod.contains(sdl2::keyboard::Mod::LGUIMOD)
-                                || keymod.contains(sdl2::keyboard::Mod::RGUIMOD);
+                            let save_key = keymod.contains(sdl3::keyboard::Mod::LGUIMOD)
+                                || keymod.contains(sdl3::keyboard::Mod::RGUIMOD);
                             #[cfg(not(target_os = "macos"))]
-                            let save_key = keymod.contains(sdl2::keyboard::Mod::LCTRLMOD)
-                                || keymod.contains(sdl2::keyboard::Mod::RCTRLMOD);
+                            let save_key = keymod.contains(sdl3::keyboard::Mod::LCTRLMOD)
+                                || keymod.contains(sdl3::keyboard::Mod::RCTRLMOD);
 
                             if save_key {
                                 if let Some(ref mut editor) = self.code_editor {
@@ -413,63 +418,65 @@ hotline::object!({
                     self.execute_gpu_render(&mut canvas)?;
                 }
 
-                canvas.copy(&texture, None, None)?;
+                canvas.copy(&texture, None, None).map_err(|e| e.to_string())?;
                 canvas.present();
             }
 
             Ok(())
         }
 
-        fn render_frame(&mut self, texture: &mut sdl2::render::Texture) -> Result<(), String> {
+        fn render_frame(&mut self, texture: &mut sdl3::render::Texture) -> Result<(), String> {
             let query = texture.query();
             let bw = query.width as i64;
             let bh = query.height as i64;
 
-            texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                // Clear buffer
-                for pixel in buffer.chunks_exact_mut(4) {
-                    pixel[0] = 30; // B
-                    pixel[1] = 30; // G
-                    pixel[2] = 30; // R
-                    pixel[3] = 255; // A
-                }
+            texture
+                .with_lock(None, |buffer: &mut [u8], pitch: usize| {
+                    // Clear buffer
+                    for pixel in buffer.chunks_exact_mut(4) {
+                        pixel[0] = 30; // B
+                        pixel[1] = 30; // G
+                        pixel[2] = 30; // R
+                        pixel[3] = 255; // A
+                    }
 
-                // Render window manager
-                if let Some(ref mut wm) = self.window_manager {
-                    wm.render(buffer, bw, bh, pitch as i64);
-                }
+                    // Render window manager
+                    if let Some(ref mut wm) = self.window_manager {
+                        wm.render(buffer, bw, bh, pitch as i64);
+                    }
 
-                // Render code editor
-                if let Some(ref mut editor) = self.code_editor {
-                    editor.render(buffer, bw, bh, pitch as i64);
-                }
+                    // Render code editor
+                    if let Some(ref mut editor) = self.code_editor {
+                        editor.render(buffer, bw, bh, pitch as i64);
+                    }
 
-                if let Some(ref mut wheel) = self.color_wheel {
-                    wheel.render(buffer, bw, bh, pitch as i64);
-                }
+                    if let Some(ref mut wheel) = self.color_wheel {
+                        wheel.render(buffer, bw, bh, pitch as i64);
+                    }
 
-                if let Some(ref mut cb) = self.autonomy_checkbox {
-                    cb.render(buffer, 800, 600, pitch as i64);
-                }
+                    if let Some(ref mut cb) = self.autonomy_checkbox {
+                        cb.render(buffer, 800, 600, pitch as i64);
+                    }
 
-                // Render FPS counter
-                if let Some(ref mut fps) = self.fps_counter {
-                    fps.render(buffer, bw, bh, pitch as i64);
-                }
+                    // Render FPS counter
+                    if let Some(ref mut fps) = self.fps_counter {
+                        fps.render(buffer, bw, bh, pitch as i64);
+                    }
 
-                if let Some(ref mut zoom) = self.zoom_display {
-                    if let Some(until) = self.zoom_display_until {
-                        if Instant::now() <= until {
-                            zoom.render(buffer, bw, bh, pitch as i64);
+                    if let Some(ref mut zoom) = self.zoom_display {
+                        if let Some(until) = self.zoom_display_until {
+                            if Instant::now() <= until {
+                                zoom.render(buffer, bw, bh, pitch as i64);
+                            }
                         }
                     }
-                }
-            })?;
+                })
+                .map_err(|e| e.to_string())?;
             Ok(())
         }
 
         #[cfg(target_os = "linux")]
-        fn run_linux_test(&mut self, texture: &mut sdl2::render::Texture) -> Result<(), String> {
+        fn run_linux_test(&mut self, texture: &mut sdl3::render::Texture) -> Result<(), String> {
             println!("[linux] creating test rects");
 
             if let Some(ref mut wm) = self.window_manager {
@@ -484,48 +491,50 @@ hotline::object!({
             let bw = q.width as i64;
             let bh = q.height as i64;
             let mut png_data = vec![0u8; (bw * bh * 4) as usize];
-            texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                // Clear buffer
-                for pixel in buffer.chunks_exact_mut(4) {
-                    pixel[0] = 30; // B
-                    pixel[1] = 30; // G
-                    pixel[2] = 30; // R
-                    pixel[3] = 255; // A
-                }
-
-                // Render window manager
-                if let Some(ref mut wm) = self.window_manager {
-                    wm.render(buffer, bw, bh, pitch as i64);
-                }
-
-                // Render code editor
-                if let Some(ref mut editor) = self.code_editor {
-                    editor.render(buffer, bw, bh, pitch as i64);
-                }
-                if let Some(ref mut wheel) = self.color_wheel {
-                    wheel.render(buffer, bw, bh, pitch as i64);
-                }
-
-                if let Some(ref mut cb) = self.autonomy_checkbox {
-                    cb.render(buffer, 800, 600, pitch as i64);
-                }
-
-                // Render FPS counter
-                if let Some(ref mut fps) = self.fps_counter {
-                    fps.render(buffer, bw, bh, pitch as i64);
-                }
-
-                for y in 0..bh {
-                    for x in 0..bw {
-                        let src = (y * pitch as i64 + x * 4) as usize;
-                        let dst = (y * bw + x) as usize * 4;
-                        png_data[dst] = buffer[src + 2];
-                        png_data[dst + 1] = buffer[src + 1];
-                        png_data[dst + 2] = buffer[src];
-                        png_data[dst + 3] = buffer[src + 3];
+            texture
+                .with_lock(None, |buffer: &mut [u8], pitch: usize| {
+                    // Clear buffer
+                    for pixel in buffer.chunks_exact_mut(4) {
+                        pixel[0] = 30; // B
+                        pixel[1] = 30; // G
+                        pixel[2] = 30; // R
+                        pixel[3] = 255; // A
                     }
-                }
-            })?;
+
+                    // Render window manager
+                    if let Some(ref mut wm) = self.window_manager {
+                        wm.render(buffer, bw, bh, pitch as i64);
+                    }
+
+                    // Render code editor
+                    if let Some(ref mut editor) = self.code_editor {
+                        editor.render(buffer, bw, bh, pitch as i64);
+                    }
+                    if let Some(ref mut wheel) = self.color_wheel {
+                        wheel.render(buffer, bw, bh, pitch as i64);
+                    }
+
+                    if let Some(ref mut cb) = self.autonomy_checkbox {
+                        cb.render(buffer, 800, 600, pitch as i64);
+                    }
+
+                    // Render FPS counter
+                    if let Some(ref mut fps) = self.fps_counter {
+                        fps.render(buffer, bw, bh, pitch as i64);
+                    }
+
+                    for y in 0..bh {
+                        for x in 0..bw {
+                            let src = (y * pitch as i64 + x * 4) as usize;
+                            let dst = (y * bw + x) as usize * 4;
+                            png_data[dst] = buffer[src + 2];
+                            png_data[dst + 1] = buffer[src + 1];
+                            png_data[dst + 2] = buffer[src];
+                            png_data[dst + 3] = buffer[src + 3];
+                        }
+                    }
+                })
+                .map_err(|e| e.to_string())?;
 
             println!("[linux] saving test_output.png");
             save_png("test_output.png", bw as u32, bh as u32, &png_data)?;
@@ -543,8 +552,8 @@ hotline::object!({
             Ok(())
         }
 
-        fn execute_gpu_render(&mut self, canvas: &mut sdl2::render::Canvas<sdl2::video::Window>) -> Result<(), String> {
-            use sdl2::rect::Rect;
+        fn execute_gpu_render(&mut self, canvas: &mut sdl3::render::Canvas<sdl3::video::Window>) -> Result<(), String> {
+            use sdl3::rect::Rect;
             use std::collections::HashMap;
 
             let texture_creator = canvas.texture_creator();
@@ -554,10 +563,18 @@ hotline::object!({
             for atlas in &self.gpu_atlases {
                 let mut texture = match atlas.format {
                     AtlasFormat::GrayscaleAlpha => texture_creator
-                        .create_texture_static(PixelFormatEnum::ABGR8888, atlas.width, atlas.height)
+                        .create_texture_static(
+                            PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_ABGR8888).unwrap(),
+                            atlas.width,
+                            atlas.height,
+                        )
                         .map_err(|e| e.to_string())?,
                     AtlasFormat::RGBA => texture_creator
-                        .create_texture_static(PixelFormatEnum::RGBA8888, atlas.width, atlas.height)
+                        .create_texture_static(
+                            PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_RGBA8888).unwrap(),
+                            atlas.width,
+                            atlas.height,
+                        )
                         .map_err(|e| e.to_string())?,
                 };
 
@@ -591,14 +608,14 @@ hotline::object!({
                             let dst_rect = Rect::new(*dest_x as i32, *dest_y as i32, *src_width, *src_height);
 
                             // Apply color modulation
-                            canvas.set_draw_color(sdl2::pixels::Color::RGBA(
+                            canvas.set_draw_color(sdl3::pixels::Color::RGBA(
                                 color.2, // R
                                 color.1, // G
                                 color.0, // B
                                 color.3, // A
                             ));
 
-                            canvas.copy(texture, src_rect, dst_rect)?;
+                            canvas.copy(texture, src_rect, dst_rect).map_err(|e| e.to_string())?;
                         }
                     }
                 }
