@@ -29,6 +29,39 @@ hotline::object!({
             self.sides = sides.max(3);
         }
 
+        pub fn bounds(&self) -> (f64, f64, f64, f64) {
+            let verts = self.vertices();
+            let min_x = verts.iter().map(|(x, _)| *x).fold(std::f64::INFINITY, f64::min);
+            let max_x = verts.iter().map(|(x, _)| *x).fold(std::f64::NEG_INFINITY, f64::max);
+            let min_y = verts.iter().map(|(_, y)| *y).fold(std::f64::INFINITY, f64::min);
+            let max_y = verts.iter().map(|(_, y)| *y).fold(std::f64::NEG_INFINITY, f64::max);
+            (min_x, min_y, max_x - min_x, max_y - min_y)
+        }
+
+        pub fn contains_point(&self, x: f64, y: f64) -> bool {
+            let verts = self.vertices();
+            self.point_in_polygon(x, y, &verts)
+        }
+
+        pub fn position(&self) -> (f64, f64) {
+            (self.x, self.y)
+        }
+
+        pub fn rotation(&self) -> f64 {
+            self.rotation
+        }
+
+        pub fn move_by(&mut self, dx: f64, dy: f64) {
+            self.x += dx;
+            self.y += dy;
+        }
+
+        pub fn resize(&mut self, x: f64, y: f64, width: f64, height: f64) {
+            self.x = x + width / 2.0;
+            self.y = y + height / 2.0;
+            self.radius = width.max(height) / 2.0;
+        }
+
         fn vertices(&self) -> Vec<(f64, f64)> {
             let mut verts = Vec::new();
             let sides = self.sides.max(3) as usize;
