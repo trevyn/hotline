@@ -1,5 +1,6 @@
 use hotline::HotlineObject;
 
+// New object that moves rects toward the mouse cursor
 hotline::object!({
     #[derive(Clone, Copy, PartialEq, Default)]
     enum ResizeDir {
@@ -18,6 +19,7 @@ hotline::object!({
     #[derive(Default)]
     pub struct WindowManager {
         rects: Vec<Rect>,
+        rect_movers: Vec<RectMover>,
         polygons: Vec<RegularPolygon>,
         selected: Option<Rect>,
         highlight_lens: Option<HighlightLens>, // HighlightLens for selected rect
@@ -57,6 +59,9 @@ hotline::object!({
         }
 
         pub fn add_rect(&mut self, rect: Rect) {
+            let mut mover = RectMover::new();
+            mover.set_target(rect.clone());
+            self.rect_movers.push(mover);
             self.rects.push(rect);
         }
 
@@ -138,7 +143,7 @@ hotline::object!({
                         "Rect" => {
                             let mut r = Rect::new();
                             r.initialize(x, y, 100.0, 100.0);
-                            self.rects.push(r);
+                            self.add_rect(r);
                         }
                         "RegularPolygon" => {
                             let mut p = RegularPolygon::new();
@@ -349,6 +354,12 @@ hotline::object!({
             let mut menu = self.context_menu.take().unwrap_or_else(ContextMenu::new);
             menu.open(x, y);
             self.context_menu = Some(menu);
+        }
+
+        pub fn update_autonomy(&mut self, mouse_x: f64, mouse_y: f64) {
+            for mover in &mut self.rect_movers {
+                mover.update(mouse_x, mouse_y);
+            }
         }
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
