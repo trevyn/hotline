@@ -203,6 +203,10 @@ hotline::object!({
 
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_down(adj_x, adj_y);
+                                let hits = wm.inspect_click(adj_x, adj_y);
+                                if !hits.is_empty() {
+                                    wm.open_inspector(hits);
+                                }
                             }
                             if let Some(ref mut editor) = self.code_editor {
                                 editor.handle_mouse_down(adj_x, adj_y);

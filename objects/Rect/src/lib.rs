@@ -80,6 +80,17 @@ hotline::object!({
             self.height = height;
         }
 
+        pub fn info_lines(&mut self) -> Vec<String> {
+            vec![
+                "Rect".to_string(),
+                format!("  x: {:.1}", self.x),
+                format!("  y: {:.1}", self.y),
+                format!("  width: {:.1}", self.width),
+                format!("  height: {:.1}", self.height),
+                format!("  rotation: {:.2}", self.rotation),
+            ]
+        }
+
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             let (bx, by, bw, bh) = self.bounds();
             let x_start = (bx as i32).max(0) as u32;
