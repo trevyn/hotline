@@ -13,20 +13,20 @@ const RTLD_LAZY: libc::c_int = 0x1;
 const RTLD_GLOBAL: libc::c_int = 0x8;
 const RTLD_NOLOAD: libc::c_int = 0x10;
 
-static DLOPEN_CACHE: OnceLock<Mutex<HashMap<String, *mut libc::c_void>>> = OnceLock::new();
+static DLOPEN_CACHE: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
 
 fn cached_dlopen(path: &str) -> Result<*mut libc::c_void, Box<dyn std::error::Error>> {
     let cache = DLOPEN_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut cache = cache.lock().unwrap();
     if let Some(&handle) = cache.get(path) {
-        return Ok(handle);
+        return Ok(handle as *mut libc::c_void);
     }
     let c_path = std::ffi::CString::new(path)?;
     let handle = unsafe { libc::dlopen(c_path.as_ptr(), RTLD_LAZY | RTLD_GLOBAL) };
     if handle.is_null() {
         return Err(format!("failed to dlopen {}", path).into());
     }
-    cache.insert(path.to_string(), handle);
+    cache.insert(path.to_string(), handle as usize);
     Ok(handle)
 }
 
