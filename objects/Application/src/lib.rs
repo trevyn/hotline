@@ -1,5 +1,7 @@
 use hotline::HotlineObject;
 use sdl2::event::Event;
+#[cfg(target_os = "macos")]
+use sdl2::hint;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
 use sdl2::pixels::{Color, PixelFormatEnum};
@@ -109,6 +111,12 @@ hotline::object!({
         }
 
         pub fn run(&mut self) -> Result<(), String> {
+            #[cfg(target_os = "macos")]
+            {
+                // Allow OpenGL context updates during live resizing on macOS
+                // so the window contents update dynamically.
+                hint::set("SDL_MAC_OPENGL_ASYNC_DISPATCH", "1");
+            }
             let sdl_context = sdl2::init()?;
             let video_subsystem = sdl_context.video()?;
 
@@ -147,22 +155,6 @@ hotline::object!({
                 // Track frame time
                 let now = std::time::Instant::now();
                 self.frame_times.push_back(now);
-
-                // Check for window resize every frame to avoid stretching during
-                // interactive resizes. SDL may not emit resize events until the
-                // user releases the mouse button.
-                let (dw, dh) = canvas.window().drawable_size();
-                if dw != self.width || dh != self.height {
-                    self.width = dw;
-                    self.height = dh;
-                    texture = texture_creator
-                        .create_texture_streaming(
-                            PixelFormatEnum::ARGB8888,
-                            self.width / self.pixel_multiple,
-                            self.height / self.pixel_multiple,
-                        )
-                        .map_err(|e| e.to_string())?;
-                }
 
                 // Remove old frame times (keep last 2 seconds)
                 while let Some(front) = self.frame_times.front() {
