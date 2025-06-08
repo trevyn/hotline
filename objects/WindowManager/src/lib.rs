@@ -32,6 +32,8 @@ hotline::object!({
         context_menu: Option<ContextMenu>,
         polygon_menu: Option<PolygonMenu>,
         click_inspector: Option<ClickInspector>,
+        pan_x: f64,
+        pan_y: f64,
         dragging: bool,
         drag_offset_x: f64,
         drag_offset_y: f64,
@@ -125,6 +127,15 @@ hotline::object!({
 
         pub fn get_selected_handle(&mut self) -> Option<SelectedObject> {
             self.selected
+        }
+
+        pub fn pan_by(&mut self, dx: f64, dy: f64) {
+            self.pan_x += dx;
+            self.pan_y += dy;
+        }
+
+        pub fn to_world_coords(&self, x: f64, y: f64) -> (f64, f64) {
+            (x + self.pan_x, y + self.pan_y)
         }
 
         pub fn get_rects_count(&mut self) -> i64 {
@@ -438,19 +449,22 @@ hotline::object!({
         }
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
+            let offset_x = self.pan_x;
+            let offset_y = self.pan_y;
+
             // Render all rects
             for rect_handle in &mut self.rects {
-                rect_handle.render(buffer, buffer_width, buffer_height, pitch);
+                rect_handle.render_offset(buffer, buffer_width, buffer_height, pitch, offset_x, offset_y);
             }
 
             // Render polygons
             for poly in &mut self.polygons {
-                poly.render(buffer, buffer_width, buffer_height, pitch);
+                poly.render_offset(buffer, buffer_width, buffer_height, pitch, offset_x, offset_y);
             }
 
             // Render the highlight lens if we have one (this will render the selected rect with highlight)
             if let Some(ref mut hl_handle) = self.highlight_lens {
-                hl_handle.render(buffer, buffer_width, buffer_height, pitch);
+                hl_handle.render_offset(buffer, buffer_width, buffer_height, pitch, offset_x, offset_y);
             }
 
             // Render text

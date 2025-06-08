@@ -48,16 +48,25 @@ hotline::object!({
             }
         }
 
-        pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
+        pub fn render_offset(
+            &mut self,
+            buffer: &mut [u8],
+            buffer_width: i64,
+            buffer_height: i64,
+            pitch: i64,
+            offset_x: f64,
+            offset_y: f64,
+        ) {
             if let Some(ref mut target) = self.target {
                 let (x, y, width, height) = target.bounds();
 
-                let x_start = (x as i32).max(0) as u32;
-                let y_start = (y as i32).max(0) as u32;
-                let x_end = ((x + width) as i32).min(buffer_width as i32) as u32;
-                let y_end = ((y + height) as i32).min(buffer_height as i32) as u32;
+                let x_start = ((x - offset_x) as i32).max(0) as u32;
+                let y_start = ((y - offset_y) as i32).max(0) as u32;
+                let x_end = ((x - offset_x + width) as i32).min(buffer_width as i32) as u32;
+                let y_end = ((y - offset_y + height) as i32).min(buffer_height as i32) as u32;
 
-                let corners = target.corners();
+                let corners: Vec<(f64, f64)> =
+                    target.corners().iter().map(|(cx, cy)| (*cx - offset_x, *cy - offset_y)).collect();
                 let (b, g, r, a) = self.highlight_color;
 
                 for i in 0..4 {
@@ -99,6 +108,10 @@ hotline::object!({
                     }
                 }
             }
+        }
+
+        pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
+            self.render_offset(buffer, buffer_width, buffer_height, pitch, 0.0, 0.0);
         }
     }
 });

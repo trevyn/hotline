@@ -91,14 +91,24 @@ hotline::object!({
             ]
         }
 
-        pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
+        pub fn render_offset(
+            &mut self,
+            buffer: &mut [u8],
+            buffer_width: i64,
+            buffer_height: i64,
+            pitch: i64,
+            offset_x: f64,
+            offset_y: f64,
+        ) {
             let (bx, by, bw, bh) = self.bounds();
-            let x_start = (bx as i32).max(0) as u32;
-            let y_start = (by as i32).max(0) as u32;
-            let x_end = ((bx + bw) as i32).min(buffer_width as i32) as u32;
-            let y_end = ((by + bh) as i32).min(buffer_height as i32) as u32;
+            let x_start = ((bx - offset_x) as i32).max(0) as u32;
+            let y_start = ((by - offset_y) as i32).max(0) as u32;
+            let x_end = ((bx - offset_x + bw) as i32).min(buffer_width as i32) as u32;
+            let y_end = ((by - offset_y + bh) as i32).min(buffer_height as i32) as u32;
 
             let (cx, cy) = self.center();
+            let cx = cx - offset_x;
+            let cy = cy - offset_y;
             let (sin_r, cos_r) = self.rotation.sin_cos();
 
             for y in y_start..y_end {
@@ -118,6 +128,10 @@ hotline::object!({
                     }
                 }
             }
+        }
+
+        pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
+            self.render_offset(buffer, buffer_width, buffer_height, pitch, 0.0, 0.0);
         }
     }
 });
