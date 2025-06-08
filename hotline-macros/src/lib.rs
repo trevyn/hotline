@@ -176,10 +176,12 @@ pub fn object(input: TokenStream) -> TokenStream {
     }
 
     // Generate wrappers only for directly referenced objects in this object
-    let additional_wrappers = generate_typed_wrappers(&referenced_objects, &rustc_commit).0;
+    let (additional_wrappers, wrapper_custom_types) = generate_typed_wrappers(&referenced_objects, &rustc_commit);
 
     // Get custom types referenced in THIS object only (not transitively discovered)
     let mut local_custom_types = find_referenced_custom_types(&struct_item, &impl_blocks);
+    // Also include custom types discovered from imported object wrappers
+    local_custom_types.extend(wrapper_custom_types);
 
     // Get names of types defined in this object to exclude them from proxies
     let local_type_names: HashSet<String> = type_defs
