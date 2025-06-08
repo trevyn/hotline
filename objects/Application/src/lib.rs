@@ -14,7 +14,6 @@ use std::fs::File;
 use std::io::BufWriter;
 
 hotline::object!({
-    #[derive(Default)]
     pub struct Application {
         window_manager: Option<WindowManager>,
         code_editor: Option<CodeEditor>,
