@@ -379,17 +379,17 @@ hotline::object!({
 
             // Render all rects
             for rect_handle in &mut self.rects {
-                rect_handle.render_offset(buffer, buffer_width, buffer_height, pitch, -offset_x, -offset_y);
+                rect_handle.render_offset(buffer, buffer_width, buffer_height, pitch, offset_x, offset_y);
             }
 
             // Render polygons
             for poly in &mut self.polygons {
-                poly.render_offset(buffer, buffer_width, buffer_height, pitch, -offset_x, -offset_y);
+                poly.render_offset(buffer, buffer_width, buffer_height, pitch, offset_x, offset_y);
             }
 
             // Render the highlight lens if we have one (this will render the selected rect with highlight)
             if let Some(ref mut hl_handle) = self.highlight_lens {
-                hl_handle.render_offset(buffer, buffer_width, buffer_height, pitch, -offset_x, -offset_y);
+                hl_handle.render_offset(buffer, buffer_width, buffer_height, pitch, offset_x, offset_y);
             }
 
             // Render text
