@@ -237,7 +237,7 @@ hotline::object!({
                                 }
                             }
                             if let Some(ref mut cb) = self.autonomy_checkbox {
-                                cb.handle_mouse_down(x as f64, y as f64);
+                                cb.handle_mouse_down(adj_x, adj_y);
                             }
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
