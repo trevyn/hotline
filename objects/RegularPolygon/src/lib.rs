@@ -132,5 +132,10 @@ hotline::object!({
                 }
             }
         }
+
+        pub fn generate_commands(&mut self, gpu_renderer: &mut GPURenderer) {
+            let verts = self.vertices();
+            gpu_renderer.add_command(RenderCommand::Polygon { vertices: verts, color: self.color });
+        }
     }
 });

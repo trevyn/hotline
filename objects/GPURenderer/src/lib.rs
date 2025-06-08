@@ -11,6 +11,18 @@ hotline::object!({
             dest_y: f64,
             color: (u8, u8, u8, u8),
         },
+        Rect {
+            x: f64,
+            y: f64,
+            width: f64,
+            height: f64,
+            rotation: f64,
+            color: (u8, u8, u8, u8),
+        },
+        Polygon {
+            vertices: Vec<(f64, f64)>,
+            color: (u8, u8, u8, u8),
+        },
     }
 
     #[derive(Clone, Debug)]

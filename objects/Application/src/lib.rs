@@ -654,6 +654,73 @@ hotline::object!({
                             canvas.copy(texture, src_rect, dst_rect).map_err(|e| e.to_string())?;
                         }
                     }
+                    RenderCommand::Rect { x, y, width, height, rotation, color } => {
+                        let (cx, cy) = (x + width / 2.0, y + height / 2.0);
+                        let (sin_r, cos_r) = rotation.sin_cos();
+                        let corners = [
+                            (-width / 2.0, -height / 2.0),
+                            (width / 2.0, -height / 2.0),
+                            (width / 2.0, height / 2.0),
+                            (-width / 2.0, height / 2.0),
+                        ];
+                        let mut verts = Vec::new();
+                        let color_f = sdl3::pixels::FColor::RGBA(
+                            color.2 as f32 / 255.0,
+                            color.1 as f32 / 255.0,
+                            color.0 as f32 / 255.0,
+                            color.3 as f32 / 255.0,
+                        );
+                        for (dx, dy) in corners {
+                            let rx = dx * cos_r - dy * sin_r;
+                            let ry = dx * sin_r + dy * cos_r;
+                            verts.push(sdl3::render::Vertex {
+                                position: sdl3::render::FPoint::new((cx + rx) as f32, (cy + ry) as f32),
+                                color: color_f,
+                                tex_coord: sdl3::render::FPoint::new(0.0, 0.0),
+                            });
+                        }
+                        let vertex_data = [verts[0], verts[1], verts[2], verts[0], verts[2], verts[3]];
+                        canvas
+                            .render_geometry(&vertex_data, None, sdl3::render::VertexIndices::Sequential)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    RenderCommand::Polygon { vertices, color } => {
+                        if vertices.len() >= 3 {
+                            let color_f = sdl3::pixels::FColor::RGBA(
+                                color.2 as f32 / 255.0,
+                                color.1 as f32 / 255.0,
+                                color.0 as f32 / 255.0,
+                                color.3 as f32 / 255.0,
+                            );
+                            let first = sdl3::render::Vertex {
+                                position: sdl3::render::FPoint::new(vertices[0].0 as f32, vertices[0].1 as f32),
+                                color: color_f,
+                                tex_coord: sdl3::render::FPoint::new(0.0, 0.0),
+                            };
+                            let mut vertex_data = Vec::new();
+                            for i in 1..vertices.len() - 1 {
+                                let v1 = sdl3::render::Vertex {
+                                    position: sdl3::render::FPoint::new(vertices[i].0 as f32, vertices[i].1 as f32),
+                                    color: color_f,
+                                    tex_coord: sdl3::render::FPoint::new(0.0, 0.0),
+                                };
+                                let v2 = sdl3::render::Vertex {
+                                    position: sdl3::render::FPoint::new(
+                                        vertices[i + 1].0 as f32,
+                                        vertices[i + 1].1 as f32,
+                                    ),
+                                    color: color_f,
+                                    tex_coord: sdl3::render::FPoint::new(0.0, 0.0),
+                                };
+                                vertex_data.push(first);
+                                vertex_data.push(v1);
+                                vertex_data.push(v2);
+                            }
+                            canvas
+                                .render_geometry(&vertex_data, None, sdl3::render::VertexIndices::Sequential)
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
                 }
             }
 
