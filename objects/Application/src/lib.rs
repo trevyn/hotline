@@ -215,8 +215,9 @@ hotline::object!({
                             let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
 
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_mouse_down(adj_x, adj_y);
-                                let hits = wm.inspect_click(adj_x, adj_y);
+                                let (wx, wy) = wm.to_world_coords(adj_x, adj_y);
+                                wm.handle_mouse_down(wx, wy);
+                                let hits = wm.inspect_click(wx, wy);
                                 if !hits.is_empty() {
                                     wm.open_inspector(hits);
                                 }
@@ -245,7 +246,8 @@ hotline::object!({
                             let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
 
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_right_click(adj_x, adj_y);
+                                let (wx, wy) = wm.to_world_coords(adj_x, adj_y);
+                                wm.handle_right_click(wx, wy);
                             }
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
@@ -258,7 +260,8 @@ hotline::object!({
                             let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
 
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_mouse_up(adj_x, adj_y);
+                                let (wx, wy) = wm.to_world_coords(adj_x, adj_y);
+                                wm.handle_mouse_up(wx, wy);
                             }
                             if let Some(ref mut wheel) = self.color_wheel {
                                 wheel.handle_mouse_up();
@@ -274,7 +277,8 @@ hotline::object!({
                             let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
 
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_mouse_motion(adj_x, adj_y);
+                                let (wx, wy) = wm.to_world_coords(adj_x, adj_y);
+                                wm.handle_mouse_motion(wx, wy);
                             }
                             if let Some(ref mut wheel) = self.color_wheel {
                                 if let Some(color) = wheel.handle_mouse_move(adj_x, adj_y) {
@@ -286,10 +290,19 @@ hotline::object!({
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
                         }
-                        Event::MouseWheel { y, .. } => {
+                        Event::MouseWheel { x: scroll_x, y: scroll_y, .. } => {
+                            let mut handled = false;
                             if let Some(ref mut editor) = self.code_editor {
                                 if editor.is_focused() {
-                                    editor.scroll_by(-y as f64 * 20.0);
+                                    editor.scroll_by(-scroll_y as f64 * 20.0);
+                                    handled = true;
+                                }
+                            }
+                            if !handled {
+                                if let Some(ref mut wm) = self.window_manager {
+                                    if wm.get_selected_handle().is_none() {
+                                        wm.pan_by(-scroll_x as f64 * 10.0, -scroll_y as f64 * 10.0);
+                                    }
                                 }
                             }
                         }
@@ -385,7 +398,8 @@ hotline::object!({
 
                 if let (Some(wm), Some(cb)) = (&mut self.window_manager, &mut self.autonomy_checkbox) {
                     if cb.checked() {
-                        wm.update_autonomy(self.mouse_x, self.mouse_y);
+                        let (wx, wy) = wm.to_world_coords(self.mouse_x, self.mouse_y);
+                        wm.update_autonomy(wx, wy);
                     }
                 }
 
