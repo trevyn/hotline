@@ -162,3 +162,57 @@ pub fn generate_default_impl(struct_name: &Ident, processed: &ProcessedStruct) -
         quote! {}
     }
 }
+
+pub fn generate_inspect_impl(struct_name: &Ident, processed: &ProcessedStruct) -> proc_macro2::TokenStream {
+    if let Fields::Named(fields) = &processed.modified_struct.fields {
+        let field_pairs: Vec<_> = fields
+            .named
+            .iter()
+            .filter_map(|field| {
+                let name = field.ident.as_ref()?;
+                if name == "__hotline_registry" {
+                    return None;
+                }
+                let ty = &field.ty;
+                let ty_str = crate::utils::types::type_to_string(ty);
+                let value = if crate::utils::types::is_object_type(&ty_str) {
+                    quote! { format!("<{}>", stringify!(#ty)) }
+                } else if let Some(inner) = crate::utils::types::extract_option_type(&field.ty) {
+                    let inner_str = crate::utils::types::type_to_string(&inner);
+                    if crate::utils::types::is_object_type(&inner_str) {
+                        quote! {
+                            match &self.#name {
+                                Some(_) => format!("Some(<{}>)", stringify!(#inner)),
+                                None => "None".to_string(),
+                            }
+                        }
+                    } else if crate::utils::types::is_primitive_type(&inner_str) {
+                        quote! {
+                            match &self.#name {
+                                Some(v) => v.to_string(),
+                                None => "None".to_string(),
+                            }
+                        }
+                    } else {
+                        quote! { "<complex>".to_string() }
+                    }
+                } else if crate::utils::types::is_primitive_type(&ty_str) {
+                    quote! { self.#name.to_string() }
+                } else {
+                    quote! { "<complex>".to_string() }
+                };
+                Some(quote! { (stringify!(#name).into(), #value) })
+            })
+            .collect();
+
+        quote! {
+            impl ::hotline::Inspectable for #struct_name {
+                fn fields(&mut self) -> Vec<(String, String)> {
+                    vec![ #(#field_pairs),* ]
+                }
+            }
+        }
+    } else {
+        quote! {}
+    }
+}

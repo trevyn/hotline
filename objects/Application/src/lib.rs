@@ -1,4 +1,4 @@
-use hotline::HotlineObject;
+use hotline::{HotlineObject, Inspectable};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -21,6 +21,8 @@ hotline::object!({
         gpu_atlases: Vec<AtlasData>,
         gpu_commands: Vec<RenderCommand>,
         fps_counter: Option<TextRenderer>,
+        object_inspector: Option<ObjectInspector>,
+        last_selected: Option<String>,
         frame_times: std::collections::VecDeque<std::time::Instant>,
         last_fps_update: Option<std::time::Instant>,
         current_fps: f64,
@@ -74,6 +76,17 @@ hotline::object!({
                 r_ref.initialize(50.0, 400.0, 120.0, 120.0);
                 wheel.set_rect(rect);
             }
+
+            // Create object inspector
+            self.object_inspector = Some(ObjectInspector::new());
+            if let Some(ref mut insp) = self.object_inspector {
+                let rect = Rect::new();
+                let mut r_ref = rect.clone();
+                r_ref.initialize(600.0, 50.0, 180.0, 150.0);
+                insp.set_rect(rect);
+            }
+
+            self.last_selected = None;
 
             // Create FPS counter
             self.fps_counter = Some(TextRenderer::new());
@@ -237,7 +250,8 @@ hotline::object!({
                     }
                 }
 
-                // Render
+                // Update inspector and render
+                self.update_inspector();
                 self.render_frame(&mut texture)?;
 
                 // GPU render on top
@@ -290,6 +304,10 @@ hotline::object!({
 
                 if let Some(ref mut wheel) = self.color_wheel {
                     wheel.render(buffer, 800, 600, pitch as i64);
+                }
+
+                if let Some(ref mut insp) = self.object_inspector {
+                    insp.render(buffer, 800, 600, pitch as i64);
                 }
 
                 // Render FPS counter
@@ -368,6 +386,24 @@ hotline::object!({
             Ok(())
         }
 
+        fn update_inspector(&mut self) {
+            if let (Some(wm), Some(insp)) = (&mut self.window_manager, &mut self.object_inspector) {
+                if let Some(mut rect) = wm.get_selected_handle() {
+                    let fields = hotline::Inspectable::fields(&mut rect);
+                    insp.inspect("Rect", fields);
+
+                    if self.last_selected.as_deref() != Some("Rect") {
+                        if let Some(ref mut editor) = self.code_editor {
+                            let _ = editor.open("objects/Rect/src/lib.rs");
+                        }
+                        self.last_selected = Some("Rect".to_string());
+                    }
+                } else {
+                    self.last_selected = None;
+                }
+            }
+        }
+
         fn execute_gpu_render(&mut self, canvas: &mut sdl2::render::Canvas<sdl2::video::Window>) -> Result<(), String> {
             use sdl2::rect::Rect;
             use std::collections::HashMap;
@@ -433,6 +469,19 @@ hotline::object!({
         }
     }
 });
+
+impl hotline::Inspectable for Rect {
+    fn fields(&mut self) -> Vec<(String, String)> {
+        let (x, y, w, h) = self.bounds();
+        vec![
+            ("x".into(), format!("{:.1}", x)),
+            ("y".into(), format!("{:.1}", y)),
+            ("width".into(), format!("{:.1}", w)),
+            ("height".into(), format!("{:.1}", h)),
+            ("rotation".into(), format!("{:.2}", self.rotation())),
+        ]
+    }
+}
 
 #[cfg(target_os = "linux")]
 fn save_png(path: &str, width: u32, height: u32, data: &[u8]) -> Result<(), String> {

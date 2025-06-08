@@ -143,3 +143,8 @@ impl<T> Clone for ObjectRef<T> {
         Self { inner: self.inner.clone(), _phantom: PhantomData }
     }
 }
+
+/// Trait for objects that can provide their field values as strings.
+pub trait Inspectable {
+    fn fields(&mut self) -> Vec<(String, String)>;
+}

@@ -14,7 +14,9 @@ mod utils;
 
 use codegen::core::generate_core_functions;
 use codegen::custom_types::generate_custom_type_proxies_for_types;
-use codegen::fields::{generate_default_impl, generate_field_accessors, generate_setter_builder_methods};
+use codegen::fields::{
+    generate_default_impl, generate_field_accessors, generate_inspect_impl, generate_setter_builder_methods,
+};
 use codegen::methods::generate_method_wrappers;
 use codegen::process_struct_attributes;
 use codegen::wrapper::generate_typed_wrappers;
@@ -118,6 +120,7 @@ pub fn object(input: TokenStream) -> TokenStream {
     let setter_builder_impl = generate_setter_builder_methods(struct_name, &processed);
     let default_impl =
         should_generate_default.then(|| generate_default_impl(struct_name, &processed)).unwrap_or_default();
+    let inspect_impl = generate_inspect_impl(struct_name, &processed);
     let referenced_objects = find_referenced_object_types(&struct_item, &impl_blocks);
 
     // Collect all objects and custom types transitively
@@ -283,6 +286,7 @@ pub fn object(input: TokenStream) -> TokenStream {
         #(#method_wrappers)*
         #core_functions
         #additional_wrappers
+        #inspect_impl
     };
 
     TokenStream::from(output)
