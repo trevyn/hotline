@@ -6,89 +6,6 @@ pub enum SelectedObject {
     Polygon(usize),
 }
 
-#[derive(Default)]
-struct PolygonMenu {
-    renderers: Vec<TextRenderer>,
-    x: f64,
-    y: f64,
-    visible: bool,
-    hover: Option<usize>,
-}
-
-impl PolygonMenu {
-    fn open(&mut self, x: f64, y: f64) {
-        if self.renderers.is_empty() {
-            for i in 3..=10 {
-                self.renderers.push(TextRenderer::new().with_text(i.to_string()).with_color((255, 255, 255, 255)));
-            }
-        }
-        self.x = x;
-        self.y = y;
-        self.visible = true;
-        self.hover = None;
-    }
-
-    fn close(&mut self) {
-        self.visible = false;
-        self.hover = None;
-    }
-
-    fn handle_mouse_down(&mut self, x: f64, y: f64) -> Option<i64> {
-        if !self.visible {
-            return None;
-        }
-        let item_height = 16.0;
-        for (i, _) in self.renderers.iter().enumerate() {
-            let iy = self.y + i as f64 * item_height;
-            if x >= self.x && x <= self.x + 100.0 && y >= iy && y <= iy + item_height {
-                self.visible = false;
-                return Some(i as i64 + 3);
-            }
-        }
-        self.visible = false;
-        None
-    }
-
-    fn handle_mouse_move(&mut self, x: f64, y: f64) {
-        if !self.visible {
-            return;
-        }
-        let item_height = 16.0;
-        self.hover = None;
-        for (i, _) in self.renderers.iter().enumerate() {
-            let iy = self.y + i as f64 * item_height;
-            if x >= self.x && x <= self.x + 100.0 && y >= iy && y <= iy + item_height {
-                self.hover = Some(i);
-                break;
-            }
-        }
-    }
-
-    fn preview_sides(&self) -> Option<i64> {
-        self.hover.map(|i| i as i64 + 3)
-    }
-
-    fn render(&mut self, buffer: &mut [u8], bw: i64, bh: i64, pitch: i64) {
-        if !self.visible {
-            return;
-        }
-        let item_height = 16.0;
-        for (i, r) in self.renderers.iter_mut().enumerate() {
-            r.set_x(self.x);
-            r.set_y(self.y + i as f64 * item_height);
-            r.render(buffer, bw, bh, pitch);
-        }
-        if let Some(sides) = self.preview_sides() {
-            let mut preview = RegularPolygon::new();
-            if let Some(idx) = self.hover {
-                let py = self.y + idx as f64 * item_height + item_height / 2.0;
-                preview.initialize(self.x + 120.0, py, 20.0, sides);
-                preview.render(buffer, bw, bh, pitch);
-            }
-        }
-    }
-}
-
 hotline::object!({
     #[derive(Clone, Copy, PartialEq, Default)]
     enum ResizeDir {
@@ -107,12 +24,14 @@ hotline::object!({
     #[derive(Default)]
     pub struct WindowManager {
         rects: Vec<Rect>,
+        rect_movers: Vec<RectMover>,
         polygons: Vec<RegularPolygon>,
         selected: Option<SelectedObject>,
         highlight_lens: Option<HighlightLens>, // HighlightLens for selected rect
         text_renderer: Option<TextRenderer>,   // TextRenderer for displaying text
         context_menu: Option<ContextMenu>,
-        polygon_menu: PolygonMenu,
+        polygon_menu: Option<PolygonMenu>,
+        click_inspector: Option<ClickInspector>,
         dragging: bool,
         drag_offset_x: f64,
         drag_offset_y: f64,
@@ -137,13 +56,47 @@ hotline::object!({
                     .with_y(20.0)
                     .with_color((0, 255, 255, 255)); // Yellow text in BGRA format
                 self.text_renderer = Some(text_renderer);
+
+                // Create click inspector
+                self.click_inspector = Some(ClickInspector::new());
+                self.polygon_menu = Some(PolygonMenu::new());
             } else {
                 panic!("WindowManager registry not initialized");
             }
         }
 
         pub fn add_rect(&mut self, rect: Rect) {
+            let mut mover = RectMover::new();
+            mover.set_target(rect.clone());
+            self.rect_movers.push(mover);
             self.rects.push(rect);
+        }
+
+        pub fn inspect_click(&mut self, x: f64, y: f64) -> Vec<String> {
+            let mut hits = Vec::new();
+            for rect in &mut self.rects {
+                if rect.contains_point(x, y) {
+                    hits.extend(rect.info_lines());
+                }
+            }
+            for poly in &mut self.polygons {
+                if poly.contains_point(x, y) {
+                    hits.extend(poly.info_lines());
+                }
+            }
+            hits
+        }
+
+        pub fn open_inspector(&mut self, items: Vec<String>) {
+            if let Some(ref mut inspector) = self.click_inspector {
+                inspector.open(items);
+            }
+        }
+
+        pub fn close_inspector(&mut self) {
+            if let Some(ref mut inspector) = self.click_inspector {
+                inspector.close();
+            }
         }
 
         pub fn clear_selection(&mut self) {
@@ -191,14 +144,16 @@ hotline::object!({
         }
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
-            if self.polygon_menu.visible {
-                if let Some(sides) = self.polygon_menu.handle_mouse_down(x, y) {
-                    let mut p = RegularPolygon::new();
-                    p.initialize(x, y, 40.0, sides);
-                    self.polygons.push(p);
+            if let Some(ref mut pm) = self.polygon_menu {
+                if pm.is_visible() {
+                    if let Some(sides) = pm.handle_mouse_down(x, y) {
+                        let mut p = RegularPolygon::new();
+                        p.initialize(x, y, 40.0, sides);
+                        self.polygons.push(p);
+                    }
+                    self.context_menu = None;
+                    return;
                 }
-                self.context_menu = None;
-                return;
             }
 
             if let Some(ref mut menu) = self.context_menu {
@@ -207,16 +162,18 @@ hotline::object!({
                         "Rect" => {
                             let mut r = Rect::new();
                             r.initialize(x, y, 100.0, 100.0);
-                            self.rects.push(r);
-                            self.context_menu = None;
+                            self.add_rect(r);
                         }
                         "RegularPolygon" => {
-                            self.polygon_menu.open(x + 100.0, y);
+                            if let Some(ref mut pm) = self.polygon_menu {
+                                pm.open(x + 100.0, y);
+                            }
                         }
                         _ => {}
                     }
                 }
-                if !self.polygon_menu.visible {
+                let hide_menu = if let Some(pm) = self.polygon_menu.as_mut() { !pm.is_visible() } else { true };
+                if hide_menu {
                     self.context_menu = None;
                 }
                 return;
@@ -325,11 +282,14 @@ hotline::object!({
         }
 
         pub fn handle_mouse_up(&mut self, x: f64, y: f64) {
-            if self.polygon_menu.visible {
-                self.polygon_menu.close();
-                self.context_menu = None;
-                return;
-            } else if self.context_menu.is_some() {
+            if let Some(ref mut pm) = self.polygon_menu {
+                if pm.is_visible() {
+                    pm.close();
+                    self.context_menu = None;
+                    return;
+                }
+            }
+            if self.context_menu.is_some() {
                 return;
             } else if self.resizing {
                 self.resizing = false;
@@ -358,9 +318,11 @@ hotline::object!({
         }
 
         pub fn handle_mouse_motion(&mut self, x: f64, y: f64) {
-            if self.polygon_menu.visible {
-                self.polygon_menu.handle_mouse_move(x, y);
-                return;
+            if let Some(ref mut pm) = self.polygon_menu {
+                if pm.is_visible() {
+                    pm.handle_mouse_move(x, y);
+                    return;
+                }
             }
             if self.context_menu.is_some() {
                 return;
@@ -468,10 +430,18 @@ hotline::object!({
         }
 
         pub fn handle_right_click(&mut self, x: f64, y: f64) {
-            self.polygon_menu.close();
+            if let Some(ref mut pm) = self.polygon_menu {
+                pm.close();
+            }
             let mut menu = self.context_menu.take().unwrap_or_else(ContextMenu::new);
             menu.open(x, y);
             self.context_menu = Some(menu);
+        }
+
+        pub fn update_autonomy(&mut self, mouse_x: f64, mouse_y: f64) {
+            for mover in &mut self.rect_movers {
+                mover.update(mouse_x, mouse_y);
+            }
         }
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
@@ -499,8 +469,15 @@ hotline::object!({
             if let Some(ref mut menu) = self.context_menu {
                 menu.render(buffer, buffer_width, buffer_height, pitch);
             }
-            if self.polygon_menu.visible {
-                self.polygon_menu.render(buffer, buffer_width, buffer_height, pitch);
+
+            if let Some(ref mut pm) = self.polygon_menu {
+                if pm.is_visible() {
+                    pm.render(buffer, buffer_width, buffer_height, pitch);
+                }
+            }
+
+            if let Some(ref mut inspector) = self.click_inspector {
+                inspector.render(buffer, buffer_width, buffer_height, pitch);
             }
         }
 

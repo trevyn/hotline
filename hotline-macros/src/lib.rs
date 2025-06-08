@@ -82,8 +82,10 @@ pub fn object(input: TokenStream) -> TokenStream {
         (main.expect("Expected impl block for struct"), others)
     };
 
-    // Check for Default trait
-    let has_derive_default = struct_item
+    // Check for Default trait. Use the processed struct to account for removed
+    // derives when field defaults are present.
+    let has_derive_default = processed
+        .modified_struct
         .attrs
         .iter()
         .any(|a| a.path().is_ident("derive") && a.to_token_stream().to_string().contains("Default"));
@@ -92,8 +94,8 @@ pub fn object(input: TokenStream) -> TokenStream {
         .iter()
         .any(|ib| ib.trait_.as_ref().and_then(|(_, p, _)| p.segments.last()).map_or(false, |s| s.ident == "Default"));
 
-    let should_generate_default = !has_derive_default && !has_impl_default && !processed.field_defaults.is_empty();
-    let has_default = has_derive_default || has_impl_default || !processed.field_defaults.is_empty();
+    let should_generate_default = !has_impl_default && !processed.field_defaults.is_empty();
+    let has_default = has_impl_default || !processed.field_defaults.is_empty() || has_derive_default;
 
     // Filter impl blocks if generating Default
     let filtered_impl_blocks: Vec<_> = if should_generate_default {

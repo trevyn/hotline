@@ -22,9 +22,12 @@ hotline::object!({
         gpu_atlases: Vec<AtlasData>,
         gpu_commands: Vec<RenderCommand>,
         fps_counter: Option<TextRenderer>,
+        autonomy_checkbox: Option<Checkbox>,
         frame_times: std::collections::VecDeque<std::time::Instant>,
         last_fps_update: Option<std::time::Instant>,
         current_fps: f64,
+        mouse_x: f64,
+        mouse_y: f64,
         #[default(1)]
         pixel_multiple: u32,
         width: u32,
@@ -80,6 +83,16 @@ hotline::object!({
                 let mut r_ref = rect.clone();
                 r_ref.initialize(50.0, 400.0, 120.0, 120.0);
                 wheel.set_rect(rect);
+            }
+
+            // Create autonomy checkbox
+            self.autonomy_checkbox = Some(Checkbox::new());
+            if let Some(ref mut cb) = self.autonomy_checkbox {
+                let rect = Rect::new();
+                let mut r_ref = rect.clone();
+                r_ref.initialize(20.0, 60.0, 20.0, 20.0);
+                cb.set_rect(rect);
+                cb.set_label("Autonomy".to_string());
             }
 
             // Create FPS counter
@@ -195,44 +208,83 @@ hotline::object!({
                                 .map_err(|e| e.to_string())?;
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
+                            let (win_w, win_h) = canvas.window().size();
+                            let scale_x = self.width as f64 / win_w as f64;
+                            let scale_y = self.height as f64 / win_h as f64;
+                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
+                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_mouse_down(x as f64, y as f64);
+                                wm.handle_mouse_down(adj_x, adj_y);
+                                let hits = wm.inspect_click(adj_x, adj_y);
+                                if !hits.is_empty() {
+                                    wm.open_inspector(hits);
+                                }
                             }
+                            self.mouse_x = x as f64;
+                            self.mouse_y = y as f64;
                             if let Some(ref mut editor) = self.code_editor {
-                                editor.handle_mouse_down(x as f64, y as f64);
+                                editor.handle_mouse_down(adj_x, adj_y);
                             }
                             if let Some(ref mut wheel) = self.color_wheel {
-                                if let Some(color) = wheel.handle_mouse_down(x as f64, y as f64) {
+                                if let Some(color) = wheel.handle_mouse_down(adj_x, adj_y) {
                                     if let Some(ref mut editor) = self.code_editor {
                                         editor.update_text_color(color);
                                     }
                                 }
                             }
-                        }
-                        Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
-                            if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_right_click(x as f64, y as f64);
+                            if let Some(ref mut cb) = self.autonomy_checkbox {
+                                cb.handle_mouse_down(x as f64, y as f64);
                             }
                         }
-                        Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
+                        Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
+                            let (win_w, win_h) = canvas.window().size();
+                            let scale_x = self.width as f64 / win_w as f64;
+                            let scale_y = self.height as f64 / win_h as f64;
+                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
+                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_mouse_up(x as f64, y as f64);
+                                wm.handle_right_click(adj_x, adj_y);
+                            }
+                            self.mouse_x = x as f64;
+                            self.mouse_y = y as f64;
+                        }
+                        Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
+                            let (win_w, win_h) = canvas.window().size();
+                            let scale_x = self.width as f64 / win_w as f64;
+                            let scale_y = self.height as f64 / win_h as f64;
+                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
+                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+
+                            if let Some(ref mut wm) = self.window_manager {
+                                wm.handle_mouse_up(adj_x, adj_y);
                             }
                             if let Some(ref mut wheel) = self.color_wheel {
                                 wheel.handle_mouse_up();
                             }
+                            self.mouse_x = x as f64;
+                            self.mouse_y = y as f64;
                         }
                         Event::MouseMotion { x, y, .. } => {
+                            let (win_w, win_h) = canvas.window().size();
+                            let scale_x = self.width as f64 / win_w as f64;
+                            let scale_y = self.height as f64 / win_h as f64;
+                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
+                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_mouse_motion(x as f64, y as f64);
+                                wm.handle_mouse_motion(adj_x, adj_y);
                             }
                             if let Some(ref mut wheel) = self.color_wheel {
-                                if let Some(color) = wheel.handle_mouse_move(x as f64, y as f64) {
+                                if let Some(color) = wheel.handle_mouse_move(adj_x, adj_y) {
                                     if let Some(ref mut editor) = self.code_editor {
                                         editor.update_text_color(color);
                                     }
                                 }
                             }
+                            self.mouse_x = x as f64;
+                            self.mouse_y = y as f64;
                         }
                         Event::MouseWheel { y, .. } => {
                             if let Some(ref mut editor) = self.code_editor {
@@ -331,6 +383,12 @@ hotline::object!({
                     }
                 }
 
+                if let (Some(wm), Some(cb)) = (&mut self.window_manager, &mut self.autonomy_checkbox) {
+                    if cb.checked() {
+                        wm.update_autonomy(self.mouse_x, self.mouse_y);
+                    }
+                }
+
                 // Render
                 self.render_frame(&mut texture)?;
 
@@ -390,6 +448,10 @@ hotline::object!({
                     wheel.render(buffer, bw, bh, pitch as i64);
                 }
 
+                if let Some(ref mut cb) = self.autonomy_checkbox {
+                    cb.render(buffer, 800, 600, pitch as i64);
+                }
+
                 // Render FPS counter
                 if let Some(ref mut fps) = self.fps_counter {
                     fps.render(buffer, bw, bh, pitch as i64);
@@ -442,6 +504,10 @@ hotline::object!({
                 }
                 if let Some(ref mut wheel) = self.color_wheel {
                     wheel.render(buffer, bw, bh, pitch as i64);
+                }
+
+                if let Some(ref mut cb) = self.autonomy_checkbox {
+                    cb.render(buffer, 800, 600, pitch as i64);
                 }
 
                 // Render FPS counter

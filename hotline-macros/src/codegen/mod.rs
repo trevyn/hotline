@@ -6,6 +6,7 @@ pub mod methods;
 pub mod type_hash;
 pub mod wrapper;
 
+use quote::quote;
 use std::collections::{HashMap, HashSet};
 use syn::{Fields, ItemStruct};
 
@@ -38,6 +39,31 @@ pub fn process_struct_attributes(struct_item: &ItemStruct) -> ProcessedStruct {
                 _ => true,
             });
         });
+    }
+
+    // Remove `Default` from derives if field defaults are specified so that we
+    // can generate our own Default implementation.
+    if !field_defaults.is_empty() {
+        use syn::punctuated::Punctuated;
+        use syn::{Meta, Path, Token};
+
+        let mut new_attrs = Vec::with_capacity(modified_struct.attrs.len());
+        for mut attr in modified_struct.attrs.into_iter() {
+            if attr.path().is_ident("derive") {
+                if let Meta::List(meta_list) = &mut attr.meta {
+                    let derives: Punctuated<Path, Token![,]> =
+                        meta_list.parse_args_with(Punctuated::parse_terminated).unwrap_or_default();
+                    let filtered: Punctuated<Path, Token![,]> =
+                        derives.into_iter().filter(|p| !p.is_ident("Default")).collect();
+                    if filtered.is_empty() {
+                        continue; // Drop the entire attribute
+                    }
+                    meta_list.tokens = quote!(#filtered).into();
+                }
+            }
+            new_attrs.push(attr);
+        }
+        modified_struct.attrs = new_attrs;
     }
 
     ProcessedStruct { modified_struct, fields_with_setters, field_defaults }
