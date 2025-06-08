@@ -24,6 +24,7 @@ hotline::object!({
         gpu_commands: Vec<RenderCommand>,
         fps_counter: Option<TextRenderer>,
         autonomy_checkbox: Option<Checkbox>,
+        render_time_checkbox: Option<Checkbox>,
         frame_times: std::collections::VecDeque<std::time::Instant>,
         last_fps_update: Option<std::time::Instant>,
         current_fps: f64,
@@ -94,6 +95,16 @@ hotline::object!({
                 r_ref.initialize(20.0, 60.0, 20.0, 20.0);
                 cb.set_rect(rect);
                 cb.set_label("Autonomy".to_string());
+            }
+
+            // Create render time checkbox
+            self.render_time_checkbox = Some(Checkbox::new());
+            if let Some(ref mut cb) = self.render_time_checkbox {
+                let rect = Rect::new();
+                let mut r_ref = rect.clone();
+                r_ref.initialize(20.0, 90.0, 20.0, 20.0);
+                cb.set_rect(rect);
+                cb.set_label("Render Times".to_string());
             }
 
             // Create FPS counter
@@ -244,6 +255,9 @@ hotline::object!({
                                 }
                             }
                             if let Some(ref mut cb) = self.autonomy_checkbox {
+                                cb.handle_mouse_down(adj_x, adj_y);
+                            }
+                            if let Some(ref mut cb) = self.render_time_checkbox {
                                 cb.handle_mouse_down(adj_x, adj_y);
                             }
                         }
@@ -436,6 +450,9 @@ hotline::object!({
                         wm.update_autonomy(self.mouse_x, self.mouse_y);
                     }
                 }
+                if let (Some(wm), Some(cb)) = (&mut self.window_manager, &mut self.render_time_checkbox) {
+                    wm.set_show_render_times(cb.checked());
+                }
 
                 // Render
                 self.render_frame(&mut texture)?;
@@ -498,6 +515,9 @@ hotline::object!({
                     }
 
                     if let Some(ref mut cb) = self.autonomy_checkbox {
+                        cb.render(buffer, 800, 600, pitch as i64);
+                    }
+                    if let Some(ref mut cb) = self.render_time_checkbox {
                         cb.render(buffer, 800, 600, pitch as i64);
                     }
 

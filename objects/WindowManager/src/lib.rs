@@ -32,6 +32,9 @@ hotline::object!({
         context_menu: Option<ContextMenu>,
         polygon_menu: Option<PolygonMenu>,
         click_inspector: Option<ClickInspector>,
+        show_render_times: bool,
+        rect_time_labels: Vec<TextRenderer>,
+        polygon_time_labels: Vec<TextRenderer>,
         dragging: bool,
         drag_offset_x: f64,
         drag_offset_y: f64,
@@ -446,6 +449,24 @@ hotline::object!({
             self.context_menu = Some(menu);
         }
 
+        pub fn set_show_render_times(&mut self, show: bool) {
+            self.show_render_times = show;
+        }
+
+        fn ensure_time_renderers(&mut self) {
+            if self.show_render_times {
+                if let Some(registry) = self.get_registry() {
+                    ::hotline::set_library_registry(registry);
+                }
+                if self.rect_time_labels.len() != self.rects.len() {
+                    self.rect_time_labels.resize_with(self.rects.len(), TextRenderer::new);
+                }
+                if self.polygon_time_labels.len() != self.polygons.len() {
+                    self.polygon_time_labels.resize_with(self.polygons.len(), TextRenderer::new);
+                }
+            }
+        }
+
         pub fn update_autonomy(&mut self, mouse_x: f64, mouse_y: f64) {
             for mover in &mut self.rect_movers {
                 mover.update(mouse_x, mouse_y);
@@ -453,14 +474,40 @@ hotline::object!({
         }
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
+            self.ensure_time_renderers();
+
             // Render all rects
-            for rect_handle in &mut self.rects {
+            for (i, rect_handle) in self.rects.iter_mut().enumerate() {
+                let start = std::time::Instant::now();
                 rect_handle.render(buffer, buffer_width, buffer_height, pitch);
+                if self.show_render_times {
+                    let us = start.elapsed().as_micros();
+                    if let Some(label) = self.rect_time_labels.get_mut(i) {
+                        label.set_text(format!("{}us", us));
+                        let (x, y, _w, _h) = rect_handle.bounds();
+                        let lh = label.line_height();
+                        label.set_x(x);
+                        label.set_y(y - lh);
+                        label.render(buffer, buffer_width, buffer_height, pitch);
+                    }
+                }
             }
 
             // Render polygons
-            for poly in &mut self.polygons {
+            for (i, poly) in self.polygons.iter_mut().enumerate() {
+                let start = std::time::Instant::now();
                 poly.render(buffer, buffer_width, buffer_height, pitch);
+                if self.show_render_times {
+                    let us = start.elapsed().as_micros();
+                    if let Some(label) = self.polygon_time_labels.get_mut(i) {
+                        label.set_text(format!("{}us", us));
+                        let (x, y, _w, _h) = poly.bounds();
+                        let lh = label.line_height();
+                        label.set_x(x);
+                        label.set_y(y - lh);
+                        label.render(buffer, buffer_width, buffer_height, pitch);
+                    }
+                }
             }
 
             // Render the highlight lens if we have one (this will render the selected rect with highlight)
