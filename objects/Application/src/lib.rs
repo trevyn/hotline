@@ -163,7 +163,7 @@ hotline::object!({
                                 wm.handle_mouse_down(x as f64, y as f64);
                                 let hits = wm.inspect_click(x as f64, y as f64);
                                 if !hits.is_empty() {
-                                    wm.open_inspector(x as f64, y as f64, hits);
+                                    wm.open_inspector(hits);
                                 }
                             }
                             if let Some(ref mut editor) = self.code_editor {
@@ -180,7 +180,9 @@ hotline::object!({
                         Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
                             if let Some(ref mut wm) = self.window_manager {
                                 let hits = wm.inspect_click(x as f64, y as f64);
-                                wm.open_inspector(x as f64, y as f64, hits);
+                                if !hits.is_empty() {
+                                    wm.open_inspector(hits);
+                                }
                                 wm.handle_right_click(x as f64, y as f64);
                             }
                         }

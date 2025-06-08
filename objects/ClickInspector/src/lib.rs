@@ -5,7 +5,9 @@ hotline::object!({
     pub struct ClickInspector {
         items: Vec<String>,
         renderers: Vec<TextRenderer>,
+        #[default(10.0)]
         x: f64,
+        #[default(10.0)]
         y: f64,
         visible: bool,
     }
@@ -27,10 +29,8 @@ hotline::object!({
             }
         }
 
-        pub fn open(&mut self, x: f64, y: f64, items: Vec<String>) {
+        pub fn open(&mut self, items: Vec<String>) {
             self.items = items;
-            self.x = x;
-            self.y = y;
             self.visible = true;
             self.ensure_renderers();
         }

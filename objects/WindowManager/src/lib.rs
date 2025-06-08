@@ -64,20 +64,20 @@ hotline::object!({
             let mut hits = Vec::new();
             for rect in &mut self.rects {
                 if rect.contains_point(x, y) {
-                    hits.push("Rect".to_string());
+                    hits.extend(rect.info_lines());
                 }
             }
             for poly in &mut self.polygons {
                 if poly.contains_point(x, y) {
-                    hits.push("RegularPolygon".to_string());
+                    hits.extend(poly.info_lines());
                 }
             }
             hits
         }
 
-        pub fn open_inspector(&mut self, x: f64, y: f64, items: Vec<String>) {
+        pub fn open_inspector(&mut self, items: Vec<String>) {
             if let Some(ref mut inspector) = self.click_inspector {
-                inspector.open(x, y, items);
+                inspector.open(items);
             }
         }
 
@@ -132,8 +132,6 @@ hotline::object!({
         }
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
-            self.close_inspector();
-
             if let Some(ref mut menu) = self.context_menu {
                 if let Some(selection) = menu.handle_mouse_down(x, y) {
                     match selection.as_str() {
@@ -228,7 +226,6 @@ hotline::object!({
         }
 
         pub fn handle_mouse_up(&mut self, x: f64, y: f64) {
-            self.close_inspector();
             if self.context_menu.is_some() {
                 return;
             } else if self.resizing {
