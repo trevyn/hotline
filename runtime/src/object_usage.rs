@@ -76,20 +76,31 @@ impl<'ast, 'a> Visit<'ast> for UsageVisitor<'a> {
     }
 
     fn visit_local(&mut self, node: &'ast Local) {
-        if let Pat::Ident(ident) = &node.pat {
-            let var = ident.ident.to_string();
-            if let Some((_colon, ty)) = &node.ty {
-                if let Some(tname) = type_ident(ty) {
+        // Extract identifier name from pattern like `let foo: Bar = ...` or `let foo = ...`
+        if let Pat::Type(pat_type) = &node.pat {
+            if let Pat::Ident(pat_ident) = &*pat_type.pat {
+                let var = pat_ident.ident.to_string();
+                if let Some(tname) = type_ident(&pat_type.ty) {
                     if self.object_names.contains(&tname) {
                         self.var_types.insert(var.clone(), tname);
                     }
                 }
+                if let Some(init) = &node.init {
+                    if let Some((obj, method)) = expr_object_call(&init.expr) {
+                        if self.object_names.contains(&obj) {
+                            self.var_types.insert(var.clone(), obj.clone());
+                            // treat constructor call as method usage
+                            self.insert_call(&obj, &method);
+                        }
+                    }
+                }
             }
-            if let Some((_eq, expr)) = &node.init {
-                if let Some((obj, method)) = expr_object_call(expr) {
+        } else if let Pat::Ident(pat_ident) = &node.pat {
+            let var = pat_ident.ident.to_string();
+            if let Some(init) = &node.init {
+                if let Some((obj, method)) = expr_object_call(&init.expr) {
                     if self.object_names.contains(&obj) {
-                        self.var_types.insert(var.clone(), obj);
-                        // treat constructor call as method usage
+                        self.var_types.insert(var.clone(), obj.clone());
                         self.insert_call(&obj, &method);
                     }
                 }
@@ -101,7 +112,8 @@ impl<'ast, 'a> Visit<'ast> for UsageVisitor<'a> {
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
         if let Some(var) = receiver_ident(&node.receiver) {
             if let Some(obj) = self.var_types.get(&var) {
-                self.insert_call(obj, &node.method.to_string());
+                let obj_name = obj.clone();
+                self.insert_call(&obj_name, &node.method.to_string());
             }
         }
         visit::visit_expr_method_call(self, node);
