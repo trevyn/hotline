@@ -225,7 +225,9 @@ hotline::object!({
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_down(adj_x, adj_y);
                                 let hits = wm.inspect_click(adj_x, adj_y);
-                                if !hits.is_empty() {
+                                if hits.is_empty() {
+                                    wm.close_inspector();
+                                } else {
                                     wm.open_inspector(hits);
                                 }
                             }
