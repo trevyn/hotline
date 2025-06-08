@@ -7,6 +7,8 @@ hotline::object!({
         #[setter]
         #[default((255, 255, 255, 255))]
         selected_color: (u8, u8, u8, u8),
+        #[default(false)]
+        dragging: bool,
     }
 
     impl ColorWheel {
@@ -19,6 +21,25 @@ hotline::object!({
         }
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) -> Option<(u8, u8, u8, u8)> {
+            if let Some(color) = self.update_color_at(x, y) {
+                self.dragging = true;
+                return Some(color);
+            }
+            None
+        }
+
+        pub fn handle_mouse_up(&mut self) {
+            self.dragging = false;
+        }
+
+        pub fn handle_mouse_move(&mut self, x: f64, y: f64) -> Option<(u8, u8, u8, u8)> {
+            if self.dragging {
+                return self.update_color_at(x, y);
+            }
+            None
+        }
+
+        fn update_color_at(&mut self, x: f64, y: f64) -> Option<(u8, u8, u8, u8)> {
             if let Some(ref mut r) = self.rect {
                 if r.contains_point(x, y) {
                     let (rx, ry, w, h) = r.bounds();
