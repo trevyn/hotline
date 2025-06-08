@@ -222,15 +222,6 @@ hotline::object!({
         }
 
         pub fn scroll_by(&mut self, delta: f64) {
-            let line_height = self.line_height();
-            if let Some(ref mut rect) = self.rect {
-                let total_height = self.text.lines().count() as f64 * line_height;
-                let max_offset = (total_height - rect.bounds().3).max(0.0);
-                self.scroll_offset = (self.scroll_offset + delta).max(0.0).min(max_offset);
-            }
-        }
-
-        pub fn scroll_by(&mut self, delta: f64) {
             if let Some(ref mut rect) = self.rect {
                 let line_height = 14.0;
                 let total_height = self.text.lines().count() as f64 * line_height;

@@ -253,19 +253,6 @@ hotline::object!({
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
                         }
-                        Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
-                            let (win_w, win_h) = canvas.window().size();
-                            let scale_x = self.width as f64 / win_w as f64;
-                            let scale_y = self.height as f64 / win_h as f64;
-                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
-                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
-
-                            if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_right_click(adj_x, adj_y);
-                            }
-                            self.mouse_x = x as f64;
-                            self.mouse_y = y as f64;
-                        }
                         Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
                             let (win_w, win_h) = canvas.window().size();
                             let scale_x = self.width as f64 / win_w as f64;

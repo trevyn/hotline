@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use syn::visit::{self, Visit};
 use syn::{
-    Expr, File, Item, ItemImpl, ItemMacro, ItemStruct, Local, Pat, Type, braced,
+    Expr, Item, ItemImpl, ItemMacro, ItemStruct, Local, Pat, Type, braced,
     parse::{Parse, ParseStream},
 };
 
