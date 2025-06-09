@@ -168,6 +168,10 @@ hotline::object!({
             }
         }
 
+        pub fn insert_newline(&mut self) {
+            self.insert_char('\n');
+        }
+
         pub fn backspace(&mut self) {
             if self.focused {
                 if let Some((s, e)) = self.selection.take() {
