@@ -38,7 +38,6 @@ hotline::object!({
         dragging: bool,
         drag_offset_x: f64,
         drag_offset_y: f64,
-        drag_start: Option<(f64, f64)>,
         resizing: bool,
         resize_dir: ResizeDir,
         resize_start: Option<(f64, f64)>,
@@ -290,13 +289,10 @@ hotline::object!({
                     self.drag_offset_y = pos.1 - y;
                     self.dragging = true;
                 }
-            } else {
-                // No hit - start rect creation
-                self.drag_start = Some((x, y));
             }
         }
 
-        pub fn handle_mouse_up(&mut self, x: f64, y: f64) {
+        pub fn handle_mouse_up(&mut self, _x: f64, _y: f64) {
             if self.context_menu.is_some() {
                 return;
             } else if self.resizing {
@@ -309,19 +305,6 @@ hotline::object!({
                 }
             } else if self.dragging {
                 self.stop_dragging();
-            } else if let Some((start_x, start_y)) = self.drag_start {
-                // Create a new rect directly
-                let width = (x - start_x).abs();
-                let height = (y - start_y).abs();
-                let rect_x = start_x.min(x);
-                let rect_y = start_y.min(y);
-
-                // Create new rect
-                let mut rect_handle = Rect::new();
-                rect_handle.initialize(rect_x, rect_y, width, height);
-                self.rects.push(rect_handle);
-
-                self.drag_start = None;
             }
         }
 
