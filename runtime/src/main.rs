@@ -44,9 +44,16 @@ fn main() -> Result<(), String> {
 
                         if Path::new(&lib_path).exists() {
                             // Loading library
-                            runtime
-                                .hot_reload(&lib_path, lib_name)
-                                .map_err(|e| format!("Failed to load {}: {}", lib_name, e))?;
+                            if let Err(e) = runtime.hot_reload(&lib_path, lib_name) {
+                                #[cfg(target_os = "linux")]
+                                {
+                                    if e.to_string().contains("libSDL3") {
+                                        eprintln!("Warning: {}", e);
+                                        continue;
+                                    }
+                                }
+                                return Err(format!("Failed to load {}: {}", lib_name, e));
+                            }
                         } else {
                             eprintln!("Library not found: {}", lib_path);
                         }
@@ -59,7 +66,19 @@ fn main() -> Result<(), String> {
     eprintln!("------\n{:.1}ms Total library loading time", load_time.as_secs_f64() * 1000.0);
 
     // Now create Application
-    let app_handle = runtime.create_from_lib("libApplication", "Application").map_err(|e| e.to_string())?;
+    let app_handle = match runtime.create_from_lib("libApplication", "Application") {
+        Ok(handle) => handle,
+        Err(e) => {
+            #[cfg(target_os = "linux")]
+            {
+                if e.to_string().contains("not loaded") {
+                    eprintln!("Warning: {}", e);
+                    return Ok(());
+                }
+            }
+            return Err(e.to_string());
+        }
+    };
 
     // Get the Application object and call run
     if let Ok(mut app_guard) = app_handle.lock() {
