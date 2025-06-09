@@ -287,6 +287,9 @@ hotline::object!({
                             if let Some(ref mut wheel) = self.color_wheel {
                                 wheel.handle_mouse_up();
                             }
+                            if let Some(ref mut editor) = self.code_editor {
+                                editor.handle_mouse_up();
+                            }
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
                         }
@@ -299,6 +302,9 @@ hotline::object!({
 
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_motion(adj_x, adj_y);
+                            }
+                            if let Some(ref mut editor) = self.code_editor {
+                                editor.handle_mouse_move(adj_x, adj_y);
                             }
                             if let Some(ref mut wheel) = self.color_wheel {
                                 if let Some(color) = wheel.handle_mouse_move(adj_x, adj_y) {

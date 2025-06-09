@@ -12,6 +12,8 @@ hotline::object!({
         text_renderer: Option<TextRenderer>,
         cursor: usize,
         selection: Option<(usize, usize)>,
+        #[default(false)]
+        dragging: bool,
         #[setter]
         #[default((255, 255, 255, 255))]
         text_color: (u8, u8, u8, u8),
@@ -60,36 +62,24 @@ hotline::object!({
             if let Some(ref mut r) = self.rect {
                 self.focused = r.contains_point(x, y);
                 if self.focused {
-                    let (rx, ry, _rw, _rh) = r.bounds();
-                    let local_y = y - (ry + 10.0) + self.scroll_offset;
-                    let line_height = self.line_height();
-                    let mut line = (local_y / line_height).floor() as usize;
-                    let lines: Vec<&str> = self.text.split('\n').collect();
-                    if line >= lines.len() {
-                        line = lines.len().saturating_sub(1);
-                    }
-                    let local_x = x - (rx + 10.0);
-                    let line_text = lines.get(line).copied().unwrap_or("");
-                    let mut col = 0usize;
-                    let mut pos_x = 0.0;
-                    if let Some(ref mut tr) = self.text_renderer {
-                        for ch in line_text.chars() {
-                            let cw = tr.char_width(ch);
-                            if local_x < pos_x + cw / 2.0 {
-                                break;
-                            }
-                            pos_x += cw;
-                            col += 1;
-                        }
-                        if local_x > pos_x {
-                            col = line_text.chars().count();
-                        }
-                    } else {
-                        col = ((local_x / 8.0).round() as usize).min(line_text.chars().count());
-                    }
-                    self.cursor = self.line_start_index(line) + col;
-                    self.selection = None;
+                    self.cursor = self.index_at_position(x, y);
+                    self.selection = Some((self.cursor, self.cursor));
+                    self.dragging = true;
+                } else {
+                    self.dragging = false;
                 }
+            }
+        }
+
+        pub fn handle_mouse_up(&mut self) {
+            self.dragging = false;
+        }
+
+        pub fn handle_mouse_move(&mut self, x: f64, y: f64) {
+            if self.dragging {
+                let idx = self.index_at_position(x, y);
+                self.cursor = idx;
+                self.update_selection();
             }
         }
 
@@ -154,6 +144,43 @@ hotline::object!({
 
         fn line_length(&self, line: usize) -> usize {
             self.text.split('\n').nth(line).map(|l| l.chars().count()).unwrap_or(0)
+        }
+
+        fn index_at_position(&mut self, x: f64, y: f64) -> usize {
+            if let Some(ref mut r) = self.rect {
+                let (rx, ry, rw, rh) = r.bounds();
+                let cx = x.clamp(rx, rx + rw);
+                let cy = y.clamp(ry, ry + rh);
+                let local_y = cy - (ry + 10.0) + self.scroll_offset;
+                let line_height = self.line_height();
+                let mut line = (local_y / line_height).floor() as usize;
+                let lines: Vec<&str> = self.text.split('\n').collect();
+                if line >= lines.len() {
+                    line = lines.len().saturating_sub(1);
+                }
+                let local_x = cx - (rx + 10.0);
+                let line_text = lines.get(line).copied().unwrap_or("");
+                let mut col = 0usize;
+                let mut pos_x = 0.0;
+                if let Some(ref mut tr) = self.text_renderer {
+                    for ch in line_text.chars() {
+                        let cw = tr.char_width(ch);
+                        if local_x < pos_x + cw / 2.0 {
+                            break;
+                        }
+                        pos_x += cw;
+                        col += 1;
+                    }
+                    if local_x > pos_x {
+                        col = line_text.chars().count();
+                    }
+                } else {
+                    col = ((local_x / 8.0).round() as usize).min(line_text.chars().count());
+                }
+                self.line_start_index(line) + col
+            } else {
+                self.cursor
+            }
         }
 
         pub fn insert_char(&mut self, ch: char) {
