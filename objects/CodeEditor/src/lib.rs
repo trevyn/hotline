@@ -355,6 +355,20 @@ hotline::object!({
                 }
             }
 
+            // Draw file name at top of the rect
+            if let Some(ref mut tr) = self.text_renderer {
+                if let Some(path) = &self.file_path {
+                    let file_name = std::path::Path::new(path)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.clone());
+                    tr.set_text(file_name);
+                    tr.set_x(x + 10.0);
+                    tr.set_y(y + 2.0);
+                    tr.render(buffer, buffer_width, buffer_height, pitch);
+                }
+            }
+
             if let Some((start, end)) = self.selection {
                 let text = self.text.clone();
                 let (start, end) = if start <= end { (start, end) } else { (end, start) };
