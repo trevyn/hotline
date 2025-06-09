@@ -169,6 +169,18 @@ hotline::object!({
             self.dragging
         }
 
+        pub fn is_resizing(&self) -> bool {
+            self.resizing
+        }
+
+        pub fn selected_info_lines(&mut self) -> Option<Vec<String>> {
+            match self.selected {
+                Some(SelectedObject::Rect(i)) => Some(self.rects[i].info_lines()),
+                Some(SelectedObject::Polygon(i)) => Some(self.polygons[i].info_lines()),
+                None => None,
+            }
+        }
+
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
             if let Some(ref mut inspector) = self.click_inspector {
                 if inspector.handle_mouse_down(x, y) {
