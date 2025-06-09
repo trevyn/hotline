@@ -26,6 +26,7 @@ hotline::object!({
         rects: Vec<Rect>,
         rect_movers: Vec<RectMover>,
         polygons: Vec<RegularPolygon>,
+        images: Vec<Image>,
         selected: Option<SelectedObject>,
         highlight_lens: Option<HighlightLens>, // HighlightLens for selected rect
         text_renderer: Option<TextRenderer>,   // TextRenderer for displaying text
@@ -72,6 +73,10 @@ hotline::object!({
             mover.set_target(rect.clone());
             self.rect_movers.push(mover);
             self.rects.push(rect);
+        }
+
+        pub fn add_image(&mut self, image: Image) {
+            self.images.push(image);
         }
 
         pub fn inspect_click(&mut self, x: f64, y: f64) -> Vec<String> {
@@ -537,6 +542,11 @@ hotline::object!({
                         label.render(buffer, buffer_width, buffer_height, pitch);
                     }
                 }
+            }
+
+            // Render images
+            for image in &mut self.images {
+                image.render(buffer, buffer_width, buffer_height, pitch);
             }
 
             // Render the highlight lens if we have one (this will render the selected rect with highlight)
