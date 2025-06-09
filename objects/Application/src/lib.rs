@@ -268,8 +268,18 @@ hotline::object!({
                             let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
                             let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
 
-                            if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_right_click(adj_x, adj_y);
+                            let mut consumed = false;
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.contains_point(adj_x, adj_y) {
+                                    let _ = editor.open_file_menu(adj_x, adj_y);
+                                    consumed = true;
+                                }
+                            }
+
+                            if !consumed {
+                                if let Some(ref mut wm) = self.window_manager {
+                                    wm.handle_right_click(adj_x, adj_y);
+                                }
                             }
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
@@ -333,6 +343,14 @@ hotline::object!({
                                 }
                             }
                         }
+                        Event::KeyDown { keycode: Some(Keycode::Return), .. }
+                        | Event::KeyDown { keycode: Some(Keycode::KpEnter), .. } => {
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    editor.insert_newline();
+                                }
+                            }
+                        }
                         Event::KeyDown { keycode: Some(Keycode::Left), keymod, .. } => {
                             if let Some(ref mut editor) = self.code_editor {
                                 if editor.is_focused() {
@@ -370,8 +388,16 @@ hotline::object!({
                             }
                         }
                         Event::KeyDown { keycode: Some(Keycode::R), .. } => {
-                            if let Some(ref mut wm) = self.window_manager {
-                                wm.rotate_selected(0.1);
+                            let mut editing = false;
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    editing = true;
+                                }
+                            }
+                            if !editing {
+                                if let Some(ref mut wm) = self.window_manager {
+                                    wm.rotate_selected(0.1);
+                                }
                             }
                         }
                         Event::KeyDown { keycode: Some(Keycode::Equals), keymod, .. }
