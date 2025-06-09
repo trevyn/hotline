@@ -141,7 +141,15 @@ hotline::object!({
         pub fn open(&mut self, path: &str) -> Result<(), String> {
             self.text = std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
             self.file_path = Some(path.to_string());
-            self.file_name = std::path::Path::new(path).file_name().map(|s| s.to_string_lossy().into_owned());
+
+            // Display path relative to the objects directory if possible
+            let p = std::path::Path::new(path);
+            self.file_name = p
+                .strip_prefix("objects")
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+                .or_else(|| p.file_name().map(|s| s.to_string_lossy().into_owned()));
+
             self.initialize();
             Ok(())
         }
