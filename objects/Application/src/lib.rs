@@ -234,39 +234,33 @@ hotline::object!({
                             let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
                             let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
 
+                            let mut consumed = false;
+                            if let Some(ref mut editor) = self.code_editor {
+                                consumed = editor.handle_mouse_down(adj_x, adj_y);
+                            }
+
                             if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_mouse_down(adj_x, adj_y);
-                                let hits = wm.inspect_click(adj_x, adj_y);
-                                if hits.is_empty() {
-                                    if wm.is_resizing() {
-                                        if let Some(items) = wm.selected_info_lines() {
-                                            wm.open_inspector(items);
+                                if !consumed {
+                                    wm.handle_mouse_down(adj_x, adj_y);
+                                    let hits = wm.inspect_click(adj_x, adj_y);
+                                    if hits.is_empty() {
+                                        if wm.is_resizing() {
+                                            if let Some(items) = wm.selected_info_lines() {
+                                                wm.open_inspector(items);
+                                            }
+                                        } else {
+                                            wm.close_inspector();
                                         }
                                     } else {
-                                        wm.close_inspector();
+                                        wm.open_inspector(hits);
                                     }
                                 } else {
-                                    wm.open_inspector(hits);
+                                    wm.close_inspector();
                                 }
                             }
 
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
-                            let mut consumed = false;
-                            if let Some(ref mut editor) = self.code_editor {
-                                consumed = editor.handle_mouse_down(adj_x, adj_y);
-                            }
-                            if !consumed {
-                                if let Some(ref mut wm) = self.window_manager {
-                                    wm.handle_mouse_down(adj_x, adj_y);
-                                    let hits = wm.inspect_click(adj_x, adj_y);
-                                    if hits.is_empty() {
-                                        wm.close_inspector();
-                                    } else {
-                                        wm.open_inspector(hits);
-                                    }
-                                }
-                            }
                             if let Some(ref mut wheel) = self.color_wheel {
                                 if let Some(color) = wheel.handle_mouse_down(adj_x, adj_y) {
                                     if let Some(ref mut editor) = self.code_editor {
