@@ -158,6 +158,11 @@ hotline::object!({
         }
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
+            if let Some(ref mut inspector) = self.click_inspector {
+                if inspector.handle_mouse_down(x, y) {
+                    return;
+                }
+            }
             if let Some(ref mut pm) = self.polygon_menu {
                 if pm.is_visible() {
                     if let Some(sides) = pm.handle_mouse_down(x, y) {
@@ -292,7 +297,14 @@ hotline::object!({
             }
         }
 
-        pub fn handle_mouse_up(&mut self, _x: f64, _y: f64) {
+        pub fn handle_mouse_up(&mut self, x: f64, y: f64) {
+            if let Some(ref mut inspector) = self.click_inspector {
+                let was_dragging = inspector.is_dragging();
+                inspector.handle_mouse_up();
+                if was_dragging {
+                    return;
+                }
+            }
             if self.context_menu.is_some() {
                 return;
             } else if self.resizing {
@@ -309,6 +321,12 @@ hotline::object!({
         }
 
         pub fn handle_mouse_motion(&mut self, x: f64, y: f64) {
+            if let Some(ref mut inspector) = self.click_inspector {
+                inspector.handle_mouse_move(x, y);
+                if inspector.is_dragging() {
+                    return;
+                }
+            }
             if let Some(ref mut pm) = self.polygon_menu {
                 if pm.is_visible() {
                     pm.handle_mouse_move(x, y);
