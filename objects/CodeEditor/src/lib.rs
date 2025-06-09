@@ -63,27 +63,29 @@ hotline::object!({
             if let Some(ref mut r) = self.rect { r.contains_point(x, y) } else { false }
         }
 
-        pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
+        pub fn handle_mouse_down(&mut self, x: f64, y: f64) -> bool {
             if let Some(ref mut menu) = self.file_menu {
                 if menu.is_visible() {
                     if let Some(sel) = menu.handle_mouse_down(x, y) {
                         let path = format!("objects/{}/src/lib.rs", sel);
                         let _ = self.open(&path);
                     }
-                    return;
+                    return true;
                 }
             }
 
             if let Some(ref mut r) = self.rect {
                 self.focused = r.contains_point(x, y);
-                if self.focused {
+                if self.focused && self.is_near_text(x, y) {
                     self.cursor = self.index_at_position(x, y);
                     self.selection = Some((self.cursor, self.cursor));
                     self.dragging = true;
+                    return true;
                 } else {
                     self.dragging = false;
                 }
             }
+            false
         }
 
         pub fn handle_mouse_up(&mut self) {
@@ -95,6 +97,41 @@ hotline::object!({
                 let idx = self.index_at_position(x, y);
                 self.cursor = idx;
                 self.update_selection();
+            }
+        }
+
+        pub fn is_dragging(&self) -> bool {
+            self.dragging
+        }
+
+        fn is_near_text(&mut self, x: f64, y: f64) -> bool {
+            if let Some(ref mut r) = self.rect {
+                let (rx, ry, _rw, _rh) = r.bounds();
+                let line_height = self.line_height();
+                let local_y = y - (ry + 10.0) + self.scroll_offset;
+                if local_y < 0.0 {
+                    return false;
+                }
+                let line = (local_y / line_height).floor() as usize;
+                let lines: Vec<&str> = self.text.split('\n').collect();
+                if line >= lines.len() {
+                    return false;
+                }
+                let line_y = ry + 10.0 + line as f64 * line_height - self.scroll_offset;
+                if y < line_y - 2.0 || y > line_y + line_height + 2.0 {
+                    return false;
+                }
+                let line_text = lines[line];
+                let text_width = if let Some(ref mut tr) = self.text_renderer {
+                    tr.measure_text(line_text)
+                } else {
+                    line_text.chars().count() as f64 * 8.0
+                };
+                let text_x0 = rx + 10.0;
+                let text_x1 = text_x0 + text_width;
+                x >= text_x0 - 5.0 && x <= text_x1 + 5.0
+            } else {
+                false
             }
         }
 
