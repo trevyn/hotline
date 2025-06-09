@@ -83,6 +83,26 @@ hotline::object!({
             }
             self.initialize();
             let item_height = 16.0;
+
+            // Draw semi-transparent background
+            let width = 100.0;
+            let height = self.items.len() as f64 * item_height;
+            let x_start = self.x.max(0.0).floor() as i64;
+            let y_start = self.y.max(0.0).floor() as i64;
+            let x_end = (self.x + width).min(buffer_width as f64).ceil() as i64;
+            let y_end = (self.y + height).min(buffer_height as f64).ceil() as i64;
+            for y in y_start..y_end {
+                for x in x_start..x_end {
+                    let offset = (y * pitch + x * 4) as usize;
+                    if offset + 3 < buffer.len() {
+                        buffer[offset] = 0;
+                        buffer[offset + 1] = 0;
+                        buffer[offset + 2] = 0;
+                        buffer[offset + 3] = 128;
+                    }
+                }
+            }
+
             for (i, renderer) in self.renderers.iter_mut().enumerate() {
                 renderer.set_x(self.x);
                 renderer.set_y(self.y + i as f64 * item_height);
