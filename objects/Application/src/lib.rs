@@ -333,6 +333,14 @@ hotline::object!({
                                 }
                             }
                         }
+                        Event::KeyDown { keycode: Some(Keycode::Return), .. }
+                        | Event::KeyDown { keycode: Some(Keycode::KpEnter), .. } => {
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    editor.insert_newline();
+                                }
+                            }
+                        }
                         Event::KeyDown { keycode: Some(Keycode::Left), keymod, .. } => {
                             if let Some(ref mut editor) = self.code_editor {
                                 if editor.is_focused() {
@@ -370,8 +378,16 @@ hotline::object!({
                             }
                         }
                         Event::KeyDown { keycode: Some(Keycode::R), .. } => {
-                            if let Some(ref mut wm) = self.window_manager {
-                                wm.rotate_selected(0.1);
+                            let mut editing = false;
+                            if let Some(ref mut editor) = self.code_editor {
+                                if editor.is_focused() {
+                                    editing = true;
+                                }
+                            }
+                            if !editing {
+                                if let Some(ref mut wm) = self.window_manager {
+                                    wm.rotate_selected(0.1);
+                                }
                             }
                         }
                         Event::KeyDown { keycode: Some(Keycode::Equals), keymod, .. }
