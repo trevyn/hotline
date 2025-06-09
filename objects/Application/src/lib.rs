@@ -174,6 +174,7 @@ hotline::object!({
                 return Ok(());
             }
 
+            #[cfg_attr(target_os = "linux", allow(unreachable_code))]
             'running: loop {
                 // Track frame time
                 let now = std::time::Instant::now();
