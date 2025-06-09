@@ -163,7 +163,11 @@ pub fn generate_default_impl(struct_name: &Ident, processed: &ProcessedStruct) -
     }
 }
 
-pub fn generate_inspect_impl(struct_name: &Ident, processed: &ProcessedStruct) -> proc_macro2::TokenStream {
+pub fn generate_inspect_impl(
+    struct_name: &Ident,
+    processed: &ProcessedStruct,
+    rustc_commit: &str,
+) -> proc_macro2::TokenStream {
     if let Fields::Named(fields) = &processed.modified_struct.fields {
         let field_pairs: Vec<_> = fields
             .named
@@ -205,12 +209,21 @@ pub fn generate_inspect_impl(struct_name: &Ident, processed: &ProcessedStruct) -
             })
             .collect();
 
+        let symbol = crate::utils::symbols::SymbolName::new(&struct_name.to_string(), "fields", rustc_commit)
+            .with_return_type("Vec_tuple_String_Comma_String".to_string());
+        let wrapper_name = proc_macro2::Ident::new(&symbol.build_method(), struct_name.span());
+        let ffi_wrapper = crate::codegen::ffi::FfiWrapper::new(struct_name.clone(), wrapper_name)
+            .returns(Some(&syn::parse_quote! { Vec<(String, String)> }))
+            .body(quote! { ::hotline::Inspectable::fields(instance) })
+            .build();
+
         quote! {
             impl ::hotline::Inspectable for #struct_name {
                 fn fields(&mut self) -> Vec<(String, String)> {
                     vec![ #(#field_pairs),* ]
                 }
             }
+            #ffi_wrapper
         }
     } else {
         quote! {}

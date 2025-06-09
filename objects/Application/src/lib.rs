@@ -470,19 +470,6 @@ hotline::object!({
     }
 });
 
-impl hotline::Inspectable for Rect {
-    fn fields(&mut self) -> Vec<(String, String)> {
-        let (x, y, w, h) = self.bounds();
-        vec![
-            ("x".into(), format!("{:.1}", x)),
-            ("y".into(), format!("{:.1}", y)),
-            ("width".into(), format!("{:.1}", w)),
-            ("height".into(), format!("{:.1}", h)),
-            ("rotation".into(), format!("{:.2}", self.rotation())),
-        ]
-    }
-}
-
 #[cfg(target_os = "linux")]
 fn save_png(path: &str, width: u32, height: u32, data: &[u8]) -> Result<(), String> {
     let file = File::create(path).map_err(|e| e.to_string())?;

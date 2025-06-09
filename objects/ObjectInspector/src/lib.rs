@@ -22,6 +22,9 @@ hotline::object!({
         }
 
         fn ensure_renderers(&mut self) {
+            if let Some(registry) = self.get_registry() {
+                ::hotline::set_library_registry(registry);
+            }
             if self.title_renderer.is_none() {
                 self.title_renderer = Some(TextRenderer::new());
             }

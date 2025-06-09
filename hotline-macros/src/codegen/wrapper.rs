@@ -133,6 +133,18 @@ fn generate_typed_wrapper(
         })
         .collect();
 
+    let symbol = crate::utils::symbols::SymbolName::new(type_name, "fields", rustc_commit)
+        .with_return_type("Vec_tuple_String_Comma_String".to_string());
+    let symbol_name = symbol.build_method();
+    let fn_type = quote! { unsafe extern "Rust" fn(&mut dyn std::any::Any) -> Vec<(String, String)> };
+    let method_body = crate::codegen::ffi::quote_method_call_with_registry(
+        quote! { self.0 },
+        "fields",
+        &symbol_name,
+        fn_type,
+        quote! {},
+    );
+
     quote! {
         #[derive(Clone)]
         pub struct #type_ident(::hotline::ObjectHandle);
@@ -200,6 +212,12 @@ fn generate_typed_wrapper(
                 } else {
                     None
                 }
+            }
+        }
+
+        impl ::hotline::Inspectable for #type_ident {
+            fn fields(&mut self) -> Vec<(String, String)> {
+                #method_body
             }
         }
     }
