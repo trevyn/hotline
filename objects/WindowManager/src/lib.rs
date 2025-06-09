@@ -137,6 +137,18 @@ hotline::object!({
             }
         }
 
+        fn update_inspector(&mut self) {
+            if let (Some(ref mut inspector), Some(sel)) = (self.click_inspector.as_mut(), self.selected) {
+                if inspector.is_visible() {
+                    let items = match sel {
+                        SelectedObject::Rect(i) => self.rects[i].info_lines(),
+                        SelectedObject::Polygon(i) => self.polygons[i].info_lines(),
+                    };
+                    inspector.update_items(items);
+                }
+            }
+        }
+
         pub fn get_selected_handle(&mut self) -> Option<SelectedObject> {
             self.selected
         }
@@ -155,6 +167,18 @@ hotline::object!({
 
         pub fn is_dragging(&mut self) -> bool {
             self.dragging
+        }
+
+        pub fn is_resizing(&self) -> bool {
+            self.resizing
+        }
+
+        pub fn selected_info_lines(&mut self) -> Option<Vec<String>> {
+            match self.selected {
+                Some(SelectedObject::Rect(i)) => Some(self.rects[i].info_lines()),
+                Some(SelectedObject::Polygon(i)) => Some(self.polygons[i].info_lines()),
+                None => None,
+            }
         }
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) {
@@ -355,6 +379,7 @@ hotline::object!({
                         }
                     }
                     self.update_highlight();
+                    self.update_inspector();
                 }
             } else if self.resizing {
                 if let (Some(sel), Some((start_x, start_y)), Some((orig_x, orig_y, orig_w, orig_h))) =
@@ -421,6 +446,7 @@ hotline::object!({
                         }
                     }
                     self.update_highlight();
+                    self.update_inspector();
                 }
             }
         }
@@ -438,6 +464,7 @@ hotline::object!({
                     }
                 }
                 self.update_highlight();
+                self.update_inspector();
             }
         }
 
@@ -472,6 +499,7 @@ hotline::object!({
             for mover in &mut self.rect_movers {
                 mover.update(mouse_x, mouse_y);
             }
+            self.update_inspector();
         }
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {

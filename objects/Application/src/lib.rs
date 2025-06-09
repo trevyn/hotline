@@ -234,6 +234,22 @@ hotline::object!({
                             let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
                             let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
 
+                            if let Some(ref mut wm) = self.window_manager {
+                                wm.handle_mouse_down(adj_x, adj_y);
+                                let hits = wm.inspect_click(adj_x, adj_y);
+                                if hits.is_empty() {
+                                    if wm.is_resizing() {
+                                        if let Some(items) = wm.selected_info_lines() {
+                                            wm.open_inspector(items);
+                                        }
+                                    } else {
+                                        wm.close_inspector();
+                                    }
+                                } else {
+                                    wm.open_inspector(hits);
+                                }
+                            }
+
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
                             let mut consumed = false;
@@ -333,7 +349,7 @@ hotline::object!({
                         Event::MouseWheel { y, .. } => {
                             if let Some(ref mut editor) = self.code_editor {
                                 if editor.is_focused() {
-                                    editor.scroll_by(-y as f64 * 20.0);
+                                    editor.add_scroll_velocity(-y as f64 * 20.0);
                                 }
                             }
                         }
@@ -488,6 +504,9 @@ hotline::object!({
                 }
                 if let (Some(wm), Some(cb)) = (&mut self.window_manager, &mut self.render_time_checkbox) {
                     wm.set_show_render_times(cb.checked());
+                }
+                if let Some(ref mut editor) = self.code_editor {
+                    editor.update_scroll();
                 }
 
                 // Render

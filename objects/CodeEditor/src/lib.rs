@@ -6,6 +6,7 @@ hotline::object!({
         #[setter]
         text: String,
         file_path: Option<String>,
+        file_name: Option<String>,
         rect: Option<Rect>,
         focused: bool,
         highlight: Option<HighlightLens>,
@@ -20,6 +21,8 @@ hotline::object!({
         #[setter]
         #[default(0.0)]
         scroll_offset: f64,
+        #[default(0.0)]
+        scroll_velocity: f64,
         file_menu: Option<ContextMenu>,
     }
 
@@ -138,6 +141,7 @@ hotline::object!({
         pub fn open(&mut self, path: &str) -> Result<(), String> {
             self.text = std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
             self.file_path = Some(path.to_string());
+            self.file_name = std::path::Path::new(path).file_name().map(|s| s.to_string_lossy().into_owned());
             self.initialize();
             Ok(())
         }
@@ -362,6 +366,19 @@ hotline::object!({
             }
         }
 
+        pub fn add_scroll_velocity(&mut self, delta: f64) {
+            self.scroll_velocity += delta;
+        }
+
+        pub fn update_scroll(&mut self) {
+            if self.scroll_velocity.abs() > 0.1 {
+                self.scroll_by(self.scroll_velocity);
+                self.scroll_velocity *= 0.85;
+            } else {
+                self.scroll_velocity = 0.0;
+            }
+        }
+
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
             if let Some(registry) = self.get_registry() {
                 ::hotline::set_library_registry(registry);
@@ -389,6 +406,23 @@ hotline::object!({
                         buffer[offset + 2] = 40;
                         buffer[offset + 3] = 255;
                     }
+                }
+            }
+
+            // Draw file name at top of the rect
+            if let Some(ref mut tr) = self.text_renderer {
+                if let Some(name) = self.file_name.clone().or_else(|| {
+                    self.file_path.as_ref().map(|path| {
+                        std::path::Path::new(path)
+                            .file_name()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.clone())
+                    })
+                }) {
+                    tr.set_text(name);
+                    tr.set_x(x + 10.0);
+                    tr.set_y(y + 2.0);
+                    tr.render(buffer, buffer_width, buffer_height, pitch);
                 }
             }
 

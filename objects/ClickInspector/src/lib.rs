@@ -7,7 +7,7 @@ hotline::object!({
         renderers: Vec<TextRenderer>,
         #[default(10.0)]
         x: f64,
-        #[default(10.0)]
+        #[default(120.0)]
         y: f64,
         dragging: bool,
         drag_offset_x: f64,
@@ -38,8 +38,17 @@ hotline::object!({
             self.ensure_renderers();
         }
 
+        pub fn update_items(&mut self, items: Vec<String>) {
+            self.items = items;
+            self.ensure_renderers();
+        }
+
         pub fn close(&mut self) {
             self.visible = false;
+        }
+
+        pub fn is_visible(&self) -> bool {
+            self.visible
         }
 
         pub fn is_dragging(&self) -> bool {
