@@ -249,10 +249,23 @@ hotline::object!({
                                     wm.open_inspector(hits);
                                 }
                             }
+
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
+                            let mut consumed = false;
                             if let Some(ref mut editor) = self.code_editor {
-                                editor.handle_mouse_down(adj_x, adj_y);
+                                consumed = editor.handle_mouse_down(adj_x, adj_y);
+                            }
+                            if !consumed {
+                                if let Some(ref mut wm) = self.window_manager {
+                                    wm.handle_mouse_down(adj_x, adj_y);
+                                    let hits = wm.inspect_click(adj_x, adj_y);
+                                    if hits.is_empty() {
+                                        wm.close_inspector();
+                                    } else {
+                                        wm.open_inspector(hits);
+                                    }
+                                }
                             }
                             if let Some(ref mut wheel) = self.color_wheel {
                                 if let Some(color) = wheel.handle_mouse_down(adj_x, adj_y) {
