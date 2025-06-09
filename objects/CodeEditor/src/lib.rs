@@ -20,6 +20,8 @@ hotline::object!({
         #[setter]
         #[default(0.0)]
         scroll_offset: f64,
+        #[default(0.0)]
+        scroll_velocity: f64,
         file_menu: Option<ContextMenu>,
     }
 
@@ -322,6 +324,19 @@ hotline::object!({
                 let total_height = self.text.lines().count() as f64 * line_height;
                 let max_offset = (total_height - rect.bounds().3).max(0.0);
                 self.scroll_offset = (self.scroll_offset + delta).max(0.0).min(max_offset);
+            }
+        }
+
+        pub fn add_scroll_velocity(&mut self, delta: f64) {
+            self.scroll_velocity += delta;
+        }
+
+        pub fn update_scroll(&mut self) {
+            if self.scroll_velocity.abs() > 0.1 {
+                self.scroll_by(self.scroll_velocity);
+                self.scroll_velocity *= 0.85;
+            } else {
+                self.scroll_velocity = 0.0;
             }
         }
 

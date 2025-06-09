@@ -330,7 +330,7 @@ hotline::object!({
                         Event::MouseWheel { y, .. } => {
                             if let Some(ref mut editor) = self.code_editor {
                                 if editor.is_focused() {
-                                    editor.scroll_by(-y as f64 * 20.0);
+                                    editor.add_scroll_velocity(-y as f64 * 20.0);
                                 }
                             }
                         }
@@ -485,6 +485,9 @@ hotline::object!({
                 }
                 if let (Some(wm), Some(cb)) = (&mut self.window_manager, &mut self.render_time_checkbox) {
                     wm.set_show_render_times(cb.checked());
+                }
+                if let Some(ref mut editor) = self.code_editor {
+                    editor.update_scroll();
                 }
 
                 // Render
