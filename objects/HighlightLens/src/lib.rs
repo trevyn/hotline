@@ -28,7 +28,7 @@ hotline::object!({
         ) {
             let dx = x1 - x0;
             let dy = y1 - y0;
-            let steps = dx.abs().max(dy.abs()) as i64;
+            let steps = dx.abs().max(dy.abs()).ceil() as i64;
             if steps == 0 {
                 return;
             }
