@@ -261,7 +261,13 @@ hotline::object!({
                                     wm.handle_mouse_down(adj_x, adj_y);
                                     let hits = wm.inspect_click(adj_x, adj_y);
                                     if hits.is_empty() {
-                                        wm.close_inspector();
+                                        if wm.is_resizing() {
+                                            if let Some(items) = wm.selected_info_lines() {
+                                                wm.open_inspector(items);
+                                            }
+                                        } else {
+                                            wm.close_inspector();
+                                        }
                                     } else {
                                         wm.open_inspector(hits);
                                     }
