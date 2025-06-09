@@ -65,7 +65,7 @@ hotline::object!({
             let hw = self.width / 2.0;
             let hh = self.height / 2.0;
             let (sin_r, cos_r) = self.rotation.sin_cos();
-            let mut rot = |dx: f64, dy: f64| -> (f64, f64) {
+            let rot = |dx: f64, dy: f64| -> (f64, f64) {
                 let rx = dx * cos_r - dy * sin_r;
                 let ry = dx * sin_r + dy * cos_r;
                 (cx + rx, cy + ry)

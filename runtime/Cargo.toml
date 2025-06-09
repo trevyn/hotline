@@ -7,10 +7,15 @@ version = "0.1.0"
 hotline = {path = "../hotline"}
 notify = "8.0"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+syn = { version = "2", features = ["full", "visit"] }
 
 [[bin]]
 name = "runtime"
 path = "src/main.rs"
+
+[[bin]]
+name = "object-usage"
+path = "src/object_usage.rs"
 
 
 [features]

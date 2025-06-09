@@ -8,5 +8,8 @@ crate-type = ["dylib"]
 
 [dependencies]
 hotline = {path = "../../hotline"}
-sdl2 = "0.37"
+sdl3 = { version = "0.14" }
 png = "0.17"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+sdl3 = { version = "0.14", features = ["build-from-source"] }
