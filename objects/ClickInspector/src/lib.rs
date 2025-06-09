@@ -7,7 +7,7 @@ hotline::object!({
         renderers: Vec<TextRenderer>,
         #[default(10.0)]
         x: f64,
-        #[default(10.0)]
+        #[default(120.0)]
         y: f64,
         dragging: bool,
         drag_offset_x: f64,
