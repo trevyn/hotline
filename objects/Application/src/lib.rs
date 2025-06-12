@@ -493,6 +493,25 @@ hotline::object!({
                                 }
                             }
                         }
+                        Event::DropFile { filename, .. } => {
+                            if filename.to_lowercase().ends_with(".png") {
+                                let (win_w, win_h) = canvas.window().size();
+                                let scale_x = self.width as f64 / win_w as f64;
+                                let scale_y = self.height as f64 / win_h as f64;
+                                let adj_x = self.mouse_x * scale_x / self.pixel_multiple as f64;
+                                let adj_y = self.mouse_y * scale_y / self.pixel_multiple as f64;
+
+                                if let Some(ref mut wm) = self.window_manager {
+                                    if let Some(registry) = wm.get_registry() {
+                                        ::hotline::set_library_registry(registry);
+                                    }
+                                    let mut img = Image::new();
+                                    img.initialize(adj_x, adj_y);
+                                    img.load_png(&filename)?;
+                                    wm.add_image(img);
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
