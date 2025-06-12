@@ -234,30 +234,13 @@ hotline::object!({
                             let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
                             let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
 
-                            if let Some(ref mut wm) = self.window_manager {
-                                wm.handle_mouse_down(adj_x, adj_y);
-                                let hits = wm.inspect_click(adj_x, adj_y);
-                                if hits.is_empty() {
-                                    if wm.is_resizing() {
-                                        if let Some(items) = wm.selected_info_lines() {
-                                            wm.open_inspector(items);
-                                        }
-                                    } else {
-                                        wm.close_inspector();
-                                    }
-                                } else {
-                                    wm.open_inspector(hits);
-                                }
-                            }
-
-                            self.mouse_x = x as f64;
-                            self.mouse_y = y as f64;
                             let mut consumed = false;
                             if let Some(ref mut editor) = self.code_editor {
                                 consumed = editor.handle_mouse_down(adj_x, adj_y);
                             }
-                            if !consumed {
-                                if let Some(ref mut wm) = self.window_manager {
+
+                            if let Some(ref mut wm) = self.window_manager {
+                                if !consumed {
                                     wm.handle_mouse_down(adj_x, adj_y);
                                     let hits = wm.inspect_click(adj_x, adj_y);
                                     if hits.is_empty() {
@@ -271,8 +254,13 @@ hotline::object!({
                                     } else {
                                         wm.open_inspector(hits);
                                     }
+                                } else {
+                                    wm.close_inspector();
                                 }
                             }
+
+                            self.mouse_x = x as f64;
+                            self.mouse_y = y as f64;
                             if let Some(ref mut wheel) = self.color_wheel {
                                 if let Some(color) = wheel.handle_mouse_down(adj_x, adj_y) {
                                     if let Some(ref mut editor) = self.code_editor {
@@ -496,6 +484,25 @@ hotline::object!({
                                     if editor.is_focused() {
                                         let _ = editor.save();
                                     }
+                                }
+                            }
+                        }
+                        Event::DropFile { filename, .. } => {
+                            if filename.to_lowercase().ends_with(".png") {
+                                let (win_w, win_h) = canvas.window().size();
+                                let scale_x = self.width as f64 / win_w as f64;
+                                let scale_y = self.height as f64 / win_h as f64;
+                                let adj_x = self.mouse_x * scale_x / self.pixel_multiple as f64;
+                                let adj_y = self.mouse_y * scale_y / self.pixel_multiple as f64;
+
+                                if let Some(ref mut wm) = self.window_manager {
+                                    if let Some(registry) = wm.get_registry() {
+                                        ::hotline::set_library_registry(registry);
+                                    }
+                                    let mut img = Image::new();
+                                    img.initialize(adj_x, adj_y);
+                                    img.load_png(&filename)?;
+                                    wm.add_image(img);
                                 }
                             }
                         }
