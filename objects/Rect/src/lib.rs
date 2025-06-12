@@ -92,6 +92,8 @@ hotline::object!({
         }
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
+            let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+
             let (bx, by, bw, bh) = self.bounds();
             let x_start = (bx as i32).max(0) as u32;
             let y_start = (by as i32).max(0) as u32;
@@ -110,9 +112,9 @@ hotline::object!({
                     if rx.abs() <= self.width / 2.0 && ry.abs() <= self.height / 2.0 {
                         let offset = (y * (pitch as u32) + x * 4) as usize;
                         if offset + 3 < buffer.len() {
-                            buffer[offset] = 120; // B
-                            buffer[offset + 1] = 0; // G
-                            buffer[offset + 2] = 0; // R
+                            buffer[offset] = (t / 6 % 255) as u8; // B
+                            buffer[offset + 1] = (y % 128u32) as u8; // G
+                            buffer[offset + 2] = (x % 255u32) as u8; // R
                             buffer[offset + 3] = 255; // A
                         }
                     }
