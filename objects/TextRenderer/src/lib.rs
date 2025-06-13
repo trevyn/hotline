@@ -233,12 +233,8 @@ hotline::object!({
             }
         }
 
-        pub fn char_width(&mut self, ch: char) -> f64 {
-            if !self.initialized {
-                self.initialize();
-            }
-
-            let font = match &mut self.font {
+        pub fn char_width(&self, ch: char) -> f64 {
+            let font = match &self.font {
                 Some(f) => f,
                 None => return 0.0,
             };
@@ -252,12 +248,8 @@ hotline::object!({
             }
         }
 
-        pub fn measure_text(&mut self, text: &str) -> f64 {
-            if !self.initialized {
-                self.initialize();
-            }
-
-            let font = match &mut self.font {
+        pub fn measure_text(&self, text: &str) -> f64 {
+            let font = match &self.font {
                 Some(f) => f,
                 None => return 0.0,
             };
@@ -285,12 +277,8 @@ hotline::object!({
             width
         }
 
-        pub fn line_height(&mut self) -> f64 {
-            if !self.initialized {
-                self.initialize();
-            }
-
-            if let Some(font) = self.font.as_mut() { (font.size() + font.line_gap()) as f64 } else { 14.0 }
+        pub fn line_height(&self) -> f64 {
+            if let Some(font) = self.font.as_ref() { (font.size() + font.line_gap()) as f64 } else { 14.0 }
         }
 
         pub fn atlas_data(&self) -> Vec<u8> {

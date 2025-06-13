@@ -38,6 +38,7 @@ hotline::object!({
             if self.text_renderer.is_none() {
                 let mut tr = TextRenderer::new();
                 tr.set_color(self.text_color);
+                tr.initialize();
                 self.text_renderer = Some(tr);
             }
             self.cursor = self.text.chars().count();
@@ -211,7 +212,42 @@ hotline::object!({
                 }
                 let local_x = cx - (rx + 10.0);
                 let line_text = lines.get(line).copied().unwrap_or("");
-                let col = ((local_x / 8.0).round() as usize).min(line_text.chars().count());
+
+                // Find character position by measuring text width
+                let col = if let Some(ref tr) = self.text_renderer {
+                    // Binary search approach to find the character position
+                    let chars_vec: Vec<char> = line_text.chars().collect();
+                    let mut left = 0;
+                    let mut right = chars_vec.len();
+
+                    while left < right {
+                        let mid = (left + right + 1) / 2;
+                        let text_to_mid: String = chars_vec[..mid].iter().collect();
+                        let width = tr.measure_text(&text_to_mid);
+
+                        if width <= local_x {
+                            left = mid;
+                        } else {
+                            right = mid - 1;
+                        }
+                    }
+
+                    // Check if we're closer to the next character
+                    if left < chars_vec.len() {
+                        let text_to_left: String = chars_vec[..left].iter().collect();
+                        let text_to_next: String = chars_vec[..=left].iter().collect();
+                        let width_left = if left == 0 { 0.0 } else { tr.measure_text(&text_to_left) };
+                        let width_next = tr.measure_text(&text_to_next);
+
+                        if local_x - width_left > (width_next - width_left) / 2.0 { left + 1 } else { left }
+                    } else {
+                        left
+                    }
+                } else {
+                    // Fallback to fixed width if text renderer not available
+                    ((local_x / 8.0).round() as usize).min(line_text.chars().count())
+                };
+
                 self.line_start_index(line) + col
             } else {
                 self.cursor
@@ -397,8 +433,22 @@ hotline::object!({
                         let e_col = if end < line_end { end - line_start } else { len };
                         let line_y = y + 10.0 + line_idx as f64 * line_height - self.scroll_offset;
                         if line_y + line_height >= y && line_y <= y + h {
-                            let x0 = x + 10.0 + s_col as f64 * 8.0;
-                            let x1 = x + 10.0 + e_col as f64 * 8.0;
+                            // Calculate actual pixel positions using text measurements
+                            let x0 = if let Some(ref tr) = self.text_renderer {
+                                let chars: Vec<char> = line.chars().collect();
+                                let text_to_start: String = chars[..s_col].iter().collect();
+                                x + 10.0 + if s_col == 0 { 0.0 } else { tr.measure_text(&text_to_start) }
+                            } else {
+                                x + 10.0 + s_col as f64 * 8.0
+                            };
+
+                            let x1 = if let Some(ref tr) = self.text_renderer {
+                                let chars: Vec<char> = line.chars().collect();
+                                let text_to_end: String = chars[..e_col].iter().collect();
+                                x + 10.0 + if e_col == 0 { 0.0 } else { tr.measure_text(&text_to_end) }
+                            } else {
+                                x + 10.0 + e_col as f64 * 8.0
+                            };
                             let px0 = x0.round() as i64;
                             let px1 = x1.round() as i64;
                             let py0 = line_y.round() as i64;
@@ -442,9 +492,10 @@ hotline::object!({
                 let line_text = self.text.split('\n').nth(line_idx).unwrap_or("");
 
                 // Measure text width up to cursor position
-                let text_before_cursor = &line_text[..col_idx.min(line_text.len())];
+                let chars: Vec<char> = line_text.chars().collect();
+                let text_before_cursor: String = chars[..col_idx.min(chars.len())].iter().collect();
                 let col_px = if let Some(ref mut tr) = self.text_renderer {
-                    tr.measure_text(text_before_cursor)
+                    tr.measure_text(&text_before_cursor)
                 } else {
                     col_idx as f64 * 8.0 // fallback to fixed width
                 };

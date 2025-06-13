@@ -150,7 +150,7 @@ hotline::object!({
         }
 
         // Font-specific methods
-        pub fn glyph(&mut self, chr: char) -> Option<(u32, u32, u32, u32, i32, i32, u32)> {
+        pub fn glyph(&self, chr: char) -> Option<(u32, u32, u32, u32, i32, i32, u32)> {
             self.glyphs.get(&chr).map(|g| (g.x, g.y, g.width, g.height, g.offset_x, g.offset_y, g.advance))
         }
 
@@ -158,7 +158,7 @@ hotline::object!({
             self.glyphs.contains_key(&chr)
         }
 
-        pub fn kerning(&mut self, left: char, right: char) -> i32 {
+        pub fn kerning(&self, left: char, right: char) -> i32 {
             self.kerning_pairs.get(&(left, right)).copied().unwrap_or(0)
         }
     }
