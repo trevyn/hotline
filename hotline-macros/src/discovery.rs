@@ -214,7 +214,7 @@ fn extract_methods_from_object(
             let field_type = &field.ty;
 
             if matches!(field.vis, syn::Visibility::Public(_)) && !is_generic_type(field_type) {
-                methods.push((field_name.to_string(), vec![], vec![], field_type.clone(), ReceiverType::RefMut));
+                methods.push((field_name.to_string(), vec![], vec![], field_type.clone(), ReceiverType::Ref));
             }
 
             if field.attrs.iter().any(|attr| attr.path().is_ident("setter")) {

@@ -1,5 +1,3 @@
-use hotline::HotlineObject;
-
 hotline::object!({
     #[derive(Clone, Default)]
     pub struct TextRenderer {
@@ -88,10 +86,17 @@ hotline::object!({
             let cursor_y = self.y;
 
             let (b, g, r, a) = self.color;
+            let mut prev_char: Option<char> = None;
 
             for ch in self.text.chars() {
+                // Apply kerning before rendering
+                if let Some(prev) = prev_char {
+                    cursor_x += font.kerning(prev, ch) as f64;
+                }
+
                 if ch == ' ' {
                     cursor_x += font.space_width() as f64;
+                    prev_char = Some(ch);
                     continue;
                 }
 
@@ -154,6 +159,7 @@ hotline::object!({
                     }
 
                     cursor_x += advance as f64;
+                    prev_char = Some(ch);
                 }
             }
         }
@@ -191,10 +197,17 @@ hotline::object!({
 
             let mut cursor_x = self.x;
             let cursor_y = self.y;
+            let mut prev_char: Option<char> = None;
 
             for ch in self.text.chars() {
+                // Apply kerning before rendering
+                if let Some(prev) = prev_char {
+                    cursor_x += font.kerning(prev, ch) as f64;
+                }
+
                 if ch == ' ' {
                     cursor_x += font.space_width() as f64;
+                    prev_char = Some(ch);
                     continue;
                 }
 
@@ -215,6 +228,7 @@ hotline::object!({
                     });
 
                     cursor_x += advance as f64;
+                    prev_char = Some(ch);
                 }
             }
         }
@@ -239,7 +253,36 @@ hotline::object!({
         }
 
         pub fn measure_text(&mut self, text: &str) -> f64 {
-            text.chars().map(|c| self.char_width(c)).sum()
+            if !self.initialized {
+                self.initialize();
+            }
+
+            let font = match &mut self.font {
+                Some(f) => f,
+                None => return 0.0,
+            };
+
+            let mut width = 0.0;
+            let mut prev_char: Option<char> = None;
+
+            for ch in text.chars() {
+                if ch == ' ' {
+                    width += font.space_width() as f64;
+                } else if let Some((_x, _y, _w, _h, _off_x, _off_y, adv)) = font.glyph(ch) {
+                    width += adv as f64;
+                } else {
+                    width += font.space_width() as f64;
+                }
+
+                // Apply kerning
+                if let Some(prev) = prev_char {
+                    width += font.kerning(prev, ch) as f64;
+                }
+
+                prev_char = Some(ch);
+            }
+
+            width
         }
 
         pub fn line_height(&mut self) -> f64 {

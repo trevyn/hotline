@@ -69,11 +69,14 @@ fn generate_method_wrapper(
     method: &syn::ImplItemFn,
     rustc_commit: &str,
 ) -> Option<proc_macro2::TokenStream> {
-    // Check receiver
-    match method.sig.inputs.first()? {
-        FnArg::Receiver(r) if r.reference.is_some() => {}
+    // Check if method is async
+    let is_async = method.sig.asyncness.is_some();
+
+    // Check receiver and determine mutability
+    let is_mut = match method.sig.inputs.first()? {
+        FnArg::Receiver(r) if r.reference.is_some() => r.mutability.is_some(),
         _ => return None,
-    }
+    };
 
     let method_name = &method.sig.ident;
     let params: Vec<_> = method
@@ -116,7 +119,8 @@ fn generate_method_wrapper(
 
     let symbol = SymbolName::new(&struct_name.to_string(), &method_name.to_string(), rustc_commit)
         .with_params(param_specs)
-        .with_return_type(return_type.as_ref().map(type_to_string).unwrap_or_else(|| "unit".to_string()));
+        .with_return_type(return_type.as_ref().map(type_to_string).unwrap_or_else(|| "unit".to_string()))
+        .with_receiver_mutability(is_mut);
 
     let wrapper_name = format_ident!("{}", symbol.build_method());
     let arg_names: Vec<_> = params.iter().map(|(name, _)| name.clone()).collect();
@@ -125,7 +129,19 @@ fn generate_method_wrapper(
         FfiWrapper::new(struct_name.clone(), wrapper_name)
             .params(params)
             .returns(return_type.as_ref())
-            .body(quote! { instance.#method_name(#(#arg_names),*) })
+            .body(if is_async {
+                // For async methods, always block on them in FFI context
+                // This is necessary because FFI functions can't be async
+                quote! {
+                    ::hotline::hotline_runtime().block_on(
+                        instance.#method_name(#(#arg_names),*)
+                    )
+                }
+            } else {
+                quote! { instance.#method_name(#(#arg_names),*) }
+            })
+            .with_mut_receiver(is_mut)
+            .with_async(is_async)
             .build(),
     )
 }
@@ -267,7 +283,8 @@ fn generate_builder_ffi_method(
 }
 
 fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_commit: &str) -> proc_macro2::TokenStream {
-    let MethodGenConfig { method_ident, param_idents, param_types, param_names, return_type, .. } = config;
+    let MethodGenConfig { method_ident, param_idents, param_types, param_names, return_type, receiver_type, .. } =
+        config;
 
     // Check if any parameters are Like<T> where T is an object type
     let mut generic_params = vec![];
@@ -348,9 +365,11 @@ fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_comm
     let param_specs: Vec<_> =
         param_names.iter().zip(param_types.iter()).map(|(name, ty)| (name.clone(), type_to_string(ty))).collect();
 
+    let is_mut_receiver = *receiver_type == ReceiverType::RefMut;
     let symbol = SymbolName::new(type_name, &config.method_name, rustc_commit)
         .with_params(param_specs)
-        .with_return_type(type_to_string(return_type));
+        .with_return_type(type_to_string(return_type))
+        .with_receiver_mutability(is_mut_receiver);
 
     let symbol_name = symbol.build_method();
 
@@ -390,8 +409,14 @@ fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_comm
         quote! { #name }
     });
 
+    let receiver_param = if is_mut_receiver {
+        quote! { &mut dyn std::any::Any }
+    } else {
+        quote! { &dyn std::any::Any }
+    };
+
     let fn_type = quote! {
-        unsafe extern "Rust" fn(&mut dyn std::any::Any #(, #ffi_param_types)*) -> #return_type
+        unsafe extern "Rust" fn(#receiver_param #(, #ffi_param_types)*) -> #return_type
     };
 
     let method_body = quote_method_call_with_registry(
@@ -400,6 +425,7 @@ fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_comm
         &symbol_name,
         fn_type,
         quote! { #(, #ffi_args)* },
+        is_mut_receiver,
     );
 
     // Build generic parameters if any
@@ -418,8 +444,14 @@ fn generate_regular_method(config: &MethodGenConfig, type_name: &str, rustc_comm
             }
         }
     } else {
+        let self_param = if is_mut_receiver {
+            quote! { &mut self }
+        } else {
+            quote! { &self }
+        };
+
         quote! {
-            pub fn #method_ident #generics(&mut self #(, #method_params)*) -> #return_type {
+            pub fn #method_ident #generics(#self_param #(, #method_params)*) -> #return_type {
                 #method_body
             }
         }

@@ -1,5 +1,3 @@
-use hotline::HotlineObject;
-
 hotline::object!({
     #[derive(Default)]
     pub struct ClickInspector {

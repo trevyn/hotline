@@ -1,4 +1,3 @@
-use hotline::HotlineObject;
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton;
@@ -14,23 +13,200 @@ use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::io::BufWriter;
 
+// Wrapper to make CodeEditor work with EventHandler trait
+struct CodeEditorAdapter {
+    editor: CodeEditor,
+}
+
+impl CodeEditorAdapter {
+    fn new(editor: CodeEditor) -> Self {
+        Self { editor }
+    }
+}
+
+impl hotline::EventHandler for CodeEditorAdapter {
+    fn handle_mouse_down(&mut self, x: f64, y: f64) -> bool {
+        self.editor.handle_mouse_down(x, y)
+    }
+
+    fn handle_mouse_up(&mut self, _x: f64, _y: f64) -> bool {
+        self.editor.handle_mouse_up();
+        false
+    }
+
+    fn handle_mouse_move(&mut self, x: f64, y: f64) -> bool {
+        self.editor.handle_mouse_move(x, y);
+        false
+    }
+
+    fn handle_mouse_wheel(&mut self, _x: f64, _y: f64, delta: f64) -> bool {
+        if self.editor.is_focused() {
+            self.editor.add_scroll_velocity(-delta * 20.0);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn handle_text_input(&mut self, text: &str) -> bool {
+        if self.editor.is_focused() {
+            for ch in text.chars() {
+                self.editor.insert_char(ch);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn handle_key_down(&mut self, keycode: i32, shift: bool) -> bool {
+        if !self.editor.is_focused() {
+            return false;
+        }
+
+        // Handle common keycodes directly
+        match keycode {
+            8 => {
+                // Backspace
+                self.editor.backspace();
+                true
+            }
+            13 => {
+                // Return
+                self.editor.insert_newline();
+                true
+            }
+            1073741904 => {
+                // Left arrow
+                self.editor.move_cursor_left(shift);
+                true
+            }
+            1073741903 => {
+                // Right arrow
+                self.editor.move_cursor_right(shift);
+                true
+            }
+            1073741906 => {
+                // Up arrow
+                self.editor.move_cursor_up(shift);
+                true
+            }
+            1073741905 => {
+                // Down arrow
+                self.editor.move_cursor_down(shift);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn is_focused(&self) -> bool {
+        // Can't call is_focused on editor because it requires mutable borrow
+        // TODO: Fix this by making is_focused() immutable in CodeEditor
+        false
+    }
+
+    fn update(&mut self) {
+        self.editor.update_scroll();
+    }
+
+    fn render(&mut self, buffer: &mut [u8], width: i64, height: i64, pitch: i64) {
+        self.editor.render(buffer, width, height, pitch);
+    }
+}
+
+// Wrapper to make ChatInterface work with EventHandler trait
+struct ChatInterfaceAdapter {
+    chat: ChatInterface,
+}
+
+impl ChatInterfaceAdapter {
+    fn new(chat: ChatInterface) -> Self {
+        Self { chat }
+    }
+}
+
+impl hotline::EventHandler for ChatInterfaceAdapter {
+    fn handle_mouse_down(&mut self, x: f64, y: f64) -> bool {
+        self.chat.handle_mouse_down(x, y)
+    }
+
+    fn handle_mouse_up(&mut self, _x: f64, _y: f64) -> bool {
+        self.chat.handle_mouse_up();
+        false
+    }
+
+    fn handle_mouse_move(&mut self, x: f64, y: f64) -> bool {
+        self.chat.handle_mouse_move(x, y);
+        false
+    }
+
+    fn handle_mouse_wheel(&mut self, x: f64, y: f64, delta: f64) -> bool {
+        self.chat.handle_mouse_wheel(x, y, delta);
+        true
+    }
+
+    fn handle_text_input(&mut self, text: &str) -> bool {
+        for ch in text.chars() {
+            self.chat.insert_char(ch);
+        }
+        true
+    }
+
+    fn handle_key_down(&mut self, keycode: i32, _shift: bool) -> bool {
+        // Handle common keycodes directly
+        match keycode {
+            8 => {
+                // Backspace
+                self.chat.backspace();
+                true
+            }
+            13 => {
+                // Return
+                self.chat.insert_char('\n');
+                true
+            }
+            1073741904 => {
+                // Left arrow
+                self.chat.move_cursor_left();
+                true
+            }
+            1073741903 => {
+                // Right arrow
+                self.chat.move_cursor_right();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn update(&mut self) {
+        self.chat.update_scroll();
+    }
+
+    fn render(&mut self, buffer: &mut [u8], width: i64, height: i64, pitch: i64) {
+        self.chat.render(buffer, width, height, pitch);
+    }
+}
+
 hotline::object!({
     pub struct Application {
         window_manager: Option<WindowManager>,
-        code_editor: Option<CodeEditor>,
-        color_wheel: Option<ColorWheel>,
+        event_handlers: Vec<Box<dyn hotline::EventHandler>>,
         gpu_renderer: Option<GPURenderer>,
         gpu_atlases: Vec<AtlasData>,
         gpu_commands: Vec<RenderCommand>,
         fps_counter: Option<TextRenderer>,
         autonomy_checkbox: Option<Checkbox>,
         render_time_checkbox: Option<Checkbox>,
+        color_wheel: Option<ColorWheel>,
+        anthropic_client: Option<AnthropicClient>,
         frame_times: std::collections::VecDeque<std::time::Instant>,
         last_fps_update: Option<std::time::Instant>,
         current_fps: f64,
         mouse_x: f64,
         mouse_y: f64,
-        #[default(1)]
+        #[default(2)]
         pixel_multiple: u32,
         width: u32,
         height: u32,
@@ -39,6 +215,21 @@ hotline::object!({
     }
 
     impl Application {
+        // Helper to transform mouse coordinates
+        fn transform_mouse_coords(
+            &self,
+            x: f32,
+            y: f32,
+            canvas: &sdl3::render::Canvas<sdl3::video::Window>,
+        ) -> (f64, f64) {
+            let (win_w, win_h) = canvas.window().size();
+            let scale_x = self.width as f64 / win_w as f64;
+            let scale_y = self.height as f64 / win_h as f64;
+            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
+            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+            (adj_x, adj_y)
+        }
+
         pub fn initialize(&mut self) -> Result<(), String> {
             // Set up thread-local registry for proxy object creation
             // The runtime should have already loaded all libraries
@@ -63,20 +254,21 @@ hotline::object!({
             }
 
             // Create code editor
-            self.code_editor = Some(CodeEditor::new());
-            if let Some(ref mut editor) = self.code_editor {
-                let _ = editor.open("objects/Rect/src/lib.rs");
+            let mut editor = CodeEditor::new();
+            let _ = editor.open("objects/Rect/src/lib.rs");
 
-                // Create rect for editor
-                let editor_rect = Rect::new();
-                let mut editor_rect_ref = editor_rect.clone();
-                editor_rect_ref.initialize(400.0, 50.0, 380.0, 500.0);
+            // Create rect for editor
+            let editor_rect = Rect::new();
+            let mut editor_rect_ref = editor_rect.clone();
+            editor_rect_ref.initialize(400.0, 50.0, 380.0, 500.0);
 
-                if let Some(ref mut wm) = self.window_manager {
-                    wm.add_rect(editor_rect.clone());
-                }
-                editor.set_rect(editor_rect);
+            if let Some(ref mut wm) = self.window_manager {
+                wm.add_rect(editor_rect.clone());
             }
+            editor.set_rect(editor_rect);
+
+            // Add editor as event handler
+            self.event_handlers.push(Box::new(CodeEditorAdapter::new(editor)));
 
             // Create color wheel
             self.color_wheel = Some(ColorWheel::new());
@@ -86,6 +278,30 @@ hotline::object!({
                 r_ref.initialize(50.0, 400.0, 120.0, 120.0);
                 wheel.set_rect(rect);
             }
+
+            // Create chat interface with AnthropicClient
+            let mut chat = ChatInterface::new();
+            chat.initialize();
+
+            // Set bounds for chat interface
+            let chat_rect = Rect::new();
+            let mut chat_rect_ref = chat_rect.clone();
+            chat_rect_ref.initialize(800.0, 50.0, 500.0, 700.0);
+            chat.set_rect(chat_rect);
+
+            // Create and connect AnthropicClient
+            let mut client = AnthropicClient::new();
+            client.initialize();
+            client.set_response_target(&chat);
+
+            // Connect client to chat
+            chat.set_anthropic_client(&client);
+
+            // Store anthropic client for later use
+            self.anthropic_client = Some(client);
+
+            // Add chat as event handler
+            self.event_handlers.push(Box::new(ChatInterfaceAdapter::new(chat)));
 
             // Create autonomy checkbox
             self.autonomy_checkbox = Some(Checkbox::new());
@@ -122,7 +338,7 @@ hotline::object!({
                 zoom.set_x(10.0);
                 zoom.set_y(30.0);
                 zoom.set_color((255, 255, 255, 255));
-                zoom.set_text("1x".to_string());
+                zoom.set_text("2x".to_string());
             }
 
             // Initialize FPS tracking
@@ -228,15 +444,15 @@ hotline::object!({
                             texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
-                            let (win_w, win_h) = canvas.window().size();
-                            let scale_x = self.width as f64 / win_w as f64;
-                            let scale_y = self.height as f64 / win_h as f64;
-                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
-                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &canvas);
 
                             let mut consumed = false;
-                            if let Some(ref mut editor) = self.code_editor {
-                                consumed = editor.handle_mouse_down(adj_x, adj_y);
+                            // Dispatch to event handlers in order
+                            for handler in &mut self.event_handlers {
+                                if handler.handle_mouse_down(adj_x, adj_y) {
+                                    consumed = true;
+                                    break;
+                                }
                             }
 
                             if let Some(ref mut wm) = self.window_manager {
@@ -262,10 +478,8 @@ hotline::object!({
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
                             if let Some(ref mut wheel) = self.color_wheel {
-                                if let Some(color) = wheel.handle_mouse_down(adj_x, adj_y) {
-                                    if let Some(ref mut editor) = self.code_editor {
-                                        editor.update_text_color(color);
-                                    }
+                                if let Some(_color) = wheel.handle_mouse_down(adj_x, adj_y) {
+                                    // TODO: Need a way to notify editor of color change
                                 }
                             }
                             if let Some(ref mut cb) = self.autonomy_checkbox {
@@ -276,213 +490,143 @@ hotline::object!({
                             }
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
-                            let (win_w, win_h) = canvas.window().size();
-                            let scale_x = self.width as f64 / win_w as f64;
-                            let scale_y = self.height as f64 / win_h as f64;
-                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
-                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &canvas);
 
-                            let mut consumed = false;
-                            if let Some(ref mut editor) = self.code_editor {
-                                if editor.contains_point(adj_x, adj_y) {
-                                    let _ = editor.open_file_menu(adj_x, adj_y);
-                                    consumed = true;
-                                }
-                            }
+                            // TODO: Add right-click support to EventHandler trait if needed
 
-                            if !consumed {
-                                if let Some(ref mut wm) = self.window_manager {
-                                    wm.handle_right_click(adj_x, adj_y);
-                                }
+                            if let Some(ref mut wm) = self.window_manager {
+                                wm.handle_right_click(adj_x, adj_y);
                             }
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
                         }
                         Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
-                            let (win_w, win_h) = canvas.window().size();
-                            let scale_x = self.width as f64 / win_w as f64;
-                            let scale_y = self.height as f64 / win_h as f64;
-                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
-                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &canvas);
 
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_up(adj_x, adj_y);
                             }
+
+                            // Dispatch to all event handlers
+                            for handler in &mut self.event_handlers {
+                                handler.handle_mouse_up(adj_x, adj_y);
+                            }
+
                             if let Some(ref mut wheel) = self.color_wheel {
                                 wheel.handle_mouse_up();
-                            }
-                            if let Some(ref mut editor) = self.code_editor {
-                                editor.handle_mouse_up();
                             }
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
                         }
                         Event::MouseMotion { x, y, .. } => {
-                            let (win_w, win_h) = canvas.window().size();
-                            let scale_x = self.width as f64 / win_w as f64;
-                            let scale_y = self.height as f64 / win_h as f64;
-                            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
-                            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
+                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &canvas);
 
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_motion(adj_x, adj_y);
                             }
-                            if let Some(ref mut editor) = self.code_editor {
-                                editor.handle_mouse_move(adj_x, adj_y);
+
+                            // Dispatch to all event handlers
+                            for handler in &mut self.event_handlers {
+                                handler.handle_mouse_move(adj_x, adj_y);
                             }
+
                             if let Some(ref mut wheel) = self.color_wheel {
-                                if let Some(color) = wheel.handle_mouse_move(adj_x, adj_y) {
-                                    if let Some(ref mut editor) = self.code_editor {
-                                        editor.update_text_color(color);
-                                    }
+                                if let Some(_color) = wheel.handle_mouse_move(adj_x, adj_y) {
+                                    // TODO: Need a way to notify editor of color change
                                 }
                             }
                             self.mouse_x = x as f64;
                             self.mouse_y = y as f64;
                         }
                         Event::MouseWheel { y, .. } => {
-                            if let Some(ref mut editor) = self.code_editor {
-                                if editor.is_focused() {
-                                    editor.add_scroll_velocity(-y as f64 * 20.0);
+                            let (win_w, win_h) = canvas.window().size();
+                            let scale_x = self.width as f64 / win_w as f64;
+                            let scale_y = self.height as f64 / win_h as f64;
+                            let adj_x = self.mouse_x * scale_x / self.pixel_multiple as f64;
+                            let adj_y = self.mouse_y * scale_y / self.pixel_multiple as f64;
+
+                            // Dispatch to event handlers in order
+                            for handler in &mut self.event_handlers {
+                                if handler.handle_mouse_wheel(adj_x, adj_y, y as f64) {
+                                    break;
                                 }
                             }
                         }
                         Event::TextInput { text, .. } => {
-                            if let Some(ref mut editor) = self.code_editor {
-                                if editor.is_focused() {
-                                    for ch in text.chars() {
-                                        editor.insert_char(ch);
+                            // Dispatch to event handlers in order
+                            for handler in &mut self.event_handlers {
+                                if handler.handle_text_input(&text) {
+                                    break;
+                                }
+                            }
+                        }
+                        Event::KeyDown { keycode: Some(kc), keymod, .. } => {
+                            let shift = keymod.contains(sdl3::keyboard::Mod::LSHIFTMOD)
+                                || keymod.contains(sdl3::keyboard::Mod::RSHIFTMOD);
+
+                            // Check for cmd/ctrl modifier
+                            #[cfg(target_os = "macos")]
+                            let cmd = keymod.contains(sdl3::keyboard::Mod::LGUIMOD)
+                                || keymod.contains(sdl3::keyboard::Mod::RGUIMOD);
+                            #[cfg(not(target_os = "macos"))]
+                            let cmd = keymod.contains(sdl3::keyboard::Mod::LCTRLMOD)
+                                || keymod.contains(sdl3::keyboard::Mod::RCTRLMOD);
+
+                            // Handle specific keys first
+                            match kc {
+                                Keycode::Equals | Keycode::KpPlus if cmd => {
+                                    self.pixel_multiple += 1;
+                                    if let Some(ref mut zoom) = self.zoom_display {
+                                        zoom.set_text(format!("{}x", self.pixel_multiple));
+                                    }
+                                    self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
+                                    texture = texture_creator
+                                        .create_texture_streaming(
+                                            PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_ARGB8888)
+                                                .unwrap(),
+                                            self.width / self.pixel_multiple,
+                                            self.height / self.pixel_multiple,
+                                        )
+                                        .map_err(|e| e.to_string())?;
+                                    texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
+                                }
+                                Keycode::Minus | Keycode::KpMinus if cmd && self.pixel_multiple > 1 => {
+                                    self.pixel_multiple -= 1;
+                                    if let Some(ref mut zoom) = self.zoom_display {
+                                        zoom.set_text(format!("{}x", self.pixel_multiple));
+                                    }
+                                    self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
+                                    texture = texture_creator
+                                        .create_texture_streaming(
+                                            PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_ARGB8888)
+                                                .unwrap(),
+                                            self.width / self.pixel_multiple,
+                                            self.height / self.pixel_multiple,
+                                        )
+                                        .map_err(|e| e.to_string())?;
+                                    texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
+                                }
+                                Keycode::R => {
+                                    // Check if any handler is focused (i.e., editing)
+                                    let editing = self.event_handlers.iter().any(|h| h.is_focused());
+                                    if !editing {
+                                        if let Some(ref mut wm) = self.window_manager {
+                                            wm.rotate_selected(0.1);
+                                        }
                                     }
                                 }
-                            }
-                        }
-                        Event::KeyDown { keycode: Some(Keycode::Backspace), .. } => {
-                            if let Some(ref mut editor) = self.code_editor {
-                                if editor.is_focused() {
-                                    editor.backspace();
+                                Keycode::S if cmd => {
+                                    // TODO: Add save support to EventHandler trait if needed
                                 }
-                            }
-                        }
-                        Event::KeyDown { keycode: Some(Keycode::Return), .. }
-                        | Event::KeyDown { keycode: Some(Keycode::KpEnter), .. } => {
-                            if let Some(ref mut editor) = self.code_editor {
-                                if editor.is_focused() {
-                                    editor.insert_newline();
-                                }
-                            }
-                        }
-                        Event::KeyDown { keycode: Some(Keycode::Left), keymod, .. } => {
-                            if let Some(ref mut editor) = self.code_editor {
-                                if editor.is_focused() {
-                                    let shift = keymod.contains(sdl3::keyboard::Mod::LSHIFTMOD)
-                                        || keymod.contains(sdl3::keyboard::Mod::RSHIFTMOD);
-                                    editor.move_cursor_left(shift);
-                                }
-                            }
-                        }
-                        Event::KeyDown { keycode: Some(Keycode::Right), keymod, .. } => {
-                            if let Some(ref mut editor) = self.code_editor {
-                                if editor.is_focused() {
-                                    let shift = keymod.contains(sdl3::keyboard::Mod::LSHIFTMOD)
-                                        || keymod.contains(sdl3::keyboard::Mod::RSHIFTMOD);
-                                    editor.move_cursor_right(shift);
-                                }
-                            }
-                        }
-                        Event::KeyDown { keycode: Some(Keycode::Up), keymod, .. } => {
-                            if let Some(ref mut editor) = self.code_editor {
-                                if editor.is_focused() {
-                                    let shift = keymod.contains(sdl3::keyboard::Mod::LSHIFTMOD)
-                                        || keymod.contains(sdl3::keyboard::Mod::RSHIFTMOD);
-                                    editor.move_cursor_up(shift);
-                                }
-                            }
-                        }
-                        Event::KeyDown { keycode: Some(Keycode::Down), keymod, .. } => {
-                            if let Some(ref mut editor) = self.code_editor {
-                                if editor.is_focused() {
-                                    let shift = keymod.contains(sdl3::keyboard::Mod::LSHIFTMOD)
-                                        || keymod.contains(sdl3::keyboard::Mod::RSHIFTMOD);
-                                    editor.move_cursor_down(shift);
-                                }
-                            }
-                        }
-                        Event::KeyDown { keycode: Some(Keycode::R), .. } => {
-                            let mut editing = false;
-                            if let Some(ref mut editor) = self.code_editor {
-                                if editor.is_focused() {
-                                    editing = true;
-                                }
-                            }
-                            if !editing {
-                                if let Some(ref mut wm) = self.window_manager {
-                                    wm.rotate_selected(0.1);
-                                }
-                            }
-                        }
-                        Event::KeyDown { keycode: Some(Keycode::Equals), keymod, .. }
-                        | Event::KeyDown { keycode: Some(Keycode::KpPlus), keymod, .. } => {
-                            #[cfg(target_os = "macos")]
-                            let cmd = keymod.contains(sdl3::keyboard::Mod::LGUIMOD)
-                                || keymod.contains(sdl3::keyboard::Mod::RGUIMOD);
-                            #[cfg(not(target_os = "macos"))]
-                            let cmd = keymod.contains(sdl3::keyboard::Mod::LCTRLMOD)
-                                || keymod.contains(sdl3::keyboard::Mod::RCTRLMOD);
+                                _ => {
+                                    // Convert keycode to i32 for EventHandler trait
+                                    let keycode_i32 = kc as i32;
 
-                            if cmd {
-                                self.pixel_multiple += 1;
-                                if let Some(ref mut zoom) = self.zoom_display {
-                                    zoom.set_text(format!("{}x", self.pixel_multiple));
-                                }
-                                self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
-                                texture = texture_creator
-                                    .create_texture_streaming(
-                                        PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_ARGB8888).unwrap(),
-                                        self.width / self.pixel_multiple,
-                                        self.height / self.pixel_multiple,
-                                    )
-                                    .map_err(|e| e.to_string())?;
-                                texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
-                            }
-                        }
-                        Event::KeyDown { keycode: Some(Keycode::Minus), keymod, .. }
-                        | Event::KeyDown { keycode: Some(Keycode::KpMinus), keymod, .. } => {
-                            #[cfg(target_os = "macos")]
-                            let cmd = keymod.contains(sdl3::keyboard::Mod::LGUIMOD)
-                                || keymod.contains(sdl3::keyboard::Mod::RGUIMOD);
-                            #[cfg(not(target_os = "macos"))]
-                            let cmd = keymod.contains(sdl3::keyboard::Mod::LCTRLMOD)
-                                || keymod.contains(sdl3::keyboard::Mod::RCTRLMOD);
-
-                            if cmd && self.pixel_multiple > 1 {
-                                self.pixel_multiple -= 1;
-                                if let Some(ref mut zoom) = self.zoom_display {
-                                    zoom.set_text(format!("{}x", self.pixel_multiple));
-                                }
-                                self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
-                                texture = texture_creator
-                                    .create_texture_streaming(
-                                        PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_ARGB8888).unwrap(),
-                                        self.width / self.pixel_multiple,
-                                        self.height / self.pixel_multiple,
-                                    )
-                                    .map_err(|e| e.to_string())?;
-                                texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
-                            }
-                        }
-                        Event::KeyDown { keycode: Some(Keycode::S), keymod, .. } => {
-                            // Check for Cmd+S (Mac) or Ctrl+S (others)
-                            #[cfg(target_os = "macos")]
-                            let save_key = keymod.contains(sdl3::keyboard::Mod::LGUIMOD)
-                                || keymod.contains(sdl3::keyboard::Mod::RGUIMOD);
-                            #[cfg(not(target_os = "macos"))]
-                            let save_key = keymod.contains(sdl3::keyboard::Mod::LCTRLMOD)
-                                || keymod.contains(sdl3::keyboard::Mod::RCTRLMOD);
-
-                            if save_key {
-                                if let Some(ref mut editor) = self.code_editor {
-                                    if editor.is_focused() {
-                                        let _ = editor.save();
+                                    // Dispatch to event handlers in order
+                                    for handler in &mut self.event_handlers {
+                                        if handler.handle_key_down(keycode_i32, shift) {
+                                            break;
+                                        }
                                     }
                                 }
                             }
@@ -518,8 +662,9 @@ hotline::object!({
                 if let (Some(wm), Some(cb)) = (&mut self.window_manager, &mut self.render_time_checkbox) {
                     wm.set_show_render_times(cb.checked());
                 }
-                if let Some(ref mut editor) = self.code_editor {
-                    editor.update_scroll();
+                // Update all event handlers
+                for handler in &mut self.event_handlers {
+                    handler.update();
                 }
 
                 // Render
@@ -531,7 +676,7 @@ hotline::object!({
                 }
 
                 // Take GPU renderer out temporarily to avoid borrow issues
-                if let Some(mut gpu) = self.gpu_renderer.take() {
+                if let Some(gpu) = self.gpu_renderer.take() {
                     // Clear previous frame data
                     self.gpu_atlases.clear();
                     self.gpu_commands.clear();
@@ -573,9 +718,9 @@ hotline::object!({
                         wm.render(buffer, bw, bh, pitch as i64);
                     }
 
-                    // Render code editor
-                    if let Some(ref mut editor) = self.code_editor {
-                        editor.render(buffer, bw, bh, pitch as i64);
+                    // Render all event handlers
+                    for handler in &mut self.event_handlers {
+                        handler.render(buffer, bw, bh, pitch as i64);
                     }
 
                     if let Some(ref mut wheel) = self.color_wheel {
@@ -637,10 +782,11 @@ hotline::object!({
                         wm.render(buffer, bw, bh, pitch as i64);
                     }
 
-                    // Render code editor
-                    if let Some(ref mut editor) = self.code_editor {
-                        editor.render(buffer, bw, bh, pitch as i64);
+                    // Render all event handlers
+                    for handler in &mut self.event_handlers {
+                        handler.render(buffer, bw, bh, pitch as i64);
                     }
+
                     if let Some(ref mut wheel) = self.color_wheel {
                         wheel.render(buffer, bw, bh, pitch as i64);
                     }

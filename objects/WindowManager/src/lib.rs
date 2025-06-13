@@ -1,5 +1,3 @@
-use hotline::HotlineObject;
-
 #[derive(Clone, Copy, PartialEq)]
 pub enum SelectedObject {
     Rect(usize),

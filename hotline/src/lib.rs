@@ -1,10 +1,26 @@
 pub use hotline_macros::object;
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 // Re-export libloading for objects to use
 pub use libloading;
+
+// Re-export tokio for async support
+pub use tokio;
+
+// Global tokio runtime for all hotline objects
+static HOTLINE_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+pub fn hotline_runtime() -> &'static tokio::runtime::Runtime {
+    HOTLINE_RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("Failed to create hotline runtime")
+    })
+}
 
 // Rustc commit hash for symbol generation
 pub const RUSTC_COMMIT: &str = env!("RUSTC_COMMIT_HASH");
@@ -142,4 +158,31 @@ impl<T> Clone for ObjectRef<T> {
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone(), _phantom: PhantomData }
     }
+}
+
+// Event handling trait for objects
+pub trait EventHandler: Send + Sync {
+    fn handle_mouse_down(&mut self, _x: f64, _y: f64) -> bool {
+        false
+    }
+    fn handle_mouse_up(&mut self, _x: f64, _y: f64) -> bool {
+        false
+    }
+    fn handle_mouse_move(&mut self, _x: f64, _y: f64) -> bool {
+        false
+    }
+    fn handle_mouse_wheel(&mut self, _x: f64, _y: f64, _delta: f64) -> bool {
+        false
+    }
+    fn handle_text_input(&mut self, _text: &str) -> bool {
+        false
+    }
+    fn handle_key_down(&mut self, _keycode: i32, _shift: bool) -> bool {
+        false
+    } // keycode as i32 to avoid sdl3 dependency
+    fn is_focused(&self) -> bool {
+        false
+    }
+    fn update(&mut self) {}
+    fn render(&mut self, _buffer: &mut [u8], _width: i64, _height: i64, _pitch: i64) {}
 }

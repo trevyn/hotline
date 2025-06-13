@@ -180,10 +180,34 @@ pub fn object(input: TokenStream) -> TokenStream {
     // Generate wrappers only for directly referenced objects in this object
     let (additional_wrappers, wrapper_custom_types) = generate_typed_wrappers(&referenced_objects, &rustc_commit);
 
+    // Separate wrapper_custom_types into objects and actual custom types
+    let mut transitive_objects = HashSet::new();
+    let mut transitive_custom_types = HashSet::new();
+    for type_name in wrapper_custom_types {
+        // Never generate a wrapper for ourselves
+        if type_name == struct_name.to_string() {
+            continue;
+        }
+
+        let type_lib_path = crate::discovery::find_object_lib_file(&type_name);
+        if type_lib_path.exists() {
+            // It's an object type - only add if not already directly referenced
+            if !referenced_objects.contains(&type_name) {
+                transitive_objects.insert(type_name);
+            }
+        } else {
+            // It's a custom type (enum, struct, etc.)
+            transitive_custom_types.insert(type_name);
+        }
+    }
+
+    // Generate wrappers for transitively discovered objects
+    let (transitive_wrappers, _) = generate_typed_wrappers(&transitive_objects, &rustc_commit);
+
     // Get custom types referenced in THIS object only (not transitively discovered)
     let mut local_custom_types = find_referenced_custom_types(&struct_item, &impl_blocks);
     // Also include custom types discovered from imported object wrappers
-    local_custom_types.extend(wrapper_custom_types);
+    local_custom_types.extend(transitive_custom_types);
 
     // Get names of types defined in this object to exclude them from proxies
     let local_type_names: HashSet<String> = type_defs
@@ -197,7 +221,10 @@ pub fn object(input: TokenStream) -> TokenStream {
 
     // Collect custom types from imported objects that we need proxies for
     let mut custom_types_from_objects = HashSet::new();
-    for obj_name in &referenced_objects {
+    // Include both directly referenced and transitively discovered objects
+    let mut all_referenced_objects = referenced_objects.clone();
+    all_referenced_objects.extend(transitive_objects.clone());
+    for obj_name in &all_referenced_objects {
         let lib_path = crate::discovery::find_object_lib_file(obj_name);
         if lib_path.exists() {
             if let Ok(content) = fs::read_to_string(&lib_path) {
@@ -258,6 +285,8 @@ pub fn object(input: TokenStream) -> TokenStream {
     let struct_with_registry = add_registry_field(modified_struct);
 
     let output = quote! {
+        use ::hotline::HotlineObject;
+
         #[allow(dead_code)]
         type Like<T> = T;
 
@@ -287,6 +316,7 @@ pub fn object(input: TokenStream) -> TokenStream {
         #(#method_wrappers)*
         #core_functions
         #additional_wrappers
+        #transitive_wrappers
     };
 
     TokenStream::from(output)

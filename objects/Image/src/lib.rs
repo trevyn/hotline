@@ -1,5 +1,3 @@
-use hotline::HotlineObject;
-
 hotline::object!({
     #[derive(Clone, Default)]
     pub struct Image {

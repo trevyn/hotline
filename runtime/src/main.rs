@@ -5,6 +5,11 @@ fn main() -> Result<(), String> {
     use std::fs;
     use std::path::Path;
 
+    // Load environment variables from .env file
+    if let Err(e) = dotenv::dotenv() {
+        eprintln!("Note: No .env file found or error loading it: {}", e);
+    }
+
     // Dependencies will be loaded automatically by the custom macho loader
 
     // Leak the runtime to give it 'static lifetime

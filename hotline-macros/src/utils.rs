@@ -215,6 +215,7 @@ pub mod symbols {
         params: Vec<(String, String)>,
         return_type: String,
         rustc_commit: String,
+        is_mut_receiver: bool,
     }
 
     impl SymbolName {
@@ -225,6 +226,7 @@ pub mod symbols {
                 params: Vec::new(),
                 return_type: "unit".to_string(),
                 rustc_commit: rustc_commit.to_string(),
+                is_mut_receiver: true,
             }
         }
 
@@ -238,8 +240,14 @@ pub mod symbols {
             self
         }
 
+        pub fn with_receiver_mutability(mut self, is_mut: bool) -> Self {
+            self.is_mut_receiver = is_mut;
+            self
+        }
+
         pub fn build_method(&self) -> String {
-            let mut parts = vec![self.type_name.clone(), self.method_name.clone(), "____obj_mut_dyn_Any".to_string()];
+            let receiver_part = if self.is_mut_receiver { "____obj_mut_dyn_Any" } else { "____obj_ref_dyn_Any" };
+            let mut parts = vec![self.type_name.clone(), self.method_name.clone(), receiver_part.to_string()];
 
             for (name, ty) in &self.params {
                 parts.push(format!("__{}__{}", name, ty));
@@ -253,7 +261,7 @@ pub mod symbols {
 
         pub fn build_getter(&self) -> String {
             format!(
-                "{}__{}______obj_mut_dyn_Any____to__{}__{}",
+                "{}__{}______obj_ref_dyn_Any____to__{}__{}",
                 self.type_name, self.method_name, self.return_type, self.rustc_commit
             )
         }

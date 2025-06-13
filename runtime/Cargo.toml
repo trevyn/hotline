@@ -8,6 +8,7 @@ hotline = {path = "../hotline"}
 notify = "8.0"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 syn = { version = "2", features = ["full", "visit"] }
+dotenv = "0.15"
 
 [[bin]]
 name = "runtime"

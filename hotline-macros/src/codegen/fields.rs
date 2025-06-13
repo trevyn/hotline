@@ -57,6 +57,7 @@ fn generate_accessor_wrapper(
         FfiWrapper::new(struct_name.clone(), wrapper_name)
             .returns(Some(field_type))
             .body(quote! { instance.#field_name.clone() })
+            .with_mut_receiver(false) // Field getters use immutable references
             .build()
     } else {
         // Use build_method() to match what the proxy expects
