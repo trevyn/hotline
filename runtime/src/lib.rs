@@ -101,34 +101,12 @@ impl DirectRuntime {
         let path = path.to_string();
         let registry = self.library_registry.clone();
 
-        // Create a channel for reload notifications
-        let (reload_tx, reload_rx) = std::sync::mpsc::channel::<String>();
-
-        // Clone root_objects Arc for the migration thread
+        // Clone root_objects Arc for the watcher thread
         let root_objects = self.root_objects.clone();
 
         let handle = thread::spawn(move || {
-            if let Err(e) = watch_and_reload_files(path, registry, reload_tx) {
+            if let Err(e) = watch_and_reload_files(path, registry, root_objects) {
                 eprintln!("File watcher error: {}", e);
-            }
-        });
-
-        // Spawn another thread to handle reload notifications
-        thread::spawn(move || {
-            while let Ok(type_name) = reload_rx.recv() {
-                let mut reloaded_libs = HashSet::new();
-                reloaded_libs.insert(type_name.clone());
-
-                // Trigger migrations on all root objects
-                if let Ok(roots) = root_objects.lock() {
-                    for (_, handle) in roots.iter() {
-                        if let Ok(mut guard) = handle.lock() {
-                            if let Err(e) = guard.migrate_children(&reloaded_libs) {
-                                eprintln!("Migration failed for {}: {}", type_name, e);
-                            }
-                        }
-                    }
-                }
             }
         });
 
@@ -140,7 +118,7 @@ impl DirectRuntime {
 fn watch_and_reload_files(
     path: String,
     registry: LibraryRegistry,
-    reload_tx: std::sync::mpsc::Sender<String>,
+    root_objects: Arc<Mutex<Vec<(String, ObjectHandle)>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = channel();
 
@@ -197,8 +175,20 @@ fn watch_and_reload_files(
                                             eprintln!("Failed to reload {}: {}", object_name, e);
                                         } else {
                                             eprintln!("Successfully reloaded {}", object_name);
-                                            // Notify about successful reload so migrations can be triggered
-                                            let _ = reload_tx.send(object_name.clone());
+
+                                            // Trigger migrations synchronously
+                                            let mut reloaded_libs = HashSet::new();
+                                            reloaded_libs.insert(object_name.clone());
+
+                                            if let Ok(roots) = root_objects.lock() {
+                                                for (_, handle) in roots.iter() {
+                                                    if let Ok(mut guard) = handle.lock() {
+                                                        if let Err(e) = guard.migrate_children(&reloaded_libs) {
+                                                            eprintln!("Migration failed for {}: {}", object_name, e);
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }

@@ -325,7 +325,7 @@ hotline::object!({
             }
         }
 
-        pub fn handle_mouse_up(&mut self, x: f64, y: f64) {
+        pub fn handle_mouse_up(&mut self, _x: f64, _y: f64) {
             if let Some(ref mut inspector) = self.click_inspector {
                 let was_dragging = inspector.is_dragging();
                 inspector.handle_mouse_up();

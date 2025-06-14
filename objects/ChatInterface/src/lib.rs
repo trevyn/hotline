@@ -146,7 +146,7 @@ hotline::object!({
             }
         }
 
-        pub fn handle_mouse_wheel(&mut self, x: f64, y: f64, delta_y: f64) {
+        pub fn handle_mouse_wheel(&mut self, _x: f64, y: f64, delta_y: f64) {
             if let Some(ref bounds) = self.bounds {
                 let mut bounds_clone = bounds.clone();
                 let (_bx, by, _bw, bh) = bounds_clone.bounds();
