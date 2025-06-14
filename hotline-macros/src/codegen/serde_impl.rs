@@ -183,9 +183,15 @@ fn generate_field_migration(field_name: &syn::Ident, field_type: &Type) -> Token
                                         ::hotline::RUSTC_COMMIT
                                     ).map_err(|e| e.to_string())?;
 
+                                    // Preserve the object ID
+                                    let old_id = guard.object_id();
+
                                     // Restore state
                                     new_obj.deserialize_state(&data)?;
                                     new_obj.set_registry(registry);
+                                    new_obj.set_object_id(old_id);
+
+                                    eprintln!("Migrating {} object {} -> new object", type_name, old_id);
 
                                     // Swap inside mutex
                                     *guard = new_obj;
@@ -203,45 +209,13 @@ fn generate_field_migration(field_name: &syn::Ident, field_type: &Type) -> Token
                 // Check if inner type is an object wrapper type
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                        if is_object_wrapper_type(inner_ty) {
+                        if is_object_wrapper_type(inner_ty) || is_object_type(inner_ty) {
                             // Vec<ObjectWrapper> - handle as wrapped objects
+                            // Note: is_object_type returns true for wrapper types too since they're uppercase object names
                             return quote! {
                                 // Get registry once before the loop
                                 if let Some(registry) = self.get_registry() {
                                     // Migrate all object handles in the vector
-                                    for handle in &mut self.#field_name {
-                                        if let Ok(mut guard) = handle.lock() {
-                                            let type_name = guard.type_name();
-                                            if reloaded_libs.contains(type_name) {
-                                                // Serialize old object
-                                                let data = guard.serialize_state()?;
-
-                                                // Create new using existing infrastructure
-                                                let mut new_obj = registry.call_constructor(
-                                                    &format!("lib{}", type_name),
-                                                    type_name,
-                                                    ::hotline::RUSTC_COMMIT
-                                                ).map_err(|e| e.to_string())?;
-
-                                                // Restore state
-                                                new_obj.deserialize_state(&data)?;
-                                                new_obj.set_registry(registry);
-
-                                                // Swap inside mutex
-                                                *guard = new_obj;
-                                            }
-                                            // Recurse
-                                            guard.migrate_children(reloaded_libs)?;
-                                        }
-                                    }
-                                }
-                            };
-                        } else if is_object_type(inner_ty) {
-                            // Vec<T> where T is an object type - these are wrapper types that contain handles
-                            return quote! {
-                                // Get registry once before the loop
-                                if let Some(registry) = self.get_registry() {
-                                    // Migrate all object handles in the vector (treating them as wrappers)
                                     for wrapper in &mut self.#field_name {
                                         if let Ok(mut guard) = wrapper.handle().lock() {
                                             let type_name = guard.type_name();
@@ -256,9 +230,15 @@ fn generate_field_migration(field_name: &syn::Ident, field_type: &Type) -> Token
                                                     ::hotline::RUSTC_COMMIT
                                                 ).map_err(|e| e.to_string())?;
 
+                                                // Preserve the object ID
+                                                let old_id = guard.object_id();
+
                                                 // Restore state
                                                 new_obj.deserialize_state(&data)?;
                                                 new_obj.set_registry(registry);
+                                                new_obj.set_object_id(old_id);
+
+                                                eprintln!("Migrating {} object {} -> new object", type_name, old_id);
 
                                                 // Swap inside mutex
                                                 *guard = new_obj;
@@ -295,9 +275,15 @@ fn generate_field_migration(field_name: &syn::Ident, field_type: &Type) -> Token
                             ::hotline::RUSTC_COMMIT
                         ).map_err(|e| e.to_string())?;
 
+                        // Preserve the object ID
+                        let old_id = guard.object_id();
+
                         // Restore state
                         new_obj.deserialize_state(&data)?;
                         new_obj.set_registry(registry);
+                        new_obj.set_object_id(old_id);
+
+                        eprintln!("Migrating {} object {} -> new object", type_name, old_id);
 
                         // Swap inside mutex
                         *guard = new_obj;

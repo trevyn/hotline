@@ -218,6 +218,12 @@ fn generate_typed_wrapper(
                 }
             }
 
+            fn set_object_id(&mut self, id: u64) {
+                if let Ok(mut guard) = self.0.lock() {
+                    guard.set_object_id(id);
+                }
+            }
+
             fn as_any(&self) -> &dyn ::std::any::Any {
                 self as &dyn ::std::any::Any
             }

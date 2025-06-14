@@ -126,6 +126,7 @@ pub fn generate_object_id() -> u64 {
 pub trait HotlineObject: Any + Send + Sync {
     fn type_name(&self) -> &'static str;
     fn object_id(&self) -> u64;
+    fn set_object_id(&mut self, id: u64);
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_registry(&mut self, registry: &'static LibraryRegistry);

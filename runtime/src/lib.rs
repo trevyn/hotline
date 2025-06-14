@@ -12,12 +12,16 @@ pub const RUSTC_COMMIT: &str = env!("RUSTC_COMMIT_HASH");
 pub struct DirectRuntime {
     library_registry: LibraryRegistry,
     watcher_thread: Option<thread::JoinHandle<()>>,
-    root_objects: Vec<(String, ObjectHandle)>, // (type_name, handle)
+    root_objects: Arc<Mutex<Vec<(String, ObjectHandle)>>>, // (type_name, handle)
 }
 
 impl DirectRuntime {
     pub fn new() -> Self {
-        Self { library_registry: LibraryRegistry::new(), watcher_thread: None, root_objects: Vec::new() }
+        Self {
+            library_registry: LibraryRegistry::new(),
+            watcher_thread: None,
+            root_objects: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -25,7 +29,7 @@ impl DirectRuntime {
         Self {
             library_registry: LibraryRegistry::new_with_custom_loader(),
             watcher_thread: None,
-            root_objects: Vec::new(),
+            root_objects: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -34,7 +38,9 @@ impl DirectRuntime {
     }
 
     pub fn register_root(&mut self, type_name: &str, handle: ObjectHandle) {
-        self.root_objects.push((type_name.to_string(), handle));
+        if let Ok(mut roots) = self.root_objects.lock() {
+            roots.push((type_name.to_string(), handle));
+        }
     }
 
     pub fn hot_reload(&mut self, lib_path: &str, type_name: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -52,9 +58,11 @@ impl DirectRuntime {
     }
 
     fn trigger_migrations(&self, reloaded_libs: &HashSet<String>) -> Result<(), Box<dyn std::error::Error>> {
-        for (_, handle) in &self.root_objects {
-            if let Ok(mut guard) = handle.lock() {
-                guard.migrate_children(reloaded_libs)?;
+        if let Ok(roots) = self.root_objects.lock() {
+            for (_, handle) in roots.iter() {
+                if let Ok(mut guard) = handle.lock() {
+                    guard.migrate_children(reloaded_libs)?;
+                }
             }
         }
         Ok(())
@@ -93,9 +101,34 @@ impl DirectRuntime {
         let path = path.to_string();
         let registry = self.library_registry.clone();
 
+        // Create a channel for reload notifications
+        let (reload_tx, reload_rx) = std::sync::mpsc::channel::<String>();
+
+        // Clone root_objects Arc for the migration thread
+        let root_objects = self.root_objects.clone();
+
         let handle = thread::spawn(move || {
-            if let Err(e) = watch_and_reload_files(path, registry) {
+            if let Err(e) = watch_and_reload_files(path, registry, reload_tx) {
                 eprintln!("File watcher error: {}", e);
+            }
+        });
+
+        // Spawn another thread to handle reload notifications
+        thread::spawn(move || {
+            while let Ok(type_name) = reload_rx.recv() {
+                let mut reloaded_libs = HashSet::new();
+                reloaded_libs.insert(type_name.clone());
+
+                // Trigger migrations on all root objects
+                if let Ok(roots) = root_objects.lock() {
+                    for (_, handle) in roots.iter() {
+                        if let Ok(mut guard) = handle.lock() {
+                            if let Err(e) = guard.migrate_children(&reloaded_libs) {
+                                eprintln!("Migration failed for {}: {}", type_name, e);
+                            }
+                        }
+                    }
+                }
             }
         });
 
@@ -104,7 +137,11 @@ impl DirectRuntime {
     }
 }
 
-fn watch_and_reload_files(path: String, registry: LibraryRegistry) -> Result<(), Box<dyn std::error::Error>> {
+fn watch_and_reload_files(
+    path: String,
+    registry: LibraryRegistry,
+    reload_tx: std::sync::mpsc::Sender<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = channel();
 
     let mut watcher = RecommendedWatcher::new(tx, Config::default().with_poll_interval(Duration::from_millis(500)))?;
@@ -160,6 +197,8 @@ fn watch_and_reload_files(path: String, registry: LibraryRegistry) -> Result<(),
                                             eprintln!("Failed to reload {}: {}", object_name, e);
                                         } else {
                                             eprintln!("Successfully reloaded {}", object_name);
+                                            // Notify about successful reload so migrations can be triggered
+                                            let _ = reload_tx.send(object_name.clone());
                                         }
                                     }
                                 }

@@ -384,6 +384,7 @@ pub fn object(input: TokenStream) -> TokenStream {
         impl ::hotline::HotlineObject for #struct_name {
             fn type_name(&self) -> &'static str { stringify!(#struct_name) }
             fn object_id(&self) -> u64 { self.__hotline_object_id }
+            fn set_object_id(&mut self, id: u64) { self.__hotline_object_id = id; }
             fn as_any(&self) -> &dyn ::std::any::Any { self }
             fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any { self }
             fn set_registry(&mut self, registry: &'static ::hotline::LibraryRegistry) {
