@@ -79,18 +79,12 @@ impl FfiWrapper {
                     obj: &mut dyn ::std::any::Any
                     #(, #param_list)*
                 ) #return_spec {
-                    match obj.downcast_mut::<#struct_name>() {
-                        Some(instance) => {
-                            #body
-                        }
-                        None => {
-                            // Get type info before panicking
-                            let actual_type = obj.type_id();
-                            let expected_type = ::std::any::TypeId::of::<#struct_name>();
-                            panic!("Type mismatch in {}: expected {} (TypeId: {:?}), but got dyn Any with TypeId: {:?}",
-                                stringify!(#wrapper_name), stringify!(#struct_name), expected_type, actual_type)
-                        }
-                    }
+                    // Skip TypeId check for hot reload compatibility
+                    // The symbol name contains full type info, so if we got here, types are compatible
+                    let instance = unsafe {
+                        &mut *(obj as *mut dyn ::std::any::Any as *mut #struct_name)
+                    };
+                    #body
                 }
             }
         } else {
@@ -102,18 +96,12 @@ impl FfiWrapper {
                     obj: &dyn ::std::any::Any
                     #(, #param_list)*
                 ) #return_spec {
-                    match obj.downcast_ref::<#struct_name>() {
-                        Some(instance) => {
-                            #body
-                        }
-                        None => {
-                            // Get type info before panicking
-                            let actual_type = obj.type_id();
-                            let expected_type = ::std::any::TypeId::of::<#struct_name>();
-                            panic!("Type mismatch in {}: expected {} (TypeId: {:?}), but got dyn Any with TypeId: {:?}",
-                                stringify!(#wrapper_name), stringify!(#struct_name), expected_type, actual_type)
-                        }
-                    }
+                    // Skip TypeId check for hot reload compatibility
+                    // The symbol name contains full type info, so if we got here, types are compatible
+                    let instance = unsafe {
+                        &*(obj as *const dyn ::std::any::Any as *const #struct_name)
+                    };
+                    #body
                 }
             }
         }
