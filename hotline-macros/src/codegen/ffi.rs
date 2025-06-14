@@ -79,11 +79,18 @@ impl FfiWrapper {
                     obj: &mut dyn ::std::any::Any
                     #(, #param_list)*
                 ) #return_spec {
-                    let obj_type_name = ::std::any::type_name_of_val(&*obj);
-                    let instance = obj.downcast_mut::<#struct_name>()
-                        .unwrap_or_else(|| panic!("Type mismatch in {}: expected {}, but got {}",
-                            stringify!(#wrapper_name), stringify!(#struct_name), obj_type_name));
-                    #body
+                    match obj.downcast_mut::<#struct_name>() {
+                        Some(instance) => {
+                            #body
+                        }
+                        None => {
+                            // Get type info before panicking
+                            let actual_type = obj.type_id();
+                            let expected_type = ::std::any::TypeId::of::<#struct_name>();
+                            panic!("Type mismatch in {}: expected {} (TypeId: {:?}), but got dyn Any with TypeId: {:?}",
+                                stringify!(#wrapper_name), stringify!(#struct_name), expected_type, actual_type)
+                        }
+                    }
                 }
             }
         } else {
@@ -95,11 +102,18 @@ impl FfiWrapper {
                     obj: &dyn ::std::any::Any
                     #(, #param_list)*
                 ) #return_spec {
-                    let obj_type_name = ::std::any::type_name_of_val(&*obj);
-                    let instance = obj.downcast_ref::<#struct_name>()
-                        .unwrap_or_else(|| panic!("Type mismatch in {}: expected {}, but got {}",
-                            stringify!(#wrapper_name), stringify!(#struct_name), obj_type_name));
-                    #body
+                    match obj.downcast_ref::<#struct_name>() {
+                        Some(instance) => {
+                            #body
+                        }
+                        None => {
+                            // Get type info before panicking
+                            let actual_type = obj.type_id();
+                            let expected_type = ::std::any::TypeId::of::<#struct_name>();
+                            panic!("Type mismatch in {}: expected {} (TypeId: {:?}), but got dyn Any with TypeId: {:?}",
+                                stringify!(#wrapper_name), stringify!(#struct_name), expected_type, actual_type)
+                        }
+                    }
                 }
             }
         }

@@ -192,16 +192,21 @@ impl hotline::EventHandler for ChatInterfaceAdapter {
 hotline::object!({
     pub struct Application {
         window_manager: Option<WindowManager>,
+        #[serde(skip)]
         event_handlers: Vec<Box<dyn hotline::EventHandler>>,
         gpu_renderer: Option<GPURenderer>,
+        #[serde(skip)]
         gpu_atlases: Vec<AtlasData>,
+        #[serde(skip)]
         gpu_commands: Vec<RenderCommand>,
         fps_counter: Option<TextRenderer>,
         autonomy_checkbox: Option<Checkbox>,
         render_time_checkbox: Option<Checkbox>,
         color_wheel: Option<ColorWheel>,
         anthropic_client: Option<AnthropicClient>,
+        #[serde(skip)]
         frame_times: std::collections::VecDeque<std::time::Instant>,
+        #[serde(skip)]
         last_fps_update: Option<std::time::Instant>,
         current_fps: f64,
         mouse_x: f64,
@@ -211,6 +216,7 @@ hotline::object!({
         width: u32,
         height: u32,
         zoom_display: Option<TextRenderer>,
+        #[serde(skip)]
         zoom_display_until: Option<std::time::Instant>,
     }
 

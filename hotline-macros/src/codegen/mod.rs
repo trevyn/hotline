@@ -3,6 +3,7 @@ pub mod custom_types;
 pub mod ffi;
 pub mod fields;
 pub mod methods;
+pub mod serde_impl;
 pub mod type_hash;
 pub mod wrapper;
 

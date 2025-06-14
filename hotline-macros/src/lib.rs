@@ -17,6 +17,7 @@ use codegen::custom_types::generate_custom_type_proxies_for_types;
 use codegen::fields::{generate_default_impl, generate_field_accessors, generate_setter_builder_methods};
 use codegen::methods::generate_method_wrappers;
 use codegen::process_struct_attributes;
+use codegen::serde_impl::{generate_migrate_children_impl, generate_state_serialization};
 use codegen::wrapper::generate_typed_wrappers;
 use discovery::{extract_object_methods, find_referenced_custom_types, find_referenced_object_types};
 use parser::ObjectInput;
@@ -46,9 +47,35 @@ fn add_registry_field(struct_item: &syn::ItemStruct) -> proc_macro2::TokenStream
     if let Fields::Named(ref mut fields) = modified.fields {
         let registry_field: syn::Field = syn::parse_quote! {
             #[doc(hidden)]
+            #[serde(skip)]
             __hotline_registry: ::hotline::RegistryPtr
         };
         fields.named.push(registry_field);
+
+        // Add object ID field
+        let id_field: syn::Field = syn::parse_quote! {
+            #[doc(hidden)]
+            #[serde(skip)]
+            __hotline_object_id: u64
+        };
+        fields.named.push(id_field);
+    }
+
+    // Add Serialize and Deserialize derives if not already present
+    let has_serialize = modified.attrs.iter().any(|attr| {
+        if attr.path().is_ident("derive") { attr.to_token_stream().to_string().contains("Serialize") } else { false }
+    });
+
+    if !has_serialize {
+        let derive_attr: syn::Attribute = syn::parse_quote! {
+            #[derive(::hotline::serde::Serialize, ::hotline::serde::Deserialize)]
+        };
+        modified.attrs.push(derive_attr);
+
+        let serde_crate_attr: syn::Attribute = syn::parse_quote! {
+            #[serde(crate = "::hotline::serde")]
+        };
+        modified.attrs.push(serde_crate_attr);
     }
 
     quote! { #modified }
@@ -60,6 +87,69 @@ pub fn object(input: TokenStream) -> TokenStream {
     let ObjectInput { type_defs, struct_item, impl_blocks } = syn::parse_macro_input!(input as ObjectInput);
     let struct_name = &struct_item.ident;
     let rustc_commit = get_rustc_commit_hash();
+
+    // Get names of types defined in this object to exclude them from proxies (before moving)
+    let local_type_names: HashSet<String> = type_defs
+        .iter()
+        .filter_map(|td| match td {
+            syn::Item::Struct(s) => Some(s.ident.to_string()),
+            syn::Item::Enum(e) => Some(e.ident.to_string()),
+            _ => None,
+        })
+        .collect();
+
+    // Process type definitions to add Serialize/Deserialize derives
+    let processed_type_defs = type_defs
+        .into_iter()
+        .map(|mut td| {
+            match &mut td {
+                syn::Item::Struct(s) => {
+                    let has_serialize = s.attrs.iter().any(|attr| {
+                        if attr.path().is_ident("derive") {
+                            attr.to_token_stream().to_string().contains("Serialize")
+                        } else {
+                            false
+                        }
+                    });
+
+                    if !has_serialize {
+                        let derive_attr: syn::Attribute = syn::parse_quote! {
+                            #[derive(::hotline::serde::Serialize, ::hotline::serde::Deserialize)]
+                        };
+                        s.attrs.push(derive_attr);
+
+                        let serde_crate_attr: syn::Attribute = syn::parse_quote! {
+                            #[serde(crate = "::hotline::serde")]
+                        };
+                        s.attrs.push(serde_crate_attr);
+                    }
+                }
+                syn::Item::Enum(e) => {
+                    let has_serialize = e.attrs.iter().any(|attr| {
+                        if attr.path().is_ident("derive") {
+                            attr.to_token_stream().to_string().contains("Serialize")
+                        } else {
+                            false
+                        }
+                    });
+
+                    if !has_serialize {
+                        let derive_attr: syn::Attribute = syn::parse_quote! {
+                            #[derive(::hotline::serde::Serialize, ::hotline::serde::Deserialize)]
+                        };
+                        e.attrs.push(derive_attr);
+
+                        let serde_crate_attr: syn::Attribute = syn::parse_quote! {
+                            #[serde(crate = "::hotline::serde")]
+                        };
+                        e.attrs.push(serde_crate_attr);
+                    }
+                }
+                _ => {}
+            }
+            td
+        })
+        .collect::<Vec<_>>();
 
     let processed = process_struct_attributes(&struct_item);
 
@@ -120,6 +210,8 @@ pub fn object(input: TokenStream) -> TokenStream {
     let setter_builder_impl = generate_setter_builder_methods(struct_name, &processed);
     let default_impl =
         should_generate_default.then(|| generate_default_impl(struct_name, &processed)).unwrap_or_default();
+    let state_serialization = generate_state_serialization(struct_name, &processed);
+    let migrate_children_impl = generate_migrate_children_impl(struct_name, &processed);
     let referenced_objects = find_referenced_object_types(&struct_item, &impl_blocks);
 
     // Collect all objects and custom types transitively
@@ -209,16 +301,6 @@ pub fn object(input: TokenStream) -> TokenStream {
     // Also include custom types discovered from imported object wrappers
     local_custom_types.extend(transitive_custom_types);
 
-    // Get names of types defined in this object to exclude them from proxies
-    let local_type_names: HashSet<String> = type_defs
-        .iter()
-        .filter_map(|td| match td {
-            syn::Item::Struct(s) => Some(s.ident.to_string()),
-            syn::Item::Enum(e) => Some(e.ident.to_string()),
-            _ => None,
-        })
-        .collect();
-
     // Collect custom types from imported objects that we need proxies for
     let mut custom_types_from_objects = HashSet::new();
     // Include both directly referenced and transitively discovered objects
@@ -290,7 +372,7 @@ pub fn object(input: TokenStream) -> TokenStream {
         #[allow(dead_code)]
         type Like<T> = T;
 
-        #(#type_defs)*
+        #(#processed_type_defs)*
 
         #custom_type_proxies
 
@@ -301,6 +383,7 @@ pub fn object(input: TokenStream) -> TokenStream {
 
         impl ::hotline::HotlineObject for #struct_name {
             fn type_name(&self) -> &'static str { stringify!(#struct_name) }
+            fn object_id(&self) -> u64 { self.__hotline_object_id }
             fn as_any(&self) -> &dyn ::std::any::Any { self }
             fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any { self }
             fn set_registry(&mut self, registry: &'static ::hotline::LibraryRegistry) {
@@ -309,7 +392,19 @@ pub fn object(input: TokenStream) -> TokenStream {
             fn get_registry(&self) -> Option<&'static ::hotline::LibraryRegistry> {
                 self.__hotline_registry.get()
             }
+            fn serialize_state(&self) -> Result<Vec<u8>, String> {
+                self.__serialize_state_impl()
+            }
+            fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
+                self.__deserialize_state_impl(data)
+            }
+            fn migrate_children(&mut self, reloaded_libs: &::std::collections::HashSet<String>) -> Result<(), String> {
+                self.migrate_children_impl(reloaded_libs)
+            }
         }
+
+        #state_serialization
+        #migrate_children_impl
 
         #setter_builder_impl
         #(#field_accessors)*

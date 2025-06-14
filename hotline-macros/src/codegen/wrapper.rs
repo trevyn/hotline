@@ -161,6 +161,36 @@ fn generate_typed_wrapper(
             #(#method_impls)*
         }
 
+        impl AsRef<::hotline::ObjectHandle> for #type_ident {
+            fn as_ref(&self) -> &::hotline::ObjectHandle {
+                &self.0
+            }
+        }
+
+        impl From<::hotline::ObjectHandle> for #type_ident {
+            fn from(handle: ::hotline::ObjectHandle) -> Self {
+                Self(handle)
+            }
+        }
+
+        impl ::hotline::serde::Serialize for #type_ident {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: ::hotline::serde::Serializer,
+            {
+                ::hotline::object_serde::serialize_object_handle(&self.0, serializer)
+            }
+        }
+
+        impl<'de> ::hotline::serde::Deserialize<'de> for #type_ident {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: ::hotline::serde::Deserializer<'de>,
+            {
+                ::hotline::object_serde::deserialize_object_handle(deserializer).map(#type_ident)
+            }
+        }
+
         impl ::std::ops::Deref for #type_ident {
             type Target = ::hotline::ObjectHandle;
             fn deref(&self) -> &Self::Target { &self.0 }
@@ -177,6 +207,14 @@ fn generate_typed_wrapper(
                     guard.type_name()
                 } else {
                     #type_name
+                }
+            }
+
+            fn object_id(&self) -> u64 {
+                if let Ok(guard) = self.0.lock() {
+                    guard.object_id()
+                } else {
+                    0
                 }
             }
 
@@ -199,6 +237,30 @@ fn generate_typed_wrapper(
                     guard.get_registry()
                 } else {
                     None
+                }
+            }
+
+            fn serialize_state(&self) -> Result<Vec<u8>, String> {
+                if let Ok(guard) = self.0.lock() {
+                    guard.serialize_state()
+                } else {
+                    Err("Failed to lock object".to_string())
+                }
+            }
+
+            fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
+                if let Ok(mut guard) = self.0.lock() {
+                    guard.deserialize_state(data)
+                } else {
+                    Err("Failed to lock object".to_string())
+                }
+            }
+
+            fn migrate_children(&mut self, reloaded_libs: &::std::collections::HashSet<String>) -> Result<(), String> {
+                if let Ok(mut guard) = self.0.lock() {
+                    guard.migrate_children(reloaded_libs)
+                } else {
+                    Err("Failed to lock object".to_string())
                 }
             }
         }

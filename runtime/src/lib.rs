@@ -1,5 +1,6 @@
 use hotline::{HotlineObject, LibraryRegistry, ObjectHandle};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
@@ -11,24 +12,51 @@ pub const RUSTC_COMMIT: &str = env!("RUSTC_COMMIT_HASH");
 pub struct DirectRuntime {
     library_registry: LibraryRegistry,
     watcher_thread: Option<thread::JoinHandle<()>>,
+    root_objects: Vec<(String, ObjectHandle)>, // (type_name, handle)
 }
 
 impl DirectRuntime {
     pub fn new() -> Self {
-        Self { library_registry: LibraryRegistry::new(), watcher_thread: None }
+        Self { library_registry: LibraryRegistry::new(), watcher_thread: None, root_objects: Vec::new() }
     }
 
     #[cfg(target_os = "macos")]
     pub fn new_with_custom_loader() -> Self {
-        Self { library_registry: LibraryRegistry::new_with_custom_loader(), watcher_thread: None }
+        Self {
+            library_registry: LibraryRegistry::new_with_custom_loader(),
+            watcher_thread: None,
+            root_objects: Vec::new(),
+        }
     }
 
     pub fn register(&mut self, obj: Box<dyn HotlineObject>) -> ObjectHandle {
         Arc::new(Mutex::new(obj))
     }
 
-    pub fn hot_reload(&mut self, lib_path: &str, _type_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn register_root(&mut self, type_name: &str, handle: ObjectHandle) {
+        self.root_objects.push((type_name.to_string(), handle));
+    }
+
+    pub fn hot_reload(&mut self, lib_path: &str, type_name: &str) -> Result<(), Box<dyn std::error::Error>> {
         self.library_registry.load(lib_path)?;
+
+        // Trigger migrations on root objects
+        let reloaded_libs = {
+            let mut set = HashSet::new();
+            set.insert(type_name.to_string());
+            set
+        };
+
+        self.trigger_migrations(&reloaded_libs)?;
+        Ok(())
+    }
+
+    fn trigger_migrations(&self, reloaded_libs: &HashSet<String>) -> Result<(), Box<dyn std::error::Error>> {
+        for (_, handle) in &self.root_objects {
+            if let Ok(mut guard) = handle.lock() {
+                guard.migrate_children(reloaded_libs)?;
+            }
+        }
         Ok(())
     }
 

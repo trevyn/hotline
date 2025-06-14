@@ -135,8 +135,8 @@ pub fn generate_default_impl(struct_name: &Ident, processed: &ProcessedStruct) -
             .filter_map(|field| {
                 let field_name = field.ident.as_ref()?;
 
-                // Skip the internal registry field
-                if field_name == "__hotline_registry" {
+                // Skip internal fields
+                if field_name.to_string().starts_with("__hotline_") {
                     return None;
                 }
 
@@ -154,7 +154,8 @@ pub fn generate_default_impl(struct_name: &Ident, processed: &ProcessedStruct) -
                 fn default() -> Self {
                     Self {
                         #(#field_inits,)*
-                        __hotline_registry: ::hotline::RegistryPtr::new()
+                        __hotline_registry: ::hotline::RegistryPtr::new(),
+                        __hotline_object_id: ::hotline::generate_object_id()
                     }
                 }
             }

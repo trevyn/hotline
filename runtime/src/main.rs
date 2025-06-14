@@ -85,6 +85,9 @@ fn main() -> Result<(), String> {
         }
     };
 
+    // Register Application as a root object for hot reload migrations
+    runtime.register_root("Application", app_handle.clone());
+
     // Get the Application object and call run
     if let Ok(mut app_guard) = app_handle.lock() {
         let app = &mut **app_guard;

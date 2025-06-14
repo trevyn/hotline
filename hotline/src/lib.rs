@@ -1,7 +1,15 @@
 pub use hotline_macros::object;
 
 use std::any::Any;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
+
+pub use serde;
+pub use serde::{Deserialize, Serialize};
+pub use serde_json;
+
+pub mod object_serde;
 
 // Re-export libloading for objects to use
 pub use libloading;
@@ -80,12 +88,51 @@ where
     CURRENT_REGISTRY.with(|r| r.borrow().as_ref().map(|registry| f(registry)))
 }
 
+// Global object registry for tracking objects by ID
+static OBJECT_REGISTRY: OnceLock<RwLock<HashMap<u64, ObjectHandle>>> = OnceLock::new();
+static NEXT_OBJECT_ID: AtomicU64 = AtomicU64::new(1);
+
+pub fn register_object(id: u64, handle: ObjectHandle) {
+    let registry = OBJECT_REGISTRY.get_or_init(|| RwLock::new(HashMap::new()));
+    if let Ok(mut reg) = registry.write() {
+        reg.insert(id, handle);
+    }
+}
+
+pub fn update_object_handle(id: u64, handle: ObjectHandle) {
+    if let Some(registry) = OBJECT_REGISTRY.get() {
+        if let Ok(mut reg) = registry.write() {
+            reg.insert(id, handle);
+        }
+    }
+}
+
+pub fn unregister_object(id: u64) {
+    if let Some(registry) = OBJECT_REGISTRY.get() {
+        if let Ok(mut reg) = registry.write() {
+            reg.remove(&id);
+        }
+    }
+}
+
+pub fn get_object_by_id(id: u64) -> Option<ObjectHandle> {
+    OBJECT_REGISTRY.get()?.read().ok()?.get(&id).cloned()
+}
+
+pub fn generate_object_id() -> u64 {
+    NEXT_OBJECT_ID.fetch_add(1, Ordering::SeqCst)
+}
+
 pub trait HotlineObject: Any + Send + Sync {
     fn type_name(&self) -> &'static str;
+    fn object_id(&self) -> u64;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_registry(&mut self, registry: &'static LibraryRegistry);
     fn get_registry(&self) -> Option<&'static LibraryRegistry>;
+    fn serialize_state(&self) -> Result<Vec<u8>, String>;
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String>;
+    fn migrate_children(&mut self, reloaded_libs: &HashSet<String>) -> Result<(), String>;
 }
 
 pub type ObjectHandle = Arc<Mutex<Box<dyn HotlineObject>>>;

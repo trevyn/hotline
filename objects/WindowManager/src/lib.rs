@@ -1,4 +1,5 @@
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, ::hotline::serde::Serialize, ::hotline::serde::Deserialize)]
+#[serde(crate = "::hotline::serde")]
 pub enum SelectedObject {
     Rect(usize),
     Polygon(usize),
