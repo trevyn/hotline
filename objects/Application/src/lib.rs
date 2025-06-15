@@ -218,6 +218,7 @@ hotline::object!({
         zoom_display: Option<TextRenderer>,
         #[serde(skip)]
         zoom_display_until: Option<std::time::Instant>,
+        game_controller: Option<GameController>,
     }
 
     impl Application {
@@ -352,12 +353,23 @@ hotline::object!({
             self.last_fps_update = Some(std::time::Instant::now());
             self.current_fps = 0.0;
 
+            // Create game controller display
+            self.game_controller = Some(GameController::new());
+            if let Some(ref mut gc) = self.game_controller {
+                gc.initialize();
+                let rect = Rect::new();
+                let mut r_ref = rect.clone();
+                r_ref.initialize(200.0, 400.0, 200.0, 370.0);
+                gc.set_rect(rect);
+            }
+
             Ok(())
         }
 
         pub fn run(&mut self) -> Result<(), String> {
             let sdl_context = sdl3::init().map_err(|e| e.to_string())?;
             let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
+            let game_controller_subsystem = sdl_context.gamepad().map_err(|e| e.to_string())?;
 
             let display = video_subsystem.get_primary_display().map_err(|e| e.to_string())?;
             let usable_bounds = display.get_usable_bounds().map_err(|e| e.to_string())?;
@@ -389,6 +401,28 @@ hotline::object!({
                 )
                 .map_err(|e| e.to_string())?;
             texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
+
+            // Check for connected game controllers
+            let controllers = game_controller_subsystem.gamepads().map_err(|e| e.to_string())?;
+            eprintln!("Found {} game controllers", controllers.len());
+
+            // Open the first available controller
+            let mut _controller = None;
+            if !controllers.is_empty() {
+                let controller_id = controllers[0];
+                match game_controller_subsystem.open(controller_id) {
+                    Ok(controller) => {
+                        eprintln!("Opened game controller {}: {:?}", controller_id, controller.name());
+                        if let Some(ref mut gc) = self.game_controller {
+                            gc.set_connected(true, Some(controller_id));
+                        }
+                        _controller = Some(controller);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to open game controller {}: {}", controller_id, e);
+                    }
+                }
+            }
 
             #[cfg(target_os = "linux")]
             {
@@ -656,6 +690,89 @@ hotline::object!({
                                 }
                             }
                         }
+                        Event::ControllerAxisMotion { which, axis, value, .. } => {
+                            if let Some(ref mut gc) = self.game_controller {
+                                // SDL3 axes: 0=LeftX, 1=LeftY, 2=RightX, 3=RightY, 4=LeftTrigger, 5=RightTrigger
+                                let axis_idx = axis as u8;
+                                let normalized_value = if axis_idx >= 4 {
+                                    // Triggers: 0 to 32767 -> 0.0 to 1.0
+                                    value.max(0) as f32 / 32767.0
+                                } else {
+                                    // Sticks: -32768 to 32767 -> -1.0 to 1.0
+                                    value as f32 / 32768.0
+                                };
+                                gc.update_axis(axis_idx, normalized_value);
+                            }
+                        }
+                        Event::ControllerButtonDown { which, button, .. } => {
+                            if let Some(ref mut gc) = self.game_controller {
+                                gc.update_button(button as u8, true);
+                            }
+                        }
+                        Event::ControllerButtonUp { which, button, .. } => {
+                            if let Some(ref mut gc) = self.game_controller {
+                                gc.update_button(button as u8, false);
+                            }
+                        }
+                        Event::ControllerDeviceAdded { which, .. } => {
+                            eprintln!("Game controller {} connected", which);
+                            // Store the controller id to open it later if needed
+                            if _controller.is_none() {
+                                match game_controller_subsystem.open(which) {
+                                    Ok(controller) => {
+                                        eprintln!("Opened game controller {}: {:?}", which, controller.name());
+                                        if let Some(ref mut gc) = self.game_controller {
+                                            gc.set_connected(true, Some(which));
+                                        }
+                                        _controller = Some(controller);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to open game controller {}: {}", which, e);
+                                    }
+                                }
+                            }
+                        }
+                        Event::ControllerDeviceRemoved { which, .. } => {
+                            eprintln!("Game controller {} disconnected", which);
+                            if let Some(ref mut gc) = self.game_controller {
+                                gc.set_connected(false, None);
+                            }
+                        }
+                        // Also handle raw joystick events as fallback
+                        Event::JoyAxisMotion { which, axis_idx, value, .. } => {
+                            if let Some(ref mut gc) = self.game_controller {
+                                let normalized_value = if axis_idx >= 4 {
+                                    // Triggers: 0 to 32767 -> 0.0 to 1.0
+                                    value.max(0) as f32 / 32767.0
+                                } else {
+                                    // Sticks: -32768 to 32767 -> -1.0 to 1.0
+                                    value as f32 / 32768.0
+                                };
+                                gc.update_axis(axis_idx, normalized_value);
+                            }
+                        }
+                        Event::JoyButtonDown { which, button_idx, .. } => {
+                            if let Some(ref mut gc) = self.game_controller {
+                                gc.update_button(button_idx, true);
+                            }
+                        }
+                        Event::JoyButtonUp { which, button_idx, .. } => {
+                            if let Some(ref mut gc) = self.game_controller {
+                                gc.update_button(button_idx, false);
+                            }
+                        }
+                        Event::JoyDeviceAdded { which, .. } => {
+                            eprintln!("Joystick {} connected", which);
+                            if let Some(ref mut gc) = self.game_controller {
+                                gc.set_connected(true, Some(which));
+                            }
+                        }
+                        Event::JoyDeviceRemoved { which, .. } => {
+                            eprintln!("Joystick {} disconnected", which);
+                            if let Some(ref mut gc) = self.game_controller {
+                                gc.set_connected(false, None);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -738,6 +855,11 @@ hotline::object!({
                     }
                     if let Some(ref mut cb) = self.render_time_checkbox {
                         cb.render(buffer, 800, 600, pitch as i64);
+                    }
+
+                    // Render game controller
+                    if let Some(ref mut gc) = self.game_controller {
+                        gc.render(buffer, bw, bh, pitch as i64);
                     }
 
                     // Render FPS counter
