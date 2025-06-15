@@ -244,9 +244,9 @@ hotline::object!({
             let (win_w, win_h) = canvas.window().size();
             let scale_x = self.width as f64 / win_w as f64;
             let scale_y = self.height as f64 / win_h as f64;
-            // With SDL render scale, don't divide by pixel_multiple
-            let adj_x = x as f64 * scale_x;
-            let adj_y = y as f64 * scale_y;
+            // Transform to texture coordinates
+            let adj_x = x as f64 * scale_x / self.pixel_multiple as f64;
+            let adj_y = y as f64 * scale_y / self.pixel_multiple as f64;
             (adj_x, adj_y)
         }
 
@@ -487,18 +487,15 @@ hotline::object!({
             self.width = dw;
             self.height = dh;
 
-            // Create texture at full resolution
+            // Create texture at scaled resolution with render target support
             let mut texture = texture_creator
-                .create_texture_streaming(
+                .create_texture_target(
                     PixelFormat::try_from(native_format_u32 as i64).unwrap(),
-                    self.width,
-                    self.height,
+                    self.width / self.pixel_multiple,
+                    self.height / self.pixel_multiple,
                 )
                 .map_err(|e| e.to_string())?;
             texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
-
-            // Set initial render scale
-            canvas.set_scale(self.pixel_multiple as f32, self.pixel_multiple as f32).map_err(|e| e.to_string())?;
 
             // Check for connected game controllers
             let controllers = game_controller_subsystem.gamepads().map_err(|e| e.to_string())?;
@@ -573,8 +570,8 @@ hotline::object!({
                             self.width = dw;
                             self.height = dh;
                             texture = texture_creator
-                                .create_texture_streaming(
-                                    PixelFormat::try_from(sdl3::sys::everything::SDL_PIXELFORMAT_ARGB8888).unwrap(),
+                                .create_texture_target(
+                                    PixelFormat::try_from(native_format_u32 as i64).unwrap(),
                                     self.width / self.pixel_multiple,
                                     self.height / self.pixel_multiple,
                                 )
@@ -680,8 +677,8 @@ hotline::object!({
                             let (win_w, win_h) = canvas.window().size();
                             let scale_x = self.width as f64 / win_w as f64;
                             let scale_y = self.height as f64 / win_h as f64;
-                            let adj_x = self.mouse_x * scale_x;
-                            let adj_y = self.mouse_y * scale_y;
+                            let adj_x = self.mouse_x * scale_x / self.pixel_multiple as f64;
+                            let adj_y = self.mouse_y * scale_y / self.pixel_multiple as f64;
 
                             // Dispatch to event handlers in order
                             for handler in &mut self.event_handlers {
@@ -718,10 +715,15 @@ hotline::object!({
                                         zoom.set_text(format!("{}x", self.pixel_multiple));
                                     }
                                     self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
-                                    // Use SDL_SetRenderScale instead of recreating texture
-                                    canvas
-                                        .set_scale(self.pixel_multiple as f32, self.pixel_multiple as f32)
+                                    // Recreate texture at new size
+                                    texture = texture_creator
+                                        .create_texture_target(
+                                            PixelFormat::try_from(native_format_u32 as i64).unwrap(),
+                                            self.width / self.pixel_multiple,
+                                            self.height / self.pixel_multiple,
+                                        )
                                         .map_err(|e| e.to_string())?;
+                                    texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                                 }
                                 Keycode::Minus | Keycode::KpMinus if cmd && self.pixel_multiple > 1 => {
                                     self.pixel_multiple -= 1;
@@ -729,10 +731,15 @@ hotline::object!({
                                         zoom.set_text(format!("{}x", self.pixel_multiple));
                                     }
                                     self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
-                                    // Use SDL_SetRenderScale instead of recreating texture
-                                    canvas
-                                        .set_scale(self.pixel_multiple as f32, self.pixel_multiple as f32)
+                                    // Recreate texture at new size
+                                    texture = texture_creator
+                                        .create_texture_target(
+                                            PixelFormat::try_from(native_format_u32 as i64).unwrap(),
+                                            self.width / self.pixel_multiple,
+                                            self.height / self.pixel_multiple,
+                                        )
                                         .map_err(|e| e.to_string())?;
+                                    texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                                 }
                                 Keycode::R => {
                                     // Check if any handler is focused (i.e., editing)
@@ -764,8 +771,8 @@ hotline::object!({
                                 let (win_w, win_h) = canvas.window().size();
                                 let scale_x = self.width as f64 / win_w as f64;
                                 let scale_y = self.height as f64 / win_h as f64;
-                                let adj_x = self.mouse_x * scale_x;
-                                let adj_y = self.mouse_y * scale_y;
+                                let adj_x = self.mouse_x * scale_x / self.pixel_multiple as f64;
+                                let adj_y = self.mouse_y * scale_y / self.pixel_multiple as f64;
 
                                 if let Some(ref mut wm) = self.window_manager {
                                     if let Some(registry) = wm.get_registry() {
@@ -922,12 +929,27 @@ hotline::object!({
                         self.gpu_commands.push(command.clone());
                     }
 
-                    // Execute the received commands
-                    self.execute_gpu_render(&mut canvas, native_format_u32)?;
+                    // Render to texture
+                    let native_format = native_format_u32;
+                    let self_ptr = self as *mut Self;
+                    canvas
+                        .with_texture_canvas(&mut texture, |texture_canvas| {
+                            texture_canvas.set_draw_color(Color::RGB(30, 30, 30));
+                            texture_canvas.clear();
+
+                            // Execute the received commands to texture
+                            // Safety: We're borrowing self mutably through the pointer
+                            unsafe {
+                                (*self_ptr).execute_gpu_render(texture_canvas, native_format).unwrap();
+                            }
+                        })
+                        .map_err(|e| e.to_string())?;
                 }
 
-                // Skip texture copy - GPU renders directly to canvas
-                // canvas.copy(&texture, None, None).map_err(|e| e.to_string())?;
+                // Copy texture to window with scaling
+                canvas.set_draw_color(Color::RGB(30, 30, 30));
+                canvas.clear();
+                canvas.copy(&texture, None, None).map_err(|e| e.to_string())?;
                 canvas.present();
             }
 
