@@ -11,7 +11,7 @@ hotline::object!({
         y: f64,
         #[setter]
         #[default((255, 255, 255, 255))]
-        color: (u8, u8, u8, u8), // BGRA
+        color: (u8, u8, u8, u8), // ABGR
         font: Option<Font>,
         atlas: Vec<u8>,
         atlas_width: u32,
@@ -85,7 +85,7 @@ hotline::object!({
             let mut cursor_x = self.x;
             let cursor_y = self.y;
 
-            let (b, g, r, a) = self.color;
+            let (a, b, g, r) = self.color;
             let mut prev_char: Option<char> = None;
 
             for ch in self.text.chars() {
@@ -192,7 +192,9 @@ hotline::object!({
 
             let atlas_id = match self.atlas_id {
                 Some(id) => id,
-                None => return,
+                None => {
+                    return;
+                }
             };
 
             let mut cursor_x = self.x;
@@ -224,7 +226,7 @@ hotline::object!({
                         src_height: glyph_height,
                         dest_x,
                         dest_y,
-                        color: self.color,
+                        color: self.color, // Already in ABGR order
                     });
 
                     cursor_x += advance as f64;

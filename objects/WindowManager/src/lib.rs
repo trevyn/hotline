@@ -56,7 +56,7 @@ hotline::object!({
                     .with_text("Hello, Hotline!".to_string())
                     .with_x(20.0)
                     .with_y(20.0)
-                    .with_color((0, 255, 255, 255)); // Yellow text in BGRA format
+                    .with_color((255, 0, 255, 255)); // Yellow text in ABGR format
                 self.text_renderer = Some(text_renderer);
 
                 // Create click inspector
@@ -507,71 +507,8 @@ hotline::object!({
         }
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
-            self.ensure_time_renderers();
-
-            // Render all rects
-            for (i, rect_handle) in self.rects.iter_mut().enumerate() {
-                let start = std::time::Instant::now();
-                rect_handle.render(buffer, buffer_width, buffer_height, pitch);
-                if self.show_render_times {
-                    let us = start.elapsed().as_micros();
-                    if let Some(label) = self.rect_time_labels.get_mut(i) {
-                        label.set_text(format!("{}us", us));
-                        let (x, y, _w, _h) = rect_handle.bounds();
-                        let lh = label.line_height();
-                        label.set_x(x);
-                        label.set_y(y - lh);
-                        label.render(buffer, buffer_width, buffer_height, pitch);
-                    }
-                }
-            }
-
-            // Render polygons
-            for (i, poly) in self.polygons.iter_mut().enumerate() {
-                let start = std::time::Instant::now();
-                poly.render(buffer, buffer_width, buffer_height, pitch);
-                if self.show_render_times {
-                    let us = start.elapsed().as_micros();
-                    if let Some(label) = self.polygon_time_labels.get_mut(i) {
-                        label.set_text(format!("{}us", us));
-                        let (x, y, _w, _h) = poly.bounds();
-                        let lh = label.line_height();
-                        label.set_x(x);
-                        label.set_y(y - lh);
-                        label.render(buffer, buffer_width, buffer_height, pitch);
-                    }
-                }
-            }
-
-            // Render images
-            for image in &mut self.images {
-                image.render(buffer, buffer_width, buffer_height, pitch);
-            }
-
-            // Render the highlight lens if we have one (this will render the selected rect with highlight)
-            if let Some(ref mut hl_handle) = self.highlight_lens {
-                hl_handle.render(buffer, buffer_width, buffer_height, pitch);
-            }
-
-            // Render text
-            if let Some(ref mut text_renderer) = self.text_renderer {
-                text_renderer.render(buffer, buffer_width, buffer_height, pitch);
-            }
-
-            // Render context menu if visible
-            if let Some(ref mut menu) = self.context_menu {
-                menu.render(buffer, buffer_width, buffer_height, pitch);
-            }
-
-            if let Some(ref mut pm) = self.polygon_menu {
-                if pm.is_visible() {
-                    pm.render(buffer, buffer_width, buffer_height, pitch);
-                }
-            }
-
-            if let Some(ref mut inspector) = self.click_inspector {
-                inspector.render(buffer, buffer_width, buffer_height, pitch);
-            }
+            // GPU only - no CPU rendering
+            let _ = (buffer, buffer_width, buffer_height, pitch);
         }
 
         pub fn setup_gpu_rendering(&mut self, gpu_renderer: &mut GPURenderer) {
@@ -587,10 +524,20 @@ hotline::object!({
                     text_renderer.set_atlas_id(atlas_id);
                 }
             }
+
+            // Register atlas for all rects
+            for rect in &mut self.rects {
+                rect.register_atlas(gpu_renderer);
+            }
         }
 
         pub fn render_gpu(&mut self, gpu_renderer: &mut GPURenderer) {
             gpu_renderer.clear_commands();
+
+            // Generate render commands for all rects
+            for rect in &mut self.rects {
+                rect.generate_commands(gpu_renderer);
+            }
 
             // Generate render commands from text renderer
             if let Some(ref mut text_renderer) = self.text_renderer {

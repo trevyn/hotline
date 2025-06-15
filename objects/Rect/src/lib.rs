@@ -7,6 +7,7 @@ hotline::object!({
         height: f64,
         #[default(0.0)]
         rotation: f64, // radians
+        atlas_id: Option<u32>,
     }
 
     impl Rect {
@@ -92,6 +93,7 @@ hotline::object!({
         }
 
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
+            // CPU rendering fallback - only used if GPU rendering isn't available
             let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
 
             let (bx, by, bw, bh) = self.bounds();
@@ -119,6 +121,45 @@ hotline::object!({
                         }
                     }
                 }
+            }
+        }
+
+        pub fn register_atlas(&mut self, gpu_renderer: &mut GPURenderer) {
+            // Register a white pixel atlas once
+            if self.atlas_id.is_none() {
+                let white_pixel = vec![255u8, 255, 255, 255]; // RGBA
+                let id = gpu_renderer.register_atlas(white_pixel, 1, 1, AtlasFormat::RGBA);
+                self.atlas_id = Some(id);
+            }
+        }
+
+        pub fn generate_commands(&mut self, gpu_renderer: &mut GPURenderer) {
+            // Make sure we have an atlas
+            if self.atlas_id.is_none() {
+                self.register_atlas(gpu_renderer);
+            }
+
+            // eprintln!("Rect::generate_commands atlas_id={:?} pos=({},{})", self.atlas_id, self.x, self.y);
+
+            if let Some(atlas_id) = self.atlas_id {
+                let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+
+                // Generate color based on position and time (matching CPU render)
+                let b = (t / 6 % 255) as u8;
+                let g = (self.y as u32 % 128) as u8;
+                let r = (self.x as u32 % 255) as u8;
+                let a = 255u8;
+
+                // Use color modulation instead of creating new atlases
+                gpu_renderer.add_command(RenderCommand::Rect {
+                    texture_id: atlas_id,
+                    dest_x: self.x,
+                    dest_y: self.y,
+                    dest_width: self.width,
+                    dest_height: self.height,
+                    rotation: self.rotation,
+                    color: (a, b, g, r), // ABGR order
+                });
             }
         }
     }

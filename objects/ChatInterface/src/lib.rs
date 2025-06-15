@@ -2,7 +2,7 @@
 mod test_send_sync;
 
 hotline::object!({
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     pub struct ChatInterface {
         bounds: Option<Rect>,
 
@@ -22,53 +22,13 @@ hotline::object!({
         separator_height: f64,
 
         waiting_for_response: bool,
+        shared_white_atlas_id: Option<u32>,
     }
 
     impl ChatInterface {
         pub fn render(&mut self, buffer: &mut [u8], buffer_width: i64, buffer_height: i64, pitch: i64) {
-            if let Some(registry) = self.get_registry() {
-                ::hotline::set_library_registry(registry);
-            }
-
-            if let Some(ref bounds) = self.bounds {
-                let mut bounds_clone = bounds.clone();
-                let (x, y, w, h) = bounds_clone.bounds();
-
-                // render history area
-                if let Some(ref mut history) = self.history_area {
-                    let mut history_bounds = Rect::new();
-                    history_bounds.initialize(x, y, w, h - self.input_height - self.separator_height);
-                    history.set_rect(history_bounds);
-                    history.render(buffer, buffer_width, buffer_height, pitch);
-                }
-
-                // render separator
-                let sep_y = y + h - self.input_height - self.separator_height;
-                let x_start = x.max(0.0) as u32;
-                let x_end = (x + w).min(buffer_width as f64) as u32;
-                let y_start = sep_y.max(0.0) as u32;
-                let y_end = (sep_y + self.separator_height).min(buffer_height as f64) as u32;
-
-                for py in y_start..y_end {
-                    for px in x_start..x_end {
-                        let offset = (py * (pitch as u32) + px * 4) as usize;
-                        if offset + 3 < buffer.len() {
-                            buffer[offset] = 77;
-                            buffer[offset + 1] = 77;
-                            buffer[offset + 2] = 77;
-                            buffer[offset + 3] = 255;
-                        }
-                    }
-                }
-
-                // render input area
-                if let Some(ref mut input) = self.input_area {
-                    let mut input_bounds = Rect::new();
-                    input_bounds.initialize(x, y + h - self.input_height, w, self.input_height);
-                    input.set_rect(input_bounds);
-                    input.render(buffer, buffer_width, buffer_height, pitch);
-                }
-            }
+            // Skip GPU rendering for now - use CPU rendering
+            let _ = (buffer, buffer_width, buffer_height, pitch); // Suppress warnings
         }
 
         pub fn set_rect(&mut self, rect: Rect) {
@@ -264,6 +224,63 @@ hotline::object!({
             }
             if let Some(ref mut input) = self.input_area {
                 input.update_scroll();
+            }
+        }
+
+        pub fn set_shared_white_atlas(&mut self, atlas_id: u32) {
+            self.shared_white_atlas_id = Some(atlas_id);
+            if let Some(ref mut history) = self.history_area {
+                history.set_shared_white_atlas(atlas_id);
+            }
+            if let Some(ref mut input) = self.input_area {
+                input.set_shared_white_atlas(atlas_id);
+            }
+        }
+
+        pub fn register_atlases(&mut self, gpu_renderer: &mut GPURenderer) {
+            if let Some(ref mut history) = self.history_area {
+                history.register_atlases(gpu_renderer);
+            }
+            if let Some(ref mut input) = self.input_area {
+                input.register_atlases(gpu_renderer);
+            }
+        }
+
+        pub fn generate_commands(&mut self, gpu_renderer: &mut GPURenderer) {
+            if let Some(ref bounds) = self.bounds {
+                let mut bounds_clone = bounds.clone();
+                let (x, y, w, h) = bounds_clone.bounds();
+
+                // generate commands for history area
+                if let Some(ref mut history) = self.history_area {
+                    let mut history_bounds = Rect::new();
+                    history_bounds.initialize(x, y, w, h - self.input_height - self.separator_height);
+                    history.set_rect(history_bounds);
+                    history.generate_commands(gpu_renderer);
+                }
+
+                // render separator as a rect
+                let sep_y = y + h - self.input_height - self.separator_height;
+                // Use the shared white atlas for the separator
+                if let Some(atlas_id) = self.shared_white_atlas_id {
+                    gpu_renderer.add_command(RenderCommand::Rect {
+                        texture_id: atlas_id,
+                        dest_x: x,
+                        dest_y: sep_y,
+                        dest_width: w,
+                        dest_height: self.separator_height,
+                        rotation: 0.0,
+                        color: (77, 77, 77, 255),
+                    });
+                }
+
+                // generate commands for input area
+                if let Some(ref mut input) = self.input_area {
+                    let mut input_bounds = Rect::new();
+                    input_bounds.initialize(x, y + h - self.input_height, w, self.input_height);
+                    input.set_rect(input_bounds);
+                    input.generate_commands(gpu_renderer);
+                }
             }
         }
     }

@@ -16,7 +16,13 @@ fn main() -> Result<(), String> {
     let runtime = Box::leak(Box::new({
         #[cfg(target_os = "macos")]
         {
-            DirectRuntime::new_with_custom_loader()
+            // Use dyld if DEBUG_SYMBOLS env var is set
+            if std::env::var("DEBUG_SYMBOLS").is_ok() {
+                eprintln!("Using dyld for debug symbols");
+                DirectRuntime::new()
+            } else {
+                DirectRuntime::new_with_custom_loader()
+            }
         }
         #[cfg(not(target_os = "macos"))]
         {

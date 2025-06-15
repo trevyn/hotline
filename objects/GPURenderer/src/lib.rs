@@ -11,6 +11,15 @@ hotline::object!({
             dest_y: f64,
             color: (u8, u8, u8, u8),
         },
+        Rect {
+            texture_id: u32,
+            dest_x: f64,
+            dest_y: f64,
+            dest_width: f64,
+            dest_height: f64,
+            rotation: f64, // radians
+            color: (u8, u8, u8, u8),
+        },
     }
 
     #[derive(Clone, Debug)]
@@ -28,7 +37,7 @@ hotline::object!({
         RGBA,
     }
 
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     pub struct GPURenderer {
         commands: Vec<RenderCommand>,
         atlases: Vec<AtlasData>,
@@ -38,6 +47,19 @@ hotline::object!({
     impl GPURenderer {
         pub fn clear_commands(&mut self) {
             self.commands.clear();
+            // Don't clear atlases - they should be persistent across frames
+        }
+
+        pub fn clear_atlases(&mut self) {
+            self.atlases.clear();
+        }
+
+        pub fn get_atlases(&self) -> Vec<AtlasData> {
+            self.atlases.clone()
+        }
+
+        pub fn get_commands(&self) -> Vec<RenderCommand> {
+            self.commands.clone()
         }
 
         pub fn add_command(&mut self, command: RenderCommand) {
