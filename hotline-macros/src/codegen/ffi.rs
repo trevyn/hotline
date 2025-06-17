@@ -116,7 +116,7 @@ pub fn quote_method_call_with_registry(
     args: proc_macro2::TokenStream,
     is_mut_receiver: bool,
 ) -> proc_macro2::TokenStream {
-    use crate::constants::{ERR_LOCK_FAILED, ERR_METHOD_NOT_FOUND, ERR_NO_REGISTRY};
+    use crate::constants::{ERR_LOCK_FAILED, ERR_NO_REGISTRY};
 
     if is_mut_receiver {
         quote! {
@@ -133,11 +133,22 @@ pub fn quote_method_call_with_registry(
                     let obj_any = obj.as_any_mut();
 
                     type FnType = #fn_type;
-                    registry.with_symbol::<FnType, _, _>(
+                    match registry.with_symbol::<FnType, _, _>(
                         &__lib_name,
                         &#symbol_name,
                         |fn_ptr| unsafe { (**fn_ptr)(obj_any #args) }
-                    ).unwrap_or_else(|e| panic!(#ERR_METHOD_NOT_FOUND, type_name, #method_name, e))
+                    ) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            eprintln!("WARNING: Method signature mismatch!");
+                            eprintln!("  Object: {}", type_name);
+                            eprintln!("  Method: {}", #method_name);
+                            eprintln!("  Error: {}", e);
+                            eprintln!("  Action: Skipping method call. Please rebuild all objects to fix this.");
+                            eprintln!();
+                            panic!("Method signature mismatch - please rebuild");
+                        }
+                    }
                 } else {
                     panic!(concat!(#ERR_LOCK_FAILED, " {}"), #method_name)
                 }
@@ -158,11 +169,22 @@ pub fn quote_method_call_with_registry(
                     let obj_any = obj.as_any();
 
                     type FnType = #fn_type;
-                    registry.with_symbol::<FnType, _, _>(
+                    match registry.with_symbol::<FnType, _, _>(
                         &__lib_name,
                         &#symbol_name,
                         |fn_ptr| unsafe { (**fn_ptr)(obj_any #args) }
-                    ).unwrap_or_else(|e| panic!(#ERR_METHOD_NOT_FOUND, type_name, #method_name, e))
+                    ) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            eprintln!("WARNING: Method signature mismatch!");
+                            eprintln!("  Object: {}", type_name);
+                            eprintln!("  Method: {}", #method_name);
+                            eprintln!("  Error: {}", e);
+                            eprintln!("  Action: Skipping method call. Please rebuild all objects to fix this.");
+                            eprintln!();
+                            panic!("Method signature mismatch - please rebuild");
+                        }
+                    }
                 } else {
                     panic!(concat!(#ERR_LOCK_FAILED, " {}"), #method_name)
                 }

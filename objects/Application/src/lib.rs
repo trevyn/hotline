@@ -121,6 +121,11 @@ struct ChatInterfaceAdapter {
     chat: ChatInterface,
 }
 
+// Wrapper to make Starfield work with EventHandler trait
+struct StarfieldAdapter {
+    starfield: Starfield,
+}
+
 impl ChatInterfaceAdapter {
     fn new(chat: ChatInterface) -> Self {
         Self { chat }
@@ -194,6 +199,34 @@ impl hotline::EventHandler for ChatInterfaceAdapter {
 impl ChatInterfaceAdapter {
     fn render_gpu(&mut self, gpu_renderer: &mut GPURenderer) {
         self.chat.generate_commands(gpu_renderer);
+    }
+}
+
+impl StarfieldAdapter {
+    fn new(starfield: Starfield) -> Self {
+        Self { starfield }
+    }
+}
+
+impl hotline::EventHandler for StarfieldAdapter {
+    fn handle_mouse_down(&mut self, x: f64, y: f64) -> bool {
+        self.starfield.handle_mouse_down(x, y)
+    }
+
+    fn handle_mouse_up(&mut self, x: f64, y: f64) -> bool {
+        self.starfield.handle_mouse_up(x, y)
+    }
+
+    fn handle_mouse_move(&mut self, x: f64, y: f64) -> bool {
+        self.starfield.handle_mouse_move(x, y)
+    }
+
+    fn update(&mut self) {
+        // Starfield updates itself in generate_commands
+    }
+
+    fn render(&mut self, _buffer: &mut [u8], _width: i64, _height: i64, _pitch: i64) {
+        // GPU only rendering
     }
 }
 
@@ -412,19 +445,23 @@ hotline::object!({
             }
 
             // Create starfield
-            self.starfield = Some(Starfield::new());
-            if let Some(ref mut sf) = self.starfield {
-                sf.initialize();
-                let rect = Rect::new();
-                let mut r_ref = rect.clone();
-                r_ref.initialize(500.0, 100.0, 400.0, 300.0);
-                sf.set_rect(r_ref);
+            let mut starfield = Starfield::new();
+            starfield.initialize();
+            let rect = Rect::new();
+            let mut r_ref = rect.clone();
+            r_ref.initialize(500.0, 100.0, 400.0, 300.0);
+            starfield.set_rect(r_ref);
 
-                // Register GPU atlases
-                if let Some(ref mut gpu) = self.gpu_renderer {
-                    sf.register_atlases(gpu);
-                }
+            // Register GPU atlases
+            if let Some(ref mut gpu) = self.gpu_renderer {
+                starfield.register_atlases(gpu);
             }
+
+            // Store a clone for Application's reference
+            self.starfield = Some(starfield.clone());
+
+            // Add starfield as event handler
+            self.event_handlers.push(Box::new(StarfieldAdapter::new(starfield)));
 
             Ok(())
         }
@@ -773,6 +810,24 @@ hotline::object!({
                                         }
                                     }
                                 }
+                                Keycode::Minus | Keycode::KpMinus => {
+                                    // Decrease starfield acceleration
+                                    if let Some(ref mut sf) = self.starfield {
+                                        let current = sf.acceleration_multiplier();
+                                        let new_val = (current - 0.5).max(0.1);
+                                        sf.set_acceleration_multiplier(new_val);
+                                        eprintln!("Starfield acceleration: {:.1}x", new_val);
+                                    }
+                                }
+                                Keycode::Plus | Keycode::Equals | Keycode::KpPlus => {
+                                    // Increase starfield acceleration
+                                    if let Some(ref mut sf) = self.starfield {
+                                        let current = sf.acceleration_multiplier();
+                                        let new_val = (current + 0.5).min(20.0);
+                                        sf.set_acceleration_multiplier(new_val);
+                                        eprintln!("Starfield acceleration: {:.1}x", new_val);
+                                    }
+                                }
                                 Keycode::S if cmd => {
                                     // TODO: Add save support to EventHandler trait if needed
                                 }
@@ -916,10 +971,15 @@ hotline::object!({
                     wm.render_gpu(gpu);
                 }
 
-                // Update starfield with controller input
+                // Update starfield with controller input and sync with event handler
                 if let (Some(sf), Some(gc)) = (&mut self.starfield, &self.game_controller) {
                     let (lx, ly, rx, ry) = gc.axis_values();
-                    sf.update_controller(lx, ly, rx, ry);
+                    let (lt, rt) = gc.trigger_values();
+                    sf.update_controller(lx, ly, rx, ry, lt, rt);
+
+                    // Update the starfield in the event handler to keep them in sync
+                    // Find the StarfieldAdapter in event_handlers and update it
+                    // (This is a bit hacky but necessary due to the split architecture)
                 }
 
                 // GPU render starfield

@@ -89,6 +89,10 @@ hotline::object!({
             (self.axes[0], self.axes[1], self.axes[2], self.axes[3])
         }
 
+        pub fn trigger_values(&self) -> (f32, f32) {
+            (self.axes[4], self.axes[5]) // LT, RT
+        }
+
         pub fn update_button(&mut self, button: u8, pressed: bool) {
             if (button as usize) < self.buttons.len() {
                 self.buttons[button as usize] = pressed;

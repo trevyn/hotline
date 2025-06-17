@@ -12,3 +12,4 @@
 - Like<T> is basically just a documentation thing to refer to Rect being used as a template for a polymorphic duck-type object. it should be treated the same as T. objects can use either variant as they wish.
 - `extern "Rust"` FFI methods CAN be async
 - fix warnings as you go
+- #[serde(crate = "::hotline::serde")]
