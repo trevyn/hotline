@@ -231,6 +231,7 @@ hotline::object!({
         #[serde(skip)]
         zoom_display_until: Option<std::time::Instant>,
         game_controller: Option<GameController>,
+        starfield: Option<Starfield>,
         chat_interface: Option<ChatInterface>,
         white_pixel_atlas_id: Option<u32>,
     }
@@ -407,6 +408,21 @@ hotline::object!({
                 // Register GPU atlases once during initialization
                 if let Some(ref mut gpu) = self.gpu_renderer {
                     gc.register_atlases(gpu);
+                }
+            }
+
+            // Create starfield
+            self.starfield = Some(Starfield::new());
+            if let Some(ref mut sf) = self.starfield {
+                sf.initialize();
+                let rect = Rect::new();
+                let mut r_ref = rect.clone();
+                r_ref.initialize(500.0, 100.0, 400.0, 300.0);
+                sf.set_rect(r_ref);
+
+                // Register GPU atlases
+                if let Some(ref mut gpu) = self.gpu_renderer {
+                    sf.register_atlases(gpu);
                 }
             }
 
@@ -898,6 +914,17 @@ hotline::object!({
                 // GPU render on top
                 if let (Some(gpu), Some(wm)) = (&mut self.gpu_renderer, &mut self.window_manager) {
                     wm.render_gpu(gpu);
+                }
+
+                // Update starfield with controller input
+                if let (Some(sf), Some(gc)) = (&mut self.starfield, &self.game_controller) {
+                    let (lx, ly, rx, ry) = gc.axis_values();
+                    sf.update_controller(lx, ly, rx, ry);
+                }
+
+                // GPU render starfield
+                if let (Some(gpu), Some(sf)) = (&mut self.gpu_renderer, &mut self.starfield) {
+                    sf.generate_commands(gpu);
                 }
 
                 // GPU render game controller
