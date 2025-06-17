@@ -966,11 +966,6 @@ hotline::object!({
                 // Skip CPU render frame entirely
                 // self.render_frame(&mut texture)?;
 
-                // GPU render on top
-                if let (Some(gpu), Some(wm)) = (&mut self.gpu_renderer, &mut self.window_manager) {
-                    wm.render_gpu(gpu);
-                }
-
                 // Update starfield with controller input and sync with event handler
                 if let (Some(sf), Some(gc)) = (&mut self.starfield, &self.game_controller) {
                     let (lx, ly, rx, ry) = gc.axis_values();
@@ -980,6 +975,16 @@ hotline::object!({
                     // Update the starfield in the event handler to keep them in sync
                     // Find the StarfieldAdapter in event_handlers and update it
                     // (This is a bit hacky but necessary due to the split architecture)
+                }
+
+                // Clear GPU commands once before all objects render
+                if let Some(gpu) = &mut self.gpu_renderer {
+                    gpu.clear_commands();
+                }
+
+                // GPU render window manager objects first
+                if let (Some(gpu), Some(wm)) = (&mut self.gpu_renderer, &mut self.window_manager) {
+                    wm.render_gpu(gpu);
                 }
 
                 // GPU render starfield
@@ -1009,6 +1014,18 @@ hotline::object!({
                     self.gpu_commands.clear();
                     self.gpu_atlases.clear();
 
+                    // Debug: print if GPU renderer has commands
+                    let gpu_cmd_count = gpu.get_commands().len();
+                    if gpu_cmd_count > 0 {
+                        static mut LAST_COUNT: usize = 0;
+                        unsafe {
+                            if gpu_cmd_count != LAST_COUNT {
+                                eprintln!("GPU renderer has {} commands", gpu_cmd_count);
+                                LAST_COUNT = gpu_cmd_count;
+                            }
+                        }
+                    }
+
                     // Only collect new atlases we haven't seen before
                     let gpu_atlases = gpu.get_atlases();
                     for atlas in gpu_atlases {
@@ -1019,9 +1036,22 @@ hotline::object!({
                     }
 
                     // Collect commands for this frame
-                    for command in gpu.get_commands() {
+                    let commands = gpu.get_commands();
+                    // Count line commands for debugging
+                    static mut LAST_LINE_COUNT: usize = 0;
+                    let line_count = commands.iter().filter(|c| matches!(c, RenderCommand::Line { .. })).count();
+                    unsafe {
+                        if line_count != LAST_LINE_COUNT {
+                            eprintln!("Line commands: {}", line_count);
+                            LAST_LINE_COUNT = line_count;
+                        }
+                    }
+                    for command in commands {
                         self.gpu_commands.push(command.clone());
                     }
+
+                    // Clear GPU renderer's commands after collecting them
+                    gpu.clear_commands();
 
                     // Render to texture
                     let native_format = native_format_u32;
@@ -1281,6 +1311,47 @@ hotline::object!({
                             canvas.copy(texture, None, dst_rect).map_err(|e| e.to_string())?;
                         } else {
                             // eprintln!("  WARNING: Texture {} not found!", texture_id);
+                        }
+                    }
+                    RenderCommand::Line { x1, y1, x2, y2, thickness, color } => {
+                        // Set draw color (ABGR format in our data)
+                        canvas.set_draw_color(Color::RGBA(color.3, color.2, color.1, color.0));
+
+                        // Draw line with thickness by drawing multiple parallel lines
+                        if *thickness <= 1.0 {
+                            canvas
+                                .draw_line(
+                                    sdl3::rect::Point::new(*x1 as i32, *y1 as i32),
+                                    sdl3::rect::Point::new(*x2 as i32, *y2 as i32),
+                                )
+                                .map_err(|e| e.to_string())?;
+                        } else {
+                            // For thicker lines, draw multiple parallel lines
+                            let dx = *x2 - *x1;
+                            let dy = *y2 - *y1;
+                            let len = (dx * dx + dy * dy).sqrt();
+                            if len > 0.0 {
+                                // Calculate perpendicular offset
+                                let px = -dy / len * thickness / 2.0;
+                                let py = dx / len * thickness / 2.0;
+
+                                let half_thick = (*thickness / 2.0).ceil() as i32;
+                                for i in -half_thick..=half_thick {
+                                    let offset = i as f64 / half_thick as f64;
+                                    canvas
+                                        .draw_line(
+                                            sdl3::rect::Point::new(
+                                                (*x1 + px * offset) as i32,
+                                                (*y1 + py * offset) as i32,
+                                            ),
+                                            sdl3::rect::Point::new(
+                                                (*x2 + px * offset) as i32,
+                                                (*y2 + py * offset) as i32,
+                                            ),
+                                        )
+                                        .map_err(|e| e.to_string())?;
+                                }
+                            }
                         }
                     }
                 }

@@ -532,7 +532,7 @@ hotline::object!({
         }
 
         pub fn render_gpu(&mut self, gpu_renderer: &mut GPURenderer) {
-            gpu_renderer.clear_commands();
+            // Don't clear commands here - Application will manage that
 
             // Generate render commands for all rects
             for rect in &mut self.rects {

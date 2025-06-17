@@ -54,11 +54,20 @@ hotline::object!({
             if self.star_x.is_empty() {
                 let mut rng = rand::rng();
                 let star_count = 300;
+                let center_x = x + w / 2.0;
+                let center_y = y + h / 2.0;
 
                 for _ in 0..star_count {
-                    self.star_x.push(rng.random_range(x..x + w) as f32);
-                    self.star_y.push(rng.random_range(y..y + h) as f32);
-                    self.star_z.push(rng.random_range(0.1..1.0));
+                    // Distribute stars with slight bias toward center for better initial look
+                    let angle = rng.random_range(0.0..std::f32::consts::TAU);
+                    let u: f32 = rng.random_range(0.0..1.0);
+                    let max_radius = (w.min(h) / 2.0) as f32;
+                    // Use sqrt for more uniform initial distribution
+                    let radius = max_radius * u.sqrt();
+
+                    self.star_x.push(center_x as f32 + angle.cos() * radius);
+                    self.star_y.push(center_y as f32 + angle.sin() * radius);
+                    self.star_z.push(rng.random_range(0.01..1.0));
                     self.star_brightness.push(rng.random_range(100..255));
                 }
             }
@@ -100,6 +109,15 @@ hotline::object!({
                 let vx = self.base_velocity.0 + self.controller_velocity.0;
                 let vy = self.base_velocity.1 + self.controller_velocity.1;
 
+                // Debug z_velocity
+                static mut LAST_Z_VEL: f32 = 0.0;
+                unsafe {
+                    if (self.z_velocity - LAST_Z_VEL).abs() > 0.1 {
+                        eprintln!("z_velocity changed: {:.2} -> {:.2}", LAST_Z_VEL, self.z_velocity);
+                        LAST_Z_VEL = self.z_velocity;
+                    }
+                }
+
                 for i in 0..self.star_x.len() {
                     // Apply lateral velocity with parallax effect
                     self.star_x[i] -= vx * self.star_z[i] * 0.016;
@@ -108,39 +126,82 @@ hotline::object!({
                     // Apply z-velocity (acceleration into starfield)
                     if self.z_velocity > 0.0 {
                         // Stars move towards us, getting bigger and brighter
-                        self.star_z[i] += self.z_velocity * 0.016 * 2.0;
+                        // Moderate z movement for visible warp effect
+                        self.star_z[i] += self.z_velocity * 0.016 * 1.0;
 
                         if self.star_z[i] > 1.0 {
-                            // Reset star to far distance with random position near center
-                            self.star_z[i] = 0.05;
+                            // Reset star to far distance
+                            self.star_z[i] = 0.01;
                             let mut rng = rand::rng();
-                            self.star_x[i] = center_x as f32 + rng.random_range(-5.0..5.0);
-                            self.star_y[i] = center_y as f32 + rng.random_range(-5.0..5.0);
+
+                            // During warp, spawn stars across entire field but weighted toward center
+                            if self.z_velocity > 0.5 {
+                                // Use a gaussian-like distribution - more stars near center, but some everywhere
+                                let angle = rng.random_range(0.0..std::f32::consts::TAU);
+                                // Exponential distribution for radius - more likely to be near center
+                                let u: f32 = rng.random_range(0.0..1.0);
+                                let max_radius = (w.min(h) / 2.0) as f32;
+                                let radius = -max_radius * (1.0_f32 - u).ln();
+                                let radius = radius.min(max_radius * 0.9); // Cap at 90% of max to stay in bounds
+
+                                self.star_x[i] = center_x as f32 + angle.cos() * radius;
+                                self.star_y[i] = center_y as f32 + angle.sin() * radius;
+                            } else {
+                                // Normal distribution across field
+                                self.star_x[i] = rng.random_range(x..x + w) as f32;
+                                self.star_y[i] = rng.random_range(y..y + h) as f32;
+                            }
                         }
 
-                        // Create streaking effect by moving stars outward based on their position
+                        // Create streaking effect by moving stars outward from center
                         let dx = self.star_x[i] - center_x as f32;
                         let dy = self.star_y[i] - center_y as f32;
+                        let dist = (dx * dx + dy * dy).sqrt();
 
-                        // Exponential speed based on z (closer = faster)
-                        let speed = self.z_velocity * self.star_z[i] * self.star_z[i] * 50.0 * 0.016;
-                        self.star_x[i] += dx * speed;
-                        self.star_y[i] += dy * speed;
+                        if dist > 0.01 {
+                            // Normalize direction
+                            let ndx = dx / dist;
+                            let ndy = dy / dist;
+
+                            // Speed based on z (closer = faster) and velocity
+                            // Much slower acceleration to keep stars visible
+                            let speed = self.z_velocity * self.star_z[i] * 20.0 * 0.016;
+                            self.star_x[i] += ndx * speed;
+                            self.star_y[i] += ndy * speed;
+
+                            // Debug first star movement
+                            // if i == 0 {
+                            //     eprintln!("Update star 0: z={:.2} speed={:.1} move=({:.1},{:.1})",
+                            //         self.star_z[i], speed, ndx * speed, ndy * speed);
+                            // }
+                        }
                     }
 
                     // Wrap around screen edges
-                    if self.star_x[i] < x as f32 - 50.0 || self.star_x[i] > (x + w) as f32 + 50.0 {
-                        // Reset to center when going off screen during acceleration
+                    if self.star_x[i] < x as f32 - 50.0
+                        || self.star_x[i] > (x + w) as f32 + 50.0
+                        || self.star_y[i] < y as f32 - 50.0
+                        || self.star_y[i] > (y + h) as f32 + 50.0
+                    {
+                        // Reset position
                         let mut rng = rand::rng();
-                        self.star_x[i] = center_x as f32 + rng.random_range(-20.0..20.0);
-                        self.star_z[i] = 0.1;
-                    }
+                        self.star_z[i] = 0.01;
 
-                    if self.star_y[i] < y as f32 - 50.0 || self.star_y[i] > (y + h) as f32 + 50.0 {
-                        // Reset to center when going off screen during acceleration
-                        let mut rng = rand::rng();
-                        self.star_y[i] = center_y as f32 + rng.random_range(-20.0..20.0);
-                        self.star_z[i] = 0.1;
+                        if self.z_velocity > 0.5 {
+                            // During warp, use same distribution as z-reset
+                            let angle = rng.random_range(0.0..std::f32::consts::TAU);
+                            let u: f32 = rng.random_range(0.0..1.0);
+                            let max_radius = (w.min(h) / 2.0) as f32;
+                            let radius = -max_radius * (1.0_f32 - u).ln();
+                            let radius = radius.min(max_radius * 0.9);
+
+                            self.star_x[i] = center_x as f32 + angle.cos() * radius;
+                            self.star_y[i] = center_y as f32 + angle.sin() * radius;
+                        } else {
+                            // Normal movement - respawn anywhere in field
+                            self.star_x[i] = rng.random_range(x..x + w) as f32;
+                            self.star_y[i] = rng.random_range(y..y + h) as f32;
+                        }
                     }
                 }
             }
@@ -199,8 +260,27 @@ hotline::object!({
                 self.register_atlases(gpu_renderer);
             }
 
+            // Debug when accelerating
+            static mut LAST_MODE: bool = false;
+            unsafe {
+                let accelerating = self.z_velocity > 0.1;
+                if accelerating != LAST_MODE {
+                    eprintln!("Starfield mode changed: accelerating={} z_vel={:.2}", accelerating, self.z_velocity);
+                    LAST_MODE = accelerating;
+                }
+            }
+
             if let Some(rect) = &self.rect {
                 let (rx, ry, rw, rh) = rect.bounds();
+
+                // Debug rect bounds once
+                static mut PRINTED_BOUNDS: bool = false;
+                unsafe {
+                    if !PRINTED_BOUNDS {
+                        eprintln!("Starfield bounds: ({:.0},{:.0}) {}x{}", rx, ry, rw, rh);
+                        PRINTED_BOUNDS = true;
+                    }
+                }
 
                 // Draw background
                 let bg_atlas = self.atlas_ids.get(0).and_then(|id| *id);
@@ -267,6 +347,9 @@ hotline::object!({
                 }
 
                 // Draw stars
+                let mut visible_count = 0;
+                let mut streak_count = 0;
+
                 for i in 0..self.star_x.len() {
                     let z = self.star_z[i];
                     // Choose atlas based on depth (closer stars are bigger)
@@ -279,46 +362,132 @@ hotline::object!({
                     };
 
                     if let Some(Some(atlas_id)) = self.atlas_ids.get(atlas_idx) {
+                        // Debug atlas availability
+                        // if i == 0 && self.z_velocity > 0.1 {
+                        //     eprintln!("Star 0: atlas_idx={} atlas_id={} z={:.2}", atlas_idx, atlas_id, z);
+                        // }
                         let base_size = (atlas_idx + 1) as f64;
                         let size = base_size * (1.0 + z as f64 * 2.0); // Bigger when closer
                         let brightness = (self.star_brightness[i] as f32 * z).min(255.0) as u8;
 
-                        // Create streaking effect when accelerating
-                        if self.z_velocity > 0.0 && z > 0.3 {
-                            // Calculate stretch based on velocity and depth
-                            let stretch = 1.0 + (self.z_velocity * z * 8.0) as f64;
+                        let star_x = self.star_x[i] as f64;
+                        let star_y = self.star_y[i] as f64;
 
+                        // Check if star is within visible bounds
+                        if star_x >= rx && star_x <= rx + rw && star_y >= ry && star_y <= ry + rh {
+                            visible_count += 1;
+                        }
+
+                        // When accelerating, draw as streaks. Otherwise draw as dots.
+                        if self.z_velocity > 0.1 {
                             // Calculate direction from center
                             let center_x = rx + rw / 2.0;
                             let center_y = ry + rh / 2.0;
-                            let dx = self.star_x[i] as f64 - center_x;
-                            let dy = self.star_y[i] as f64 - center_y;
-                            let angle = dy.atan2(dx);
+                            let dx = star_x - center_x;
+                            let dy = star_y - center_y;
+                            let dist = (dx * dx + dy * dy).sqrt();
 
-                            // Draw stretched star (streak)
-                            gpu_renderer.add_command(RenderCommand::Rect {
-                                texture_id: *atlas_id,
-                                dest_x: self.star_x[i] as f64 - size / 2.0,
-                                dest_y: self.star_y[i] as f64 - size * stretch / 2.0,
-                                dest_width: size,
-                                dest_height: size * stretch,
-                                rotation: angle + std::f64::consts::PI / 2.0,
-                                color: (255, brightness, brightness, brightness), // ABGR
-                            });
+                            // Always draw stars when accelerating
+                            streak_count += 1;
+
+                            // For very small distances from center, just draw a dot
+                            if dist < 5.0 {
+                                gpu_renderer.add_command(RenderCommand::Rect {
+                                    texture_id: *atlas_id,
+                                    dest_x: star_x - size / 2.0,
+                                    dest_y: star_y - size / 2.0,
+                                    dest_width: size,
+                                    dest_height: size,
+                                    rotation: 0.0,
+                                    color: (255, brightness, brightness, brightness),
+                                });
+                            } else {
+                                // Streak length based on velocity, z depth, and a base length
+                                let base_streak = 10.0;
+                                let streak_length = base_streak + (self.z_velocity * z * 100.0) as f64;
+
+                                // Normalize direction
+                                let ndx = dx / dist;
+                                let ndy = dy / dist;
+
+                                // Line goes from behind the star to current position
+                                // The streak trails behind the star's motion
+                                let x1 = star_x - ndx * streak_length;
+                                let y1 = star_y - ndy * streak_length;
+                                let x2 = star_x;
+                                let y2 = star_y;
+
+                                // Debug info for first few stars only
+                                // if i < 2 {
+                                //     let r = ((star_x - center_x).powi(2) + (star_y - center_y).powi(2)).sqrt();
+                                //     eprintln!("Star {}: pos({:.0},{:.0}) r={:.0} z={:.2} vel={:.1} streak={:.0}",
+                                //         i, star_x, star_y, r, z, self.z_velocity, streak_length);
+                                // }
+
+                                // Brighter at the front of the streak
+                                let front_brightness = ((brightness as f32) * 1.5).min(255.0) as u8;
+
+                                // Draw the streak
+                                let thickness = 1.0 + z * 2.0;
+
+                                // Debug line drawing
+                                // if i == 0 {
+                                //     eprintln!("Drawing line: ({:.0},{:.0})->({:.0},{:.0}) thickness={:.1} brightness={}",
+                                //         x1, y1, x2, y2, thickness, front_brightness);
+                                // }
+
+                                gpu_renderer.add_command(RenderCommand::Line {
+                                    x1,
+                                    y1,
+                                    x2,
+                                    y2,
+                                    thickness: thickness as f64,
+                                    color: (255, front_brightness, front_brightness, front_brightness), // ABGR format - full alpha
+                                });
+                            }
                         } else {
-                            // Normal star
-                            gpu_renderer.add_command(RenderCommand::Rect {
-                                texture_id: *atlas_id,
-                                dest_x: self.star_x[i] as f64 - size / 2.0,
-                                dest_y: self.star_y[i] as f64 - size / 2.0,
-                                dest_width: size,
-                                dest_height: size,
-                                rotation: 0.0,
-                                color: (255, brightness, brightness, brightness), // ABGR
-                            });
+                            // Normal star (not accelerating) - make sure it's in bounds
+                            let sx = self.star_x[i] as f64;
+                            let sy = self.star_y[i] as f64;
+                            if sx >= rx - size && sx <= rx + rw + size && sy >= ry - size && sy <= ry + rh + size {
+                                gpu_renderer.add_command(RenderCommand::Rect {
+                                    texture_id: *atlas_id,
+                                    dest_x: sx - size / 2.0,
+                                    dest_y: sy - size / 2.0,
+                                    dest_width: size,
+                                    dest_height: size,
+                                    rotation: 0.0,
+                                    color: (255, brightness, brightness, brightness), // ABGR
+                                });
+                            }
                         }
                     }
                 }
+
+                // Debug star visibility
+                static mut FRAME_COUNT: u32 = 0;
+                unsafe {
+                    FRAME_COUNT += 1;
+                    if FRAME_COUNT % 30 == 0 {
+                        eprintln!(
+                            "Stars: {} visible, {} streaks rendered (z_vel={:.2})",
+                            visible_count, streak_count, self.z_velocity
+                        );
+                    }
+                }
+
+                // Debug: Draw a test line when accelerating
+                // if self.z_velocity > 0.1 {
+                //     gpu_renderer.add_command(RenderCommand::Line {
+                //         x1: rx + 10.0,
+                //         y1: ry + 10.0,
+                //         x2: rx + 100.0,
+                //         y2: ry + 100.0,
+                //         thickness: 3.0,
+                //         color: (255, 255, 0, 0), // ABGR: red line
+                //     });
+                //     eprintln!("Added test line at ({:.0},{:.0})", rx + 10.0, ry + 10.0);
+                // }
 
                 // Draw speed display
                 if let Some(ref mut display) = self.speed_display {

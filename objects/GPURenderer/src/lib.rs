@@ -20,6 +20,14 @@ hotline::object!({
             rotation: f64, // radians
             color: (u8, u8, u8, u8),
         },
+        Line {
+            x1: f64,
+            y1: f64,
+            x2: f64,
+            y2: f64,
+            thickness: f64,
+            color: (u8, u8, u8, u8),
+        },
     }
 
     #[derive(Clone, Debug)]

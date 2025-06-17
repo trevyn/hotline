@@ -13,3 +13,4 @@
 - `extern "Rust"` FFI methods CAN be async
 - fix warnings as you go
 - #[serde(crate = "::hotline::serde")]
+- debug output is in output.txt
