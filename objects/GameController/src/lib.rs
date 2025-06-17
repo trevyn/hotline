@@ -187,11 +187,11 @@ hotline::object!({
 
                         let idx = (y * size + x) * 4;
                         if dist <= radius {
-                            // Red filled circle to make it stand out
-                            circle_data[idx] = 255; // R
-                            circle_data[idx + 1] = 0; // G
-                            circle_data[idx + 2] = 0; // B
-                            circle_data[idx + 3] = 255; // A
+                            // Pink filled circle - ABGR format
+                            circle_data[idx] = 255; // A
+                            circle_data[idx + 1] = 180; // B
+                            circle_data[idx + 2] = 105; // G
+                            circle_data[idx + 3] = 255; // R
                         }
                     }
                 }
