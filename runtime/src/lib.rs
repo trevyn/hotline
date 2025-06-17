@@ -104,9 +104,11 @@ impl DirectRuntime {
         // Clone root_objects Arc for the watcher thread
         let root_objects = self.root_objects.clone();
 
-        let handle = thread::spawn(move || {
-            if let Err(e) = watch_and_reload_files(path, registry, root_objects) {
+        let handle = thread::spawn(move || match watch_and_reload_files(path, registry, root_objects) {
+            Ok(()) => eprintln!("File watcher thread exited normally"),
+            Err(e) => {
                 eprintln!("File watcher error: {}", e);
+                panic!("File watcher thread failed: {}", e);
             }
         });
 
@@ -129,76 +131,115 @@ fn watch_and_reload_files(
     // Track file hashes to detect actual changes
     let mut file_hashes = std::collections::HashMap::new();
 
-    for res in rx {
-        match res {
-            Ok(event) => {
-                use notify::EventKind;
-                match event.kind {
-                    EventKind::Modify(_) | EventKind::Create(_) => {
-                        for event_path in event.paths {
-                            if event_path.extension().map_or(false, |ext| ext == "rs") {
-                                // Find which object this file belongs to
-                                if let Some(object_name) = find_object_for_file(&event_path) {
-                                    // Check if file content actually changed
-                                    if let Ok(contents) = std::fs::read(&event_path) {
-                                        let hash = xxhash_rust::xxh3::xxh3_64(&contents);
+    eprintln!("File watcher thread started successfully");
 
-                                        if let Some(&prev_hash) = file_hashes.get(&event_path) {
-                                            if prev_hash == hash {
-                                                continue; // No actual change
-                                            }
-                                        }
+    loop {
+        match rx.recv() {
+            Ok(res) => match res {
+                Ok(event) => {
+                    use notify::EventKind;
+                    match event.kind {
+                        EventKind::Modify(_) | EventKind::Create(_) => {
+                            for event_path in event.paths {
+                                if event_path.extension().map_or(false, |ext| ext == "rs") {
+                                    let now =
+                                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
+                                    eprintln!(
+                                        "[{}.{}] File event: {:?} for path: {:?}",
+                                        now.as_secs() % 3600,
+                                        now.subsec_millis(),
+                                        event.kind,
+                                        event_path
+                                    );
+                                    // Find which object this file belongs to
+                                    if let Some(object_name) = find_object_for_file(&event_path) {
+                                        // Check if file content actually changed
+                                        match std::fs::read(&event_path) {
+                                            Ok(contents) => {
+                                                let hash = xxhash_rust::xxh3::xxh3_64(&contents);
 
-                                        file_hashes.insert(event_path.clone(), hash);
+                                                if let Some(&prev_hash) = file_hashes.get(&event_path) {
+                                                    if prev_hash == hash {
+                                                        eprintln!(
+                                                            "File {} has same hash, skipping",
+                                                            event_path.display()
+                                                        );
+                                                        continue; // No actual change
+                                                    }
+                                                }
 
-                                        eprintln!("Detected change in {}, recompiling...", object_name);
+                                                file_hashes.insert(event_path.clone(), hash);
+                                                eprintln!("Detected change in {}, recompiling...", object_name);
 
-                                        // Compile
-                                        let status = std::process::Command::new("cargo")
-                                            .args(["build", "--release", "-p", &object_name])
-                                            .status()?;
+                                                // Compile
+                                                match std::process::Command::new("cargo")
+                                                    .args(["build", "--release", "-p", &object_name])
+                                                    .status()
+                                                {
+                                                    Ok(status) => {
+                                                        if !status.success() {
+                                                            eprintln!("Cargo build failed for {}", object_name);
+                                                            continue;
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!(
+                                                            "Failed to run cargo build for {}: {}",
+                                                            object_name, e
+                                                        );
+                                                        continue;
+                                                    }
+                                                }
 
-                                        if !status.success() {
-                                            eprintln!("Cargo build failed for {}", object_name);
-                                            continue;
-                                        }
+                                                // Reload
+                                                #[cfg(target_os = "macos")]
+                                                let lib_path = format!("target/release/lib{}.dylib", object_name);
+                                                #[cfg(target_os = "linux")]
+                                                let lib_path = format!("target/release/lib{}.so", object_name);
+                                                #[cfg(target_os = "windows")]
+                                                let lib_path = format!("target/release/{}.dll", object_name);
 
-                                        // Reload
-                                        #[cfg(target_os = "macos")]
-                                        let lib_path = format!("target/release/lib{}.dylib", object_name);
-                                        #[cfg(target_os = "linux")]
-                                        let lib_path = format!("target/release/lib{}.so", object_name);
-                                        #[cfg(target_os = "windows")]
-                                        let lib_path = format!("target/release/{}.dll", object_name);
+                                                if let Err(e) = registry.load(&lib_path) {
+                                                    eprintln!("Failed to reload {}: {}", object_name, e);
+                                                } else {
+                                                    eprintln!("Successfully reloaded {}", object_name);
 
-                                        if let Err(e) = registry.load(&lib_path) {
-                                            eprintln!("Failed to reload {}: {}", object_name, e);
-                                        } else {
-                                            eprintln!("Successfully reloaded {}", object_name);
+                                                    // Trigger migrations synchronously
+                                                    let mut reloaded_libs = HashSet::new();
+                                                    reloaded_libs.insert(object_name.clone());
 
-                                            // Trigger migrations synchronously
-                                            let mut reloaded_libs = HashSet::new();
-                                            reloaded_libs.insert(object_name.clone());
-
-                                            if let Ok(roots) = root_objects.lock() {
-                                                for (_, handle) in roots.iter() {
-                                                    if let Ok(mut guard) = handle.lock() {
-                                                        if let Err(e) = guard.migrate_children(&reloaded_libs) {
-                                                            eprintln!("Migration failed for {}: {}", object_name, e);
+                                                    if let Ok(roots) = root_objects.lock() {
+                                                        for (_, handle) in roots.iter() {
+                                                            if let Ok(mut guard) = handle.lock() {
+                                                                if let Err(e) = guard.migrate_children(&reloaded_libs) {
+                                                                    eprintln!(
+                                                                        "Migration failed for {}: {}",
+                                                                        object_name, e
+                                                                    );
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
+                                            }
+                                            Err(e) => {
+                                                eprintln!("Failed to read file {}: {}", event_path.display(), e);
+                                                continue;
                                             }
                                         }
                                     }
                                 }
                             }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
+                Err(e) => eprintln!("Watch error: {:?}", e),
+            },
+            Err(e) => {
+                eprintln!("Channel receive error: {:?}", e);
+                return Err(format!("Watcher channel closed: {:?}", e).into());
             }
-            Err(e) => eprintln!("Watch error: {:?}", e),
         }
     }
 
@@ -211,6 +252,15 @@ fn find_object_for_file(path: &Path) -> Option<String> {
     for (i, component) in components.iter().enumerate() {
         if component.as_os_str() == "objects" && i + 1 < components.len() {
             if let Some(object_name) = components[i + 1].as_os_str().to_str() {
+                // Debug: log what we found
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
+                eprintln!(
+                    "[{}.{}] Found object {} for path {:?}",
+                    now.as_secs() % 3600,
+                    now.subsec_millis(),
+                    object_name,
+                    path
+                );
                 return Some(object_name.to_string());
             }
         }

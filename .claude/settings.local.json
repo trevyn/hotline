@@ -23,7 +23,8 @@
       "Bash(size:*)",
       "Bash(./target/release/test_load:*)",
       "Bash(./target/release/test_symbol:*)",
-      "Bash(./runtime/target/release/test_symbol:*)"
+      "Bash(./runtime/target/release/test_symbol:*)",
+      "Bash(echo:*)"
     ],
     "deny": []
   },

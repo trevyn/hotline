@@ -219,6 +219,8 @@ hotline::object!({
         #[serde(skip)]
         last_fps_update: Option<std::time::Instant>,
         current_fps: f64,
+        #[serde(skip)]
+        last_gpu_print: Option<std::time::Instant>,
         mouse_x: f64,
         mouse_y: f64,
         #[default(2)]
@@ -391,6 +393,7 @@ hotline::object!({
             self.frame_times = std::collections::VecDeque::with_capacity(120);
             self.last_fps_update = Some(std::time::Instant::now());
             self.current_fps = 0.0;
+            self.last_gpu_print = None;
 
             // Create game controller display
             self.game_controller = Some(GameController::new());
@@ -399,7 +402,7 @@ hotline::object!({
                 let rect = Rect::new();
                 let mut r_ref = rect.clone();
                 r_ref.initialize(200.0, 400.0, 200.0, 370.0);
-                gc.set_rect(rect);
+                gc.set_rect(r_ref);
 
                 // Register GPU atlases once during initialization
                 if let Some(ref mut gpu) = self.gpu_renderer {
@@ -411,6 +414,9 @@ hotline::object!({
         }
 
         pub fn run(&mut self) -> Result<(), String> {
+            // Allow joystick events even when window is not in focus
+            sdl3::hint::set("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
+
             let sdl_context = sdl3::init().map_err(|e| e.to_string())?;
             let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
             let game_controller_subsystem = sdl_context.gamepad().map_err(|e| e.to_string())?;
@@ -419,6 +425,7 @@ hotline::object!({
             let usable_bounds = display.get_usable_bounds().map_err(|e| e.to_string())?;
             let win_w = (usable_bounds.width() as f32 * 0.9) as u32;
             let win_h = (usable_bounds.height() as f32 * 0.9) as u32;
+            eprintln!("Window size: {}x{}", win_w, win_h);
 
             let window = video_subsystem
                 .window("hotline - direct calls", win_w, win_h)
@@ -1065,9 +1072,15 @@ hotline::object!({
             use sdl3::rect::Rect;
             use std::collections::HashMap;
 
-            if self.frame_times.len() % 60 == 0 {
+            // Print once per second instead of every 60 frames
+            let now = std::time::Instant::now();
+            if self.last_gpu_print.is_none() || now.duration_since(self.last_gpu_print.unwrap()).as_secs() >= 1 {
+                self.last_gpu_print = Some(now);
+                let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
                 eprintln!(
-                    "GPU render: {} atlases, {} commands, FPS: {:.1}",
+                    "[{}.{}] GPU render: {} atlases, {} commands, FPS: {:.1}",
+                    timestamp.as_secs() % 3600,
+                    timestamp.subsec_millis(),
                     self.gpu_atlases.len(),
                     self.gpu_commands.len(),
                     self.current_fps

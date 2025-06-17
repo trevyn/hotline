@@ -4,6 +4,7 @@ use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant};
 
 pub use serde;
 pub use serde::{Deserialize, Serialize};
@@ -28,6 +29,53 @@ pub fn hotline_runtime() -> &'static tokio::runtime::Runtime {
             .build()
             .expect("Failed to create hotline runtime")
     })
+}
+
+// Rate-limited debug printing
+static DEBUG_RATE_LIMITS: OnceLock<RwLock<HashMap<String, Instant>>> = OnceLock::new();
+
+/// Print a debug message with rate limiting. Only prints if at least `rate_limit` duration has passed since the last print with the same key.
+pub fn debug_print_rate_limited(key: &str, rate_limit: Duration, message: impl std::fmt::Display) {
+    let limits = DEBUG_RATE_LIMITS.get_or_init(|| RwLock::new(HashMap::new()));
+
+    let should_print = {
+        if let Ok(mut map) = limits.write() {
+            let now = Instant::now();
+            match map.get_mut(key) {
+                Some(last_print) => {
+                    if now.duration_since(*last_print) >= rate_limit {
+                        *last_print = now;
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => {
+                    map.insert(key.to_string(), now);
+                    true
+                }
+            }
+        } else {
+            false
+        }
+    };
+
+    if should_print {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
+        println!("[{}.{}] {}", now.as_secs() % 3600, now.subsec_millis(), message);
+    }
+}
+
+/// Convenience macro for rate-limited debug printing
+#[macro_export]
+macro_rules! debug_rate_limited {
+    ($key:expr, $rate_ms:expr, $($arg:tt)*) => {
+        $crate::debug_print_rate_limited(
+            $key,
+            std::time::Duration::from_millis($rate_ms),
+            format!($($arg)*)
+        )
+    };
 }
 
 // Rustc commit hash for symbol generation

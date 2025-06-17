@@ -19,7 +19,7 @@ hotline::object!({
             self.rotation = 0.0;
         }
 
-        pub fn contains_point(&mut self, point_x: f64, point_y: f64) -> bool {
+        pub fn contains_point(&self, point_x: f64, point_y: f64) -> bool {
             let (cx, cy) = self.center();
             let (sin_r, cos_r) = self.rotation.sin_cos();
             let dx = point_x - cx;
@@ -29,11 +29,11 @@ hotline::object!({
             rx.abs() <= self.width / 2.0 && ry.abs() <= self.height / 2.0
         }
 
-        pub fn position(&mut self) -> (f64, f64) {
+        pub fn position(&self) -> (f64, f64) {
             (self.x, self.y)
         }
 
-        pub fn bounds(&mut self) -> (f64, f64, f64, f64) {
+        pub fn bounds(&self) -> (f64, f64, f64, f64) {
             let corners = self.corners();
             let xs = [corners[0].0, corners[1].0, corners[2].0, corners[3].0];
             let ys = [corners[0].1, corners[1].1, corners[2].1, corners[3].1];
@@ -53,15 +53,15 @@ hotline::object!({
             self.rotation = angle;
         }
 
-        pub fn rotation(&mut self) -> f64 {
+        pub fn rotation(&self) -> f64 {
             self.rotation
         }
 
-        pub fn center(&mut self) -> (f64, f64) {
+        pub fn center(&self) -> (f64, f64) {
             (self.x + self.width / 2.0, self.y + self.height / 2.0)
         }
 
-        pub fn corners(&mut self) -> [(f64, f64); 4] {
+        pub fn corners(&self) -> [(f64, f64); 4] {
             let (cx, cy) = self.center();
             let hw = self.width / 2.0;
             let hh = self.height / 2.0;
@@ -81,7 +81,7 @@ hotline::object!({
             self.height = height;
         }
 
-        pub fn info_lines(&mut self) -> Vec<String> {
+        pub fn info_lines(&self) -> Vec<String> {
             vec![
                 "Rect".to_string(),
                 format!("  x: {:.1}", self.x),
