@@ -116,15 +116,15 @@ hotline::object!({
                 self.bar_bg_atlas_id = Some(id);
             }
 
-            // Bar foreground (green)
+            // Bar foreground (pink)
             if self.bar_fg_atlas_id.is_none() {
-                let bar_fg_pixel = vec![0u8, 200, 0, 255]; // RGBA format: Red=0, Green=200, Blue=0, Alpha=255
+                let bar_fg_pixel = vec![255u8, 105, 180, 255]; // RGBA format: Red=255, Green=105, Blue=180, Alpha=255
                 let id = gpu_renderer.register_atlas(bar_fg_pixel, 1, 1, AtlasFormat::RGBA);
                 self.bar_fg_atlas_id = Some(id);
                 hotline::debug_rate_limited!(
                     "gc_register_bar_fg",
                     1000,
-                    "Registered bar_fg_atlas_id: {} (green pixel)",
+                    "Registered bar_fg_atlas_id: {} (pink pixel)",
                     id
                 );
             }
@@ -136,9 +136,9 @@ hotline::object!({
                 self.button_off_atlas_id = Some(id);
             }
 
-            // Button on (green)
+            // Button on (pink)
             if self.button_on_atlas_id.is_none() {
-                let button_on_pixel = vec![0u8, 255, 0, 255];
+                let button_on_pixel = vec![255u8, 105, 180, 255];
                 let id = gpu_renderer.register_atlas(button_on_pixel, 1, 1, AtlasFormat::RGBA);
                 self.button_on_atlas_id = Some(id);
             }
@@ -222,50 +222,21 @@ hotline::object!({
                 self.register_atlases(gpu_renderer);
             }
 
-            // FIRST TEST: Draw a red square at fixed position 100,100
-            if let Some(bar_fg_id) = self.bar_fg_atlas_id {
-                gpu_renderer.add_command(RenderCommand::Rect {
-                    texture_id: bar_fg_id,
-                    dest_x: 100.0,
-                    dest_y: 100.0,
-                    dest_width: 50.0,
-                    dest_height: 50.0,
-                    rotation: 0.0,
-                    color: (255, 0, 255, 0), // ABGR: Alpha=255, Blue=0, Green=255, Red=0
-                });
-            } else {
-                hotline::debug_rate_limited!("gc_error_no_atlas", 1000, "ERROR: bar_fg_atlas_id is None!");
-            }
-
             if let Some(rect) = &self.rect {
                 let (x, y, w, h) = rect.clone().bounds();
 
-                // TEST: Draw a large red square to make sure we can see SOMETHING
-                if let Some(bar_fg_id) = self.bar_fg_atlas_id {
-                    // Drawing test square
+                // Draw background
+                if let Some(bg_id) = self.background_atlas_id {
                     gpu_renderer.add_command(RenderCommand::Rect {
-                        texture_id: bar_fg_id,
-                        dest_x: x + 10.0,
-                        dest_y: y + 10.0,
-                        dest_width: 100.0,
-                        dest_height: 100.0,
+                        texture_id: bg_id,
+                        dest_x: x,
+                        dest_y: y,
+                        dest_width: w,
+                        dest_height: h,
                         rotation: 0.0,
-                        color: (255, 0, 0, 255), // ABGR: Alpha=255, Blue=0, Green=0, Red=255 (RED)
+                        color: (255, 255, 255, 255),
                     });
                 }
-
-                // Draw background - COMMENTED OUT FOR DEBUGGING
-                // if let Some(bg_id) = self.background_atlas_id {
-                //     gpu_renderer.add_command(RenderCommand::Rect {
-                //         texture_id: bg_id,
-                //         dest_x: x,
-                //         dest_y: y,
-                //         dest_width: w,
-                //         dest_height: h,
-                //         rotation: 0.0,
-                //         color: (255, 255, 255, 255),
-                //     });
-                // }
 
                 // Draw border (4 rectangles)
                 if let Some(border_id) = self.border_atlas_id {
@@ -433,19 +404,6 @@ hotline::object!({
 
                 // Drawing sticks
 
-                // Draw debug rectangle first
-                if let Some(bar_fg_id) = self.bar_fg_atlas_id {
-                    gpu_renderer.add_command(RenderCommand::Rect {
-                        texture_id: bar_fg_id,
-                        dest_x: left_stick_x - 50.0,
-                        dest_y: left_stick_y - 50.0,
-                        dest_width: 100.0,
-                        dest_height: 100.0,
-                        rotation: 0.0,
-                        color: (255, 0, 0, 255), // Red
-                    });
-                }
-
                 // Draw left stick circle outline
                 if let Some(circle_id) = self.circle_atlas_id {
                     // Drawing left stick circle
@@ -467,20 +425,6 @@ hotline::object!({
                 let left_dot_y = left_stick_y + ly * (stick_radius - stick_dot_radius);
 
                 if let Some(filled_circle_id) = self.filled_circle_atlas_id {
-                    hotline::debug_rate_limited!("gc_left_dot", 1000, 
-                        "Drawing left stick dot at ({:.1}, {:.1}) with texture_id: {}, lx={:.2}, ly={:.2}, size={:.1}x{:.1}", 
-                        left_dot_x - stick_dot_radius, left_dot_y - stick_dot_radius, filled_circle_id, lx, ly,
-                        stick_dot_radius * 2.0, stick_dot_radius * 2.0);
-                    // Draw larger red test square first
-                    gpu_renderer.add_command(RenderCommand::Rect {
-                        texture_id: self.bar_fg_atlas_id.unwrap_or(0),
-                        dest_x: left_dot_x - 10.0,
-                        dest_y: left_dot_y - 10.0,
-                        dest_width: 20.0,
-                        dest_height: 20.0,
-                        rotation: 0.0,
-                        color: (255, 0, 0, 255), // Red in ABGR
-                    });
                     gpu_renderer.add_command(RenderCommand::Rect {
                         texture_id: filled_circle_id,
                         dest_x: left_dot_x - stick_dot_radius,
@@ -490,8 +434,6 @@ hotline::object!({
                         rotation: 0.0,
                         color: (255, 255, 255, 255), // White - no color modulation
                     });
-                } else {
-                    hotline::debug_rate_limited!("gc_no_filled_circle", 1000, "ERROR: filled_circle_atlas_id is None!");
                 }
 
                 // Right stick
@@ -586,14 +528,6 @@ hotline::object!({
                 let rect_y = rect_area_y + (rect_area_h - rect_size) * (ly + 1.0) / 2.0;
 
                 if let Some(bar_fg_id) = self.bar_fg_atlas_id {
-                    hotline::debug_rate_limited!(
-                        "gc_movable_rect",
-                        1000,
-                        "Drawing movable rectangle at ({:.1}, {:.1}) with texture_id: {} (bar_fg_id)",
-                        rect_x,
-                        rect_y,
-                        bar_fg_id
-                    );
                     gpu_renderer.add_command(RenderCommand::Rect {
                         texture_id: bar_fg_id,
                         dest_x: rect_x,
@@ -672,4 +606,4 @@ hotline::object!({
         }
     }
 });
-// reload trigger v5
+// reload trigger v6

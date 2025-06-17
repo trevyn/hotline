@@ -133,109 +133,142 @@ fn watch_and_reload_files(
 
     eprintln!("File watcher thread started successfully");
 
+    // Keep watcher alive by moving it into a variable that lives as long as the loop
+    let _watcher = watcher;
+
     loop {
+        eprintln!("Waiting for file events...");
         match rx.recv() {
-            Ok(res) => match res {
-                Ok(event) => {
-                    use notify::EventKind;
-                    match event.kind {
-                        EventKind::Modify(_) | EventKind::Create(_) => {
-                            for event_path in event.paths {
-                                if event_path.extension().map_or(false, |ext| ext == "rs") {
-                                    let now =
-                                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
-                                    eprintln!(
-                                        "[{}.{}] File event: {:?} for path: {:?}",
-                                        now.as_secs() % 3600,
-                                        now.subsec_millis(),
-                                        event.kind,
-                                        event_path
-                                    );
-                                    // Find which object this file belongs to
-                                    if let Some(object_name) = find_object_for_file(&event_path) {
-                                        // Check if file content actually changed
-                                        match std::fs::read(&event_path) {
-                                            Ok(contents) => {
-                                                let hash = xxhash_rust::xxh3::xxh3_64(&contents);
+            Ok(res) => {
+                eprintln!("Received event from channel");
+                match res {
+                    Ok(event) => {
+                        use notify::EventKind;
+                        match event.kind {
+                            EventKind::Modify(_) | EventKind::Create(_) => {
+                                for event_path in event.paths {
+                                    if event_path.extension().map_or(false, |ext| ext == "rs") {
+                                        let now =
+                                            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
+                                        eprintln!(
+                                            "[{}.{}] File event: {:?} for path: {:?}",
+                                            now.as_secs() % 3600,
+                                            now.subsec_millis(),
+                                            event.kind,
+                                            event_path
+                                        );
+                                        // Find which object this file belongs to
+                                        if let Some(object_name) = find_object_for_file(&event_path) {
+                                            // Check if file content actually changed
+                                            match std::fs::read(&event_path) {
+                                                Ok(contents) => {
+                                                    let hash = xxhash_rust::xxh3::xxh3_64(&contents);
 
-                                                if let Some(&prev_hash) = file_hashes.get(&event_path) {
-                                                    if prev_hash == hash {
-                                                        eprintln!(
-                                                            "File {} has same hash, skipping",
-                                                            event_path.display()
-                                                        );
-                                                        continue; // No actual change
+                                                    if let Some(&prev_hash) = file_hashes.get(&event_path) {
+                                                        if prev_hash == hash {
+                                                            eprintln!(
+                                                                "File {} has same hash, skipping",
+                                                                event_path.display()
+                                                            );
+                                                            continue; // No actual change
+                                                        }
                                                     }
-                                                }
 
-                                                file_hashes.insert(event_path.clone(), hash);
-                                                eprintln!("Detected change in {}, recompiling...", object_name);
+                                                    file_hashes.insert(event_path.clone(), hash);
+                                                    eprintln!("Detected change in {}, recompiling...", object_name);
 
-                                                // Compile
-                                                match std::process::Command::new("cargo")
-                                                    .args(["build", "--release", "-p", &object_name])
-                                                    .status()
-                                                {
-                                                    Ok(status) => {
-                                                        if !status.success() {
-                                                            eprintln!("Cargo build failed for {}", object_name);
+                                                    // Compile
+                                                    match std::process::Command::new("cargo")
+                                                        .args(["build", "--release", "-p", &object_name])
+                                                        .status()
+                                                    {
+                                                        Ok(status) => {
+                                                            if !status.success() {
+                                                                eprintln!("Cargo build failed for {}", object_name);
+                                                                continue;
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            eprintln!(
+                                                                "Failed to run cargo build for {}: {}",
+                                                                object_name, e
+                                                            );
                                                             continue;
                                                         }
                                                     }
-                                                    Err(e) => {
-                                                        eprintln!(
-                                                            "Failed to run cargo build for {}: {}",
-                                                            object_name, e
-                                                        );
-                                                        continue;
-                                                    }
-                                                }
 
-                                                // Reload
-                                                #[cfg(target_os = "macos")]
-                                                let lib_path = format!("target/release/lib{}.dylib", object_name);
-                                                #[cfg(target_os = "linux")]
-                                                let lib_path = format!("target/release/lib{}.so", object_name);
-                                                #[cfg(target_os = "windows")]
-                                                let lib_path = format!("target/release/{}.dll", object_name);
+                                                    // Reload
+                                                    #[cfg(target_os = "macos")]
+                                                    let lib_path = format!("target/release/lib{}.dylib", object_name);
+                                                    #[cfg(target_os = "linux")]
+                                                    let lib_path = format!("target/release/lib{}.so", object_name);
+                                                    #[cfg(target_os = "windows")]
+                                                    let lib_path = format!("target/release/{}.dll", object_name);
 
-                                                if let Err(e) = registry.load(&lib_path) {
-                                                    eprintln!("Failed to reload {}: {}", object_name, e);
-                                                } else {
-                                                    eprintln!("Successfully reloaded {}", object_name);
+                                                    if let Err(e) = registry.load(&lib_path) {
+                                                        eprintln!("Failed to reload {}: {}", object_name, e);
+                                                    } else {
+                                                        eprintln!("Successfully reloaded {}", object_name);
+                                                        eprintln!("Starting migrations...");
 
-                                                    // Trigger migrations synchronously
-                                                    let mut reloaded_libs = HashSet::new();
-                                                    reloaded_libs.insert(object_name.clone());
+                                                        // Trigger migrations synchronously
+                                                        let mut reloaded_libs = HashSet::new();
+                                                        reloaded_libs.insert(object_name.clone());
 
-                                                    if let Ok(roots) = root_objects.lock() {
-                                                        for (_, handle) in roots.iter() {
-                                                            if let Ok(mut guard) = handle.lock() {
-                                                                if let Err(e) = guard.migrate_children(&reloaded_libs) {
+                                                        if let Ok(roots) = root_objects.lock() {
+                                                            eprintln!(
+                                                                "Got root objects lock, processing {} roots",
+                                                                roots.len()
+                                                            );
+                                                            for (i, (_, handle)) in roots.iter().enumerate() {
+                                                                eprintln!("Processing root {}/{}", i + 1, roots.len());
+                                                                if let Ok(mut guard) = handle.lock() {
+                                                                    if let Err(e) =
+                                                                        guard.migrate_children(&reloaded_libs)
+                                                                    {
+                                                                        eprintln!(
+                                                                            "Migration failed for {}: {}",
+                                                                            object_name, e
+                                                                        );
+                                                                    } else {
+                                                                        eprintln!(
+                                                                            "Migration succeeded for root {}",
+                                                                            i + 1
+                                                                        );
+                                                                    }
+                                                                } else {
                                                                     eprintln!(
-                                                                        "Migration failed for {}: {}",
-                                                                        object_name, e
+                                                                        "Failed to lock handle for root {}",
+                                                                        i + 1
                                                                     );
                                                                 }
                                                             }
+                                                        } else {
+                                                            eprintln!("Failed to lock root_objects");
                                                         }
+                                                        eprintln!("Migrations completed, continuing file watch");
                                                     }
                                                 }
+                                                Err(e) => {
+                                                    eprintln!("Failed to read file {}: {}", event_path.display(), e);
+                                                    continue;
+                                                }
                                             }
-                                            Err(e) => {
-                                                eprintln!("Failed to read file {}: {}", event_path.display(), e);
-                                                continue;
-                                            }
+                                        } else {
+                                            eprintln!("Could not determine object name for path: {:?}", event_path);
                                         }
                                     }
                                 }
                             }
+                            _ => {
+                                eprintln!("Ignoring event kind: {:?}", event.kind);
+                            }
                         }
-                        _ => {}
                     }
+                    Err(e) => eprintln!("Watch error: {:?}", e),
                 }
-                Err(e) => eprintln!("Watch error: {:?}", e),
-            },
+                eprintln!("Finished processing event, continuing loop");
+            }
             Err(e) => {
                 eprintln!("Channel receive error: {:?}", e);
                 return Err(format!("Watcher channel closed: {:?}", e).into());
