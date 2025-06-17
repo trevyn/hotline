@@ -222,7 +222,11 @@ fn watch_and_reload_files(
                                                             );
                                                             for (i, (_, handle)) in roots.iter().enumerate() {
                                                                 eprintln!("Processing root {}/{}", i + 1, roots.len());
-                                                                if let Ok(mut guard) = handle.lock() {
+                                                                if let Ok(mut guard) = handle.try_lock() {
+                                                                    eprintln!(
+                                                                        "Got lock for root {}, calling migrate_children",
+                                                                        i + 1
+                                                                    );
                                                                     if let Err(e) =
                                                                         guard.migrate_children(&reloaded_libs)
                                                                     {
@@ -238,7 +242,7 @@ fn watch_and_reload_files(
                                                                     }
                                                                 } else {
                                                                     eprintln!(
-                                                                        "Failed to lock handle for root {}",
+                                                                        "Failed to lock handle for root {} - mutex is locked by another thread",
                                                                         i + 1
                                                                     );
                                                                 }
