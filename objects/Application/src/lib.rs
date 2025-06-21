@@ -805,9 +805,23 @@ hotline::object!({
                                     // Check if any handler is focused (i.e., editing)
                                     let editing = self.event_handlers.iter().any(|h| h.is_focused());
                                     if !editing {
-                                        if let Some(ref mut wm) = self.window_manager {
-                                            wm.rotate_selected(0.1);
+                                        if shift {
+                                            // Shift+R: Randomize starfield parameters
+                                            if let Some(ref mut sf) = self.starfield {
+                                                sf.randomize_params();
+                                            }
+                                        } else {
+                                            // R: Rotate selected window
+                                            if let Some(ref mut wm) = self.window_manager {
+                                                wm.rotate_selected(0.1);
+                                            }
                                         }
+                                    }
+                                }
+                                Keycode::Tab => {
+                                    // Toggle starfield parameter panel
+                                    if let Some(ref mut sf) = self.starfield {
+                                        sf.toggle_panel();
                                     }
                                 }
                                 Keycode::Minus | Keycode::KpMinus => {

@@ -19,6 +19,49 @@ hotline::object!({
         resize_mode: Option<u8>, // 0=None, 1=Top, 2=Bottom, 3=Left, 4=Right, 5=TopLeft, 6=TopRight, 7=BottomLeft, 8=BottomRight
         drag_offset: (f64, f64),
         speed_display: Option<TextRenderer>,
+        // Visual Effects Parameters
+        trail_fade_factor: f32,
+        star_size_multiplier: f32,
+        z_velocity_curve: f32,
+        motion_blur_samples: i32,
+        chromatic_aberration: f32,
+        vortex_twist_amount: f32,
+        bloom_radius: f32,
+        streak_taper_ratio: f32,
+
+        // Distribution Parameters
+        spawn_pattern: i32, // 0=random, 1=radial, 2=spiral, 3=tunnel
+        center_bias: f32,
+        star_layers: i32,
+        density_falloff: f32,
+        angular_spread: f32,
+        cluster_factor: f32,
+
+        // Animation Parameters
+        pulse_frequency: f32,
+        wobble_amount: f32,
+        rotation_speed: f32,
+        time_dilation: f32,
+        afterimage_count: i32,
+        strobe_interval: f32,
+
+        // Physics Parameters
+        drag_coefficient: f32,
+        gravity_strength: f32,
+        turbulence_scale: f32,
+        max_velocity_cap: f32,
+        acceleration_curve: i32, // 0=linear, 1=quadratic, 2=cubic
+        param_displays: Vec<TextRenderer>,
+        panel_visible: bool,
+        selected_param: Option<usize>,
+        hovered_param: Option<usize>,
+        panel_x: f64,
+        panel_width: f64,
+        param_start_y: f64,
+        param_height: f64,
+        dragging_param: bool,
+        drag_start_x: f64,
+        drag_start_value: f32,
     }
 
     impl Starfield {
@@ -30,11 +73,50 @@ hotline::object!({
             self.base_velocity = (0.0, 0.0);
             self.controller_velocity = (0.0, 0.0);
             self.z_velocity = 0.0;
-            self.acceleration_multiplier = 5.0;
+            self.acceleration_multiplier = 2.0; // Lower for more gradual effect
             self.initialized = true;
             self.dragging = false;
             self.resize_mode = None;
             self.drag_offset = (0.0, 0.0);
+            // Visual Effects defaults
+            self.trail_fade_factor = 0.8;
+            self.star_size_multiplier = 1.0;
+            self.z_velocity_curve = 1.0;
+            self.motion_blur_samples = 1;
+            self.chromatic_aberration = 0.0;
+            self.vortex_twist_amount = 0.0;
+            self.bloom_radius = 0.0;
+            self.streak_taper_ratio = 0.5;
+
+            // Distribution defaults
+            self.spawn_pattern = 1; // radial
+            self.center_bias = 1.0;
+            self.star_layers = 3;
+            self.density_falloff = 1.0;
+            self.angular_spread = 180.0;
+            self.cluster_factor = 0.0;
+
+            // Animation defaults
+            self.pulse_frequency = 0.0;
+            self.wobble_amount = 0.0;
+            self.rotation_speed = 0.0;
+            self.time_dilation = 1.0;
+            self.afterimage_count = 0;
+            self.strobe_interval = 0.0;
+
+            // Physics defaults
+            self.drag_coefficient = 0.0;
+            self.gravity_strength = 0.0;
+            self.turbulence_scale = 0.0;
+            self.max_velocity_cap = 100.0;
+            self.acceleration_curve = 0; // linear
+            self.panel_visible = true;
+            self.selected_param = None;
+            self.hovered_param = None;
+            self.panel_width = 300.0;
+            self.param_height = 20.0;
+            self.param_start_y = 60.0;
+            self.dragging_param = false;
 
             // Initialize speed display
             if let Some(registry) = self.get_registry() {
@@ -44,11 +126,72 @@ hotline::object!({
             display.set_text(format!("Speed: {:.1}x", self.acceleration_multiplier));
             display.set_color((255, 255, 255, 255));
             self.speed_display = Some(display);
+
+            // Initialize parameter displays
+            self.param_displays.clear();
+
+            // Title
+            let mut title = TextRenderer::new();
+            title.set_text("=== STARFIELD PARAMS ===".to_string());
+            title.set_color((255, 255, 255, 255));
+            self.param_displays.push(title);
+
+            // Randomize button
+            let mut randomize = TextRenderer::new();
+            randomize.set_text("[R] Randomize All".to_string());
+            randomize.set_color((180, 180, 255, 255));
+            self.param_displays.push(randomize);
+
+            // Visual Effects header
+            let mut visual_header = TextRenderer::new();
+            visual_header.set_text("-- Visual Effects --".to_string());
+            visual_header.set_color((255, 200, 200, 255));
+            self.param_displays.push(visual_header);
+
+            // Create displays for each parameter
+            let param_names = [
+                ("trail_fade", "Trail Fade Factor"),
+                ("star_size", "Star Size Mult"),
+                ("z_curve", "Z Velocity Curve"),
+                ("blur_samples", "Motion Blur Samples"),
+                ("chromatic", "Chromatic Aberration"),
+                ("vortex", "Vortex Twist"),
+                ("bloom", "Bloom Radius"),
+                ("taper", "Streak Taper Ratio"),
+                ("", "-- Distribution --"),
+                ("pattern", "Spawn Pattern"),
+                ("center_bias", "Center Bias"),
+                ("layers", "Star Layers"),
+                ("density", "Density Falloff"),
+                ("spread", "Angular Spread"),
+                ("cluster", "Cluster Factor"),
+                ("", "-- Animation --"),
+                ("pulse", "Pulse Frequency"),
+                ("wobble", "Wobble Amount"),
+                ("rotation", "Rotation Speed"),
+                ("dilation", "Time Dilation"),
+                ("afterimage", "Afterimage Count"),
+                ("strobe", "Strobe Interval"),
+                ("", "-- Physics --"),
+                ("drag", "Drag Coefficient"),
+                ("gravity", "Gravity Strength"),
+                ("turbulence", "Turbulence Scale"),
+                ("max_vel", "Max Velocity Cap"),
+                ("accel_curve", "Acceleration Curve"),
+            ];
+
+            for (_, name) in param_names.iter() {
+                let mut param_display = TextRenderer::new();
+                param_display.set_text(name.to_string());
+                param_display.set_color((200, 200, 200, 255));
+                self.param_displays.push(param_display);
+            }
         }
 
         pub fn set_rect(&mut self, rect: Rect) {
             let (x, y, w, h) = rect.bounds();
             self.rect = Some(rect);
+            self.panel_x = x + w - self.panel_width - 10.0;
 
             // Initialize stars if not already done
             if self.star_x.is_empty() {
@@ -99,6 +242,142 @@ hotline::object!({
             self.acceleration_multiplier
         }
 
+        pub fn randomize_params(&mut self) {
+            let mut rng = rand::rng();
+
+            // Visual Effects
+            self.trail_fade_factor = rng.random_range(0.1..1.0);
+            self.star_size_multiplier = rng.random_range(0.5..5.0);
+            self.z_velocity_curve = rng.random_range(0.5..2.0);
+            self.motion_blur_samples = rng.random_range(1..10);
+            self.chromatic_aberration = rng.random_range(0.0..10.0);
+            self.vortex_twist_amount = rng.random_range(0.0..1.0);
+            self.bloom_radius = rng.random_range(0.0..20.0);
+            self.streak_taper_ratio = rng.random_range(0.1..1.0);
+
+            // Distribution
+            self.spawn_pattern = rng.random_range(0..4);
+            self.center_bias = rng.random_range(0.0..2.0);
+            self.star_layers = rng.random_range(1..10);
+            self.density_falloff = rng.random_range(0.1..5.0);
+            self.angular_spread = rng.random_range(0.0..180.0);
+            self.cluster_factor = rng.random_range(0.0..1.0);
+
+            // Animation
+            self.pulse_frequency = rng.random_range(0.0..10.0);
+            self.wobble_amount = rng.random_range(0.0..5.0);
+            self.rotation_speed = rng.random_range(-10.0..10.0);
+            self.time_dilation = rng.random_range(0.1..5.0);
+            self.afterimage_count = rng.random_range(0..5);
+            self.strobe_interval = rng.random_range(0.0..1.0);
+
+            // Physics
+            self.drag_coefficient = rng.random_range(0.0..1.0);
+            self.gravity_strength = rng.random_range(0.0..1.0);
+            self.turbulence_scale = rng.random_range(0.0..10.0);
+            self.max_velocity_cap = rng.random_range(10.0..1000.0);
+            self.acceleration_curve = rng.random_range(0..3);
+
+            eprintln!("Randomized starfield parameters!");
+        }
+
+        pub fn toggle_panel(&mut self) {
+            self.panel_visible = !self.panel_visible;
+        }
+
+        fn get_param_value(&self, index: usize) -> Option<f32> {
+            match index {
+                0 => Some(self.trail_fade_factor),
+                1 => Some(self.star_size_multiplier),
+                2 => Some(self.z_velocity_curve),
+                3 => Some(self.motion_blur_samples as f32),
+                4 => Some(self.chromatic_aberration),
+                5 => Some(self.vortex_twist_amount),
+                6 => Some(self.bloom_radius),
+                7 => Some(self.streak_taper_ratio),
+                8 => Some(self.spawn_pattern as f32),
+                9 => Some(self.center_bias),
+                10 => Some(self.star_layers as f32),
+                11 => Some(self.density_falloff),
+                12 => Some(self.angular_spread),
+                13 => Some(self.cluster_factor),
+                14 => Some(self.pulse_frequency),
+                15 => Some(self.wobble_amount),
+                16 => Some(self.rotation_speed),
+                17 => Some(self.time_dilation),
+                18 => Some(self.afterimage_count as f32),
+                19 => Some(self.strobe_interval),
+                20 => Some(self.drag_coefficient),
+                21 => Some(self.gravity_strength),
+                22 => Some(self.turbulence_scale),
+                23 => Some(self.max_velocity_cap),
+                24 => Some(self.acceleration_curve as f32),
+                _ => None,
+            }
+        }
+
+        fn set_param_value(&mut self, index: usize, value: f32) {
+            match index {
+                0 => self.trail_fade_factor = value.clamp(0.1, 1.0),
+                1 => self.star_size_multiplier = value.clamp(0.5, 5.0),
+                2 => self.z_velocity_curve = value.clamp(0.5, 2.0),
+                3 => self.motion_blur_samples = value.clamp(1.0, 10.0) as i32,
+                4 => self.chromatic_aberration = value.clamp(0.0, 10.0),
+                5 => self.vortex_twist_amount = value.clamp(0.0, 1.0),
+                6 => self.bloom_radius = value.clamp(0.0, 20.0),
+                7 => self.streak_taper_ratio = value.clamp(0.1, 1.0),
+                8 => self.spawn_pattern = value.clamp(0.0, 3.0) as i32,
+                9 => self.center_bias = value.clamp(0.0, 2.0),
+                10 => self.star_layers = value.clamp(1.0, 10.0) as i32,
+                11 => self.density_falloff = value.clamp(0.1, 5.0),
+                12 => self.angular_spread = value.clamp(0.0, 180.0),
+                13 => self.cluster_factor = value.clamp(0.0, 1.0),
+                14 => self.pulse_frequency = value.clamp(0.0, 10.0),
+                15 => self.wobble_amount = value.clamp(0.0, 5.0),
+                16 => self.rotation_speed = value.clamp(-10.0, 10.0),
+                17 => self.time_dilation = value.clamp(0.1, 5.0),
+                18 => self.afterimage_count = value.clamp(0.0, 5.0) as i32,
+                19 => self.strobe_interval = value.clamp(0.0, 1.0),
+                20 => self.drag_coefficient = value.clamp(0.0, 1.0),
+                21 => self.gravity_strength = value.clamp(0.0, 1.0),
+                22 => self.turbulence_scale = value.clamp(0.0, 10.0),
+                23 => self.max_velocity_cap = value.clamp(10.0, 1000.0),
+                24 => self.acceleration_curve = value.clamp(0.0, 2.0) as i32,
+                _ => {}
+            }
+        }
+
+        fn get_param_range(&self, index: usize) -> Option<(f32, f32)> {
+            match index {
+                0 => Some((0.1, 1.0)),
+                1 => Some((0.5, 5.0)),
+                2 => Some((0.5, 2.0)),
+                3 => Some((1.0, 10.0)),
+                4 => Some((0.0, 10.0)),
+                5 => Some((0.0, 1.0)),
+                6 => Some((0.0, 20.0)),
+                7 => Some((0.1, 1.0)),
+                8 => Some((0.0, 3.0)),
+                9 => Some((0.0, 2.0)),
+                10 => Some((1.0, 10.0)),
+                11 => Some((0.1, 5.0)),
+                12 => Some((0.0, 180.0)),
+                13 => Some((0.0, 1.0)),
+                14 => Some((0.0, 10.0)),
+                15 => Some((0.0, 5.0)),
+                16 => Some((-10.0, 10.0)),
+                17 => Some((0.1, 5.0)),
+                18 => Some((0.0, 5.0)),
+                19 => Some((0.0, 1.0)),
+                20 => Some((0.0, 1.0)),
+                21 => Some((0.0, 1.0)),
+                22 => Some((0.0, 10.0)),
+                23 => Some((10.0, 1000.0)),
+                24 => Some((0.0, 2.0)),
+                _ => None,
+            }
+        }
+
         pub fn update(&mut self, _delta_time: f64) {
             if let Some(rect) = &self.rect {
                 let (x, y, w, h) = rect.bounds();
@@ -134,26 +413,82 @@ hotline::object!({
                             self.star_z[i] = 0.01;
                             let mut rng = rand::rng();
 
-                            // During warp, spawn stars across entire field but weighted toward center
-                            if self.z_velocity > 0.5 {
-                                // Use a gaussian-like distribution - more stars near center, but some everywhere
-                                let angle = rng.random_range(0.0..std::f32::consts::TAU);
-                                // Exponential distribution for radius - more likely to be near center
-                                let u: f32 = rng.random_range(0.0..1.0);
-                                let max_radius = (w.min(h) / 2.0) as f32;
-                                let radius = -max_radius * (1.0_f32 - u).ln();
-                                let radius = radius.min(max_radius * 0.9); // Cap at 90% of max to stay in bounds
+                            // Use spawn pattern parameter
+                            match self.spawn_pattern {
+                                0 => {
+                                    // Random
+                                    self.star_x[i] = rng.random_range(x..x + w) as f32;
+                                    self.star_y[i] = rng.random_range(y..y + h) as f32;
+                                }
+                                1 => {
+                                    // Radial
+                                    let angle = rng.random_range(0.0..std::f32::consts::TAU);
+                                    let angle_range = self.angular_spread.to_radians();
+                                    let angle = if angle_range < std::f32::consts::TAU {
+                                        rng.random_range(-angle_range / 2.0..angle_range / 2.0)
+                                    } else {
+                                        angle
+                                    };
 
-                                self.star_x[i] = center_x as f32 + angle.cos() * radius;
-                                self.star_y[i] = center_y as f32 + angle.sin() * radius;
-                            } else {
-                                // Normal distribution across field
-                                self.star_x[i] = rng.random_range(x..x + w) as f32;
-                                self.star_y[i] = rng.random_range(y..y + h) as f32;
+                                    // Apply center bias and density falloff
+                                    let u: f32 = rng.random_range(0.0..1.0);
+                                    let max_radius = (w.min(h) / 2.0) as f32;
+                                    let radius = if self.center_bias > 0.0 {
+                                        -max_radius * (1.0_f32 - u).ln().powf(self.center_bias)
+                                    } else {
+                                        u * max_radius
+                                    };
+                                    let radius = radius.min(max_radius * 0.9) * self.density_falloff;
+
+                                    self.star_x[i] = center_x as f32 + angle.cos() * radius;
+                                    self.star_y[i] = center_y as f32 + angle.sin() * radius;
+                                }
+                                2 => {
+                                    // Spiral
+                                    let t = rng.random_range(0.0..10.0_f32);
+                                    let spiral_tightness = 0.3;
+                                    let radius = t * (w.min(h) as f32 / 20.0);
+                                    let angle = t * spiral_tightness
+                                        + (i as f32 % self.star_layers as f32)
+                                            * (std::f32::consts::TAU / self.star_layers as f32);
+
+                                    self.star_x[i] = center_x as f32 + angle.cos() * radius;
+                                    self.star_y[i] = center_y as f32 + angle.sin() * radius;
+                                }
+                                3 => {
+                                    // Tunnel
+                                    let layer = i % self.star_layers.max(1) as usize;
+                                    let layer_radius =
+                                        (layer as f32 + 1.0) / self.star_layers as f32 * (w.min(h) / 2.0) as f32;
+                                    let angle = rng.random_range(0.0..std::f32::consts::TAU);
+
+                                    // Add some randomness for natural look
+                                    let radius_variation = rng.random_range(0.8..1.2);
+                                    let final_radius = layer_radius * radius_variation * self.density_falloff;
+
+                                    self.star_x[i] = center_x as f32 + angle.cos() * final_radius;
+                                    self.star_y[i] = center_y as f32 + angle.sin() * final_radius;
+                                }
+                                _ => {
+                                    self.star_x[i] = rng.random_range(x..x + w) as f32;
+                                    self.star_y[i] = rng.random_range(y..y + h) as f32;
+                                }
+                            }
+
+                            // Apply cluster factor
+                            if self.cluster_factor > 0.0 && i > 0 {
+                                let cluster_chance = rng.random_range(0.0..1.0);
+                                if cluster_chance < self.cluster_factor {
+                                    // Cluster near previous star
+                                    let cluster_dist = rng.random_range(5.0..30.0);
+                                    let cluster_angle = rng.random_range(0.0..std::f32::consts::TAU);
+                                    self.star_x[i] = self.star_x[i - 1] + cluster_angle.cos() * cluster_dist;
+                                    self.star_y[i] = self.star_y[i - 1] + cluster_angle.sin() * cluster_dist;
+                                }
                             }
                         }
 
-                        // Create streaking effect by moving stars outward from center
+                        // Apply physics parameters
                         let dx = self.star_x[i] - center_x as f32;
                         let dy = self.star_y[i] - center_y as f32;
                         let dist = (dx * dx + dy * dy).sqrt();
@@ -163,17 +498,45 @@ hotline::object!({
                             let ndx = dx / dist;
                             let ndy = dy / dist;
 
-                            // Speed based on z (closer = faster) and velocity
-                            // Much slower acceleration to keep stars visible
-                            let speed = self.z_velocity * self.star_z[i] * 20.0 * 0.016;
-                            self.star_x[i] += ndx * speed;
-                            self.star_y[i] += ndy * speed;
+                            // Apply acceleration curve
+                            let accel_factor = match self.acceleration_curve {
+                                0 => self.z_velocity,                                     // Linear
+                                1 => self.z_velocity * self.z_velocity,                   // Quadratic
+                                2 => self.z_velocity * self.z_velocity * self.z_velocity, // Cubic
+                                _ => self.z_velocity,
+                            };
 
-                            // Debug first star movement
-                            // if i == 0 {
-                            //     eprintln!("Update star 0: z={:.2} speed={:.1} move=({:.1},{:.1})",
-                            //         self.star_z[i], speed, ndx * speed, ndy * speed);
-                            // }
+                            // Base speed with max velocity cap
+                            let base_speed = accel_factor * self.star_z[i] * 20.0 * 0.016;
+                            let speed = base_speed.min(self.max_velocity_cap);
+
+                            // Apply drag
+                            let drag_adjusted_speed = speed * (1.0 - self.drag_coefficient * 0.016);
+
+                            // Add turbulence
+                            let mut turbulence_x = 0.0;
+                            let mut turbulence_y = 0.0;
+                            if self.turbulence_scale > 0.0 {
+                                let mut rng = rand::rng();
+                                turbulence_x = rng.random_range(-1.0..1.0) * self.turbulence_scale;
+                                turbulence_y = rng.random_range(-1.0..1.0) * self.turbulence_scale;
+                            }
+
+                            // Apply gravity towards center
+                            let gravity_x = if self.gravity_strength > 0.0 && dist > 50.0 {
+                                -ndx * self.gravity_strength * 0.016 / (dist / 100.0)
+                            } else {
+                                0.0
+                            };
+                            let gravity_y = if self.gravity_strength > 0.0 && dist > 50.0 {
+                                -ndy * self.gravity_strength * 0.016 / (dist / 100.0)
+                            } else {
+                                0.0
+                            };
+
+                            // Update position with all forces
+                            self.star_x[i] += ndx * drag_adjusted_speed + turbulence_x + gravity_x;
+                            self.star_y[i] += ndy * drag_adjusted_speed + turbulence_y + gravity_y;
                         }
                     }
 
@@ -187,20 +550,75 @@ hotline::object!({
                         let mut rng = rand::rng();
                         self.star_z[i] = 0.01;
 
-                        if self.z_velocity > 0.5 {
-                            // During warp, use same distribution as z-reset
-                            let angle = rng.random_range(0.0..std::f32::consts::TAU);
-                            let u: f32 = rng.random_range(0.0..1.0);
-                            let max_radius = (w.min(h) / 2.0) as f32;
-                            let radius = -max_radius * (1.0_f32 - u).ln();
-                            let radius = radius.min(max_radius * 0.9);
+                        // Use same spawn pattern as above
+                        match self.spawn_pattern {
+                            0 => {
+                                // Random
+                                self.star_x[i] = rng.random_range(x..x + w) as f32;
+                                self.star_y[i] = rng.random_range(y..y + h) as f32;
+                            }
+                            1 => {
+                                // Radial
+                                let angle = rng.random_range(0.0..std::f32::consts::TAU);
+                                let angle_range = self.angular_spread.to_radians();
+                                let angle = if angle_range < std::f32::consts::TAU {
+                                    rng.random_range(-angle_range / 2.0..angle_range / 2.0)
+                                } else {
+                                    angle
+                                };
 
-                            self.star_x[i] = center_x as f32 + angle.cos() * radius;
-                            self.star_y[i] = center_y as f32 + angle.sin() * radius;
-                        } else {
-                            // Normal movement - respawn anywhere in field
-                            self.star_x[i] = rng.random_range(x..x + w) as f32;
-                            self.star_y[i] = rng.random_range(y..y + h) as f32;
+                                let u: f32 = rng.random_range(0.0..1.0);
+                                let max_radius = (w.min(h) / 2.0) as f32;
+                                let radius = if self.center_bias > 0.0 {
+                                    -max_radius * (1.0_f32 - u).ln().powf(self.center_bias)
+                                } else {
+                                    u * max_radius
+                                };
+                                let radius = radius.min(max_radius * 0.9) * self.density_falloff;
+
+                                self.star_x[i] = center_x as f32 + angle.cos() * radius;
+                                self.star_y[i] = center_y as f32 + angle.sin() * radius;
+                            }
+                            2 => {
+                                // Spiral
+                                let t = rng.random_range(0.0..10.0_f32);
+                                let spiral_tightness = 0.3;
+                                let radius = t * (w.min(h) as f32 / 20.0);
+                                let angle = t * spiral_tightness
+                                    + (i as f32 % self.star_layers as f32)
+                                        * (std::f32::consts::TAU / self.star_layers as f32);
+
+                                self.star_x[i] = center_x as f32 + angle.cos() * radius;
+                                self.star_y[i] = center_y as f32 + angle.sin() * radius;
+                            }
+                            3 => {
+                                // Tunnel
+                                let layer = i % self.star_layers.max(1) as usize;
+                                let layer_radius =
+                                    (layer as f32 + 1.0) / self.star_layers as f32 * (w.min(h) / 2.0) as f32;
+                                let angle = rng.random_range(0.0..std::f32::consts::TAU);
+
+                                let radius_variation = rng.random_range(0.8..1.2);
+                                let final_radius = layer_radius * radius_variation * self.density_falloff;
+
+                                self.star_x[i] = center_x as f32 + angle.cos() * final_radius;
+                                self.star_y[i] = center_y as f32 + angle.sin() * final_radius;
+                            }
+                            _ => {
+                                self.star_x[i] = rng.random_range(x..x + w) as f32;
+                                self.star_y[i] = rng.random_range(y..y + h) as f32;
+                            }
+                        }
+
+                        // Apply cluster factor
+                        if self.cluster_factor > 0.0 && i > 0 {
+                            let cluster_chance = rng.random_range(0.0..1.0);
+                            if cluster_chance < self.cluster_factor {
+                                let cluster_dist = rng.random_range(5.0..30.0);
+                                let cluster_angle = rng.random_range(0.0..std::f32::consts::TAU);
+                                self.star_x[i] = self.star_x[i - 1] + cluster_angle.cos() * cluster_dist;
+                                self.star_y[i] = self.star_y[i - 1] + cluster_angle.sin() * cluster_dist;
+                            }
                         }
                     }
                 }
@@ -247,6 +665,11 @@ hotline::object!({
 
             // Register speed display atlas
             if let Some(ref mut display) = self.speed_display {
+                display.register_atlas(gpu_renderer);
+            }
+
+            // Register parameter display atlases
+            for display in &mut self.param_displays {
                 display.register_atlas(gpu_renderer);
             }
         }
@@ -378,88 +801,189 @@ hotline::object!({
                             visible_count += 1;
                         }
 
-                        // When accelerating, draw as streaks. Otherwise draw as dots.
-                        if self.z_velocity > 0.1 {
-                            // Calculate direction from center
-                            let center_x = rx + rw / 2.0;
-                            let center_y = ry + rh / 2.0;
-                            let dx = star_x - center_x;
-                            let dy = star_y - center_y;
-                            let dist = (dx * dx + dy * dy).sqrt();
+                        // Apply visual parameters to star rendering
+                        let center_x = rx + rw / 2.0;
+                        let center_y = ry + rh / 2.0;
+                        let dx = star_x - center_x;
+                        let dy = star_y - center_y;
+                        let dist = (dx * dx + dy * dy).sqrt();
 
-                            // Always draw stars when accelerating
+                        // Apply animation effects
+                        let time =
+                            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32()
+                                * self.time_dilation.max(0.1);
+
+                        // Pulse effect
+                        let pulse = if self.pulse_frequency > 0.0 {
+                            1.0 + (time * self.pulse_frequency).sin() * 0.2
+                        } else {
+                            1.0
+                        };
+
+                        // Wobble effect
+                        let wobble_offset_x = if self.wobble_amount > 0.0 {
+                            (time * 3.0 + i as f32 * 0.5).sin() * self.wobble_amount
+                        } else {
+                            0.0
+                        };
+                        let wobble_offset_y = if self.wobble_amount > 0.0 {
+                            (time * 2.7 + i as f32 * 0.7).cos() * self.wobble_amount
+                        } else {
+                            0.0
+                        };
+
+                        // Apply rotation
+                        let rotation_angle = if self.rotation_speed > 0.0 { time * self.rotation_speed } else { 0.0 };
+
+                        // Vortex twist effect
+                        let twist_angle = if self.vortex_twist_amount > 0.0 && dist > 0.01 {
+                            ((dist / 100.0) * self.vortex_twist_amount as f64) as f32
+                        } else {
+                            0.0
+                        };
+
+                        // Apply rotation and twist
+                        let total_angle = rotation_angle + twist_angle;
+                        let cos_a = total_angle.cos() as f64;
+                        let sin_a = total_angle.sin() as f64;
+                        let rotated_x = dx * cos_a - dy * sin_a;
+                        let rotated_y = dx * sin_a + dy * cos_a;
+                        let final_x = center_x + rotated_x + wobble_offset_x as f64;
+                        let final_y = center_y + rotated_y + wobble_offset_y as f64;
+
+                        // Size with star_size_multiplier and pulse
+                        let final_size = size * self.star_size_multiplier as f64 * pulse as f64;
+
+                        // Brightness with bloom effect
+                        let bloom_brightness = if self.bloom_radius > 0.0 {
+                            ((brightness as f32) * (1.0 + self.bloom_radius * 0.5)).min(255.0) as u8
+                        } else {
+                            brightness
+                        };
+
+                        // Strobe effect - skip rendering when off
+                        let strobe_visible = if self.strobe_interval > 0.0 {
+                            (time / self.strobe_interval).floor() as i32 % 2 == 0
+                        } else {
+                            true
+                        };
+
+                        if !strobe_visible {
+                            continue; // Skip this star entirely when strobe is off
+                        }
+
+                        // Gradual transition from dots to streaks based on z_velocity
+                        let z_vel_adjusted = self.z_velocity.powf(self.z_velocity_curve);
+                        let streak_factor = (z_vel_adjusted * 5.0).min(1.0); // 0 to 1 transition over 0.0 to 0.2 velocity
+
+                        if z_vel_adjusted > 0.01 && streak_factor > 0.1 {
                             streak_count += 1;
 
-                            // For very small distances from center, just draw a dot
                             if dist < 5.0 {
-                                gpu_renderer.add_command(RenderCommand::Rect {
-                                    texture_id: *atlas_id,
-                                    dest_x: star_x - size / 2.0,
-                                    dest_y: star_y - size / 2.0,
-                                    dest_width: size,
-                                    dest_height: size,
-                                    rotation: 0.0,
-                                    color: (255, brightness, brightness, brightness),
-                                });
+                                // Draw motion blur samples for close stars
+                                for j in 0..self.motion_blur_samples.max(1) {
+                                    let blur_offset = j as f64 / self.motion_blur_samples.max(1) as f64;
+                                    let blur_alpha = ((255.0 * (1.0 - blur_offset * 0.7)) as u8).min(bloom_brightness);
+
+                                    gpu_renderer.add_command(RenderCommand::Rect {
+                                        texture_id: *atlas_id,
+                                        dest_x: final_x - final_size / 2.0 - wobble_offset_x as f64 * blur_offset,
+                                        dest_y: final_y - final_size / 2.0 - wobble_offset_y as f64 * blur_offset,
+                                        dest_width: final_size,
+                                        dest_height: final_size,
+                                        rotation: 0.0,
+                                        color: (blur_alpha, bloom_brightness, bloom_brightness, bloom_brightness),
+                                    });
+                                }
                             } else {
-                                // Streak length based on velocity, z depth, and a base length
-                                let base_streak = 10.0;
-                                let streak_length = base_streak + (self.z_velocity * z * 100.0) as f64;
+                                // Streak length with trail_fade_factor and gradual transition
+                                let base_streak = 2.0; // Shorter base for smoother transition
+                                let streak_length = (base_streak
+                                    + (z_vel_adjusted * z * 100.0 * self.trail_fade_factor) as f64)
+                                    * streak_factor as f64;
 
                                 // Normalize direction
                                 let ndx = dx / dist;
                                 let ndy = dy / dist;
 
-                                // Line goes from behind the star to current position
-                                // The streak trails behind the star's motion
-                                let x1 = star_x - ndx * streak_length;
-                                let y1 = star_y - ndy * streak_length;
-                                let x2 = star_x;
-                                let y2 = star_y;
+                                // Apply chromatic aberration to streaks
+                                for chroma_idx in 0..if self.chromatic_aberration > 0.0 { 3 } else { 1 } {
+                                    let chroma_offset = (chroma_idx as f32 - 1.0) * self.chromatic_aberration * 2.0;
+                                    let chroma_x1 = final_x - ndx * streak_length + chroma_offset as f64 * ndy;
+                                    let chroma_y1 = final_y - ndy * streak_length - chroma_offset as f64 * ndx;
+                                    let chroma_x2 = final_x + chroma_offset as f64 * ndy;
+                                    let chroma_y2 = final_y - chroma_offset as f64 * ndx;
 
-                                // Debug info for first few stars only
-                                // if i < 2 {
-                                //     let r = ((star_x - center_x).powi(2) + (star_y - center_y).powi(2)).sqrt();
-                                //     eprintln!("Star {}: pos({:.0},{:.0}) r={:.0} z={:.2} vel={:.1} streak={:.0}",
-                                //         i, star_x, star_y, r, z, self.z_velocity, streak_length);
-                                // }
+                                    // Color based on chromatic channel
+                                    let (r, g, b) = match chroma_idx {
+                                        0 => (bloom_brightness, 0, 0),
+                                        1 => (0, bloom_brightness, 0),
+                                        2 => (0, 0, bloom_brightness),
+                                        _ => (bloom_brightness, bloom_brightness, bloom_brightness),
+                                    };
 
-                                // Brighter at the front of the streak
-                                let front_brightness = ((brightness as f32) * 1.5).min(255.0) as u8;
+                                    // Thickness with taper
+                                    let thickness = (1.0 + z * 2.0) * (1.0 - self.streak_taper_ratio * 0.5);
 
-                                // Draw the streak
-                                let thickness = 1.0 + z * 2.0;
+                                    // Draw afterimages
+                                    for after_idx in 0..self.afterimage_count.max(1) {
+                                        let after_fade =
+                                            1.0 - (after_idx as f32 / self.afterimage_count.max(1) as f32) * 0.8;
+                                        let after_alpha = (255.0 * after_fade) as u8;
+                                        let after_offset = after_idx as f64 * 5.0;
 
-                                // Debug line drawing
-                                // if i == 0 {
-                                //     eprintln!("Drawing line: ({:.0},{:.0})->({:.0},{:.0}) thickness={:.1} brightness={}",
-                                //         x1, y1, x2, y2, thickness, front_brightness);
-                                // }
-
-                                gpu_renderer.add_command(RenderCommand::Line {
-                                    x1,
-                                    y1,
-                                    x2,
-                                    y2,
-                                    thickness: thickness as f64,
-                                    color: (255, front_brightness, front_brightness, front_brightness), // ABGR format - full alpha
-                                });
+                                        gpu_renderer.add_command(RenderCommand::Line {
+                                            x1: chroma_x1 - ndx * after_offset,
+                                            y1: chroma_y1 - ndy * after_offset,
+                                            x2: chroma_x2 - ndx * after_offset,
+                                            y2: chroma_y2 - ndy * after_offset,
+                                            thickness: thickness as f64,
+                                            color: (after_alpha, b, g, r), // ABGR format
+                                        });
+                                    }
+                                }
                             }
-                        } else {
-                            // Normal star (not accelerating) - make sure it's in bounds
-                            let sx = self.star_x[i] as f64;
-                            let sy = self.star_y[i] as f64;
-                            if sx >= rx - size && sx <= rx + rw + size && sy >= ry - size && sy <= ry + rh + size {
+                        }
+
+                        // Always draw the star dot (fade it based on streak_factor)
+                        if final_x >= rx - final_size
+                            && final_x <= rx + rw + final_size
+                            && final_y >= ry - final_size
+                            && final_y <= ry + rh + final_size
+                        {
+                            // Fade the dot as streaks get stronger
+                            let dot_alpha = ((1.0 - streak_factor * 0.7) * 255.0) as u8;
+
+                            // Draw bloom effect
+                            if self.bloom_radius > 0.0 {
+                                let bloom_size = final_size * (1.0 + self.bloom_radius as f64);
+                                let bloom_alpha = ((64.0 * (1.0 - streak_factor * 0.5)) as u8).min(64);
                                 gpu_renderer.add_command(RenderCommand::Rect {
                                     texture_id: *atlas_id,
-                                    dest_x: sx - size / 2.0,
-                                    dest_y: sy - size / 2.0,
-                                    dest_width: size,
-                                    dest_height: size,
+                                    dest_x: final_x - bloom_size / 2.0,
+                                    dest_y: final_y - bloom_size / 2.0,
+                                    dest_width: bloom_size,
+                                    dest_height: bloom_size,
                                     rotation: 0.0,
-                                    color: (255, brightness, brightness, brightness), // ABGR
+                                    color: (
+                                        bloom_alpha,
+                                        bloom_brightness / 2,
+                                        bloom_brightness / 2,
+                                        bloom_brightness / 2,
+                                    ),
                                 });
                             }
+
+                            // Draw main star
+                            gpu_renderer.add_command(RenderCommand::Rect {
+                                texture_id: *atlas_id,
+                                dest_x: final_x - final_size / 2.0,
+                                dest_y: final_y - final_size / 2.0,
+                                dest_width: final_size,
+                                dest_height: final_size,
+                                rotation: 0.0,
+                                color: (dot_alpha, bloom_brightness, bloom_brightness, bloom_brightness),
+                            });
                         }
                     }
                 }
@@ -494,6 +1018,202 @@ hotline::object!({
                     display.set_x(rx + 10.0);
                     display.set_y(ry + rh - 20.0);
                     display.generate_commands(gpu_renderer);
+                }
+
+                // Draw parameter panel
+                if self.panel_visible {
+                    let panel_y = ry + 10.0;
+
+                    // Draw panel background
+                    if let Some(bg_id) = self.atlas_ids.get(0).and_then(|id| *id) {
+                        gpu_renderer.add_command(RenderCommand::Rect {
+                            texture_id: bg_id,
+                            dest_x: self.panel_x,
+                            dest_y: panel_y,
+                            dest_width: self.panel_width,
+                            dest_height: rh - 20.0,
+                            rotation: 0.0,
+                            color: (200, 40, 40, 40), // Semi-transparent dark background
+                        });
+                    }
+
+                    // Draw panel border
+                    if let Some(border_id) = self.border_atlas_id {
+                        // Left border
+                        gpu_renderer.add_command(RenderCommand::Rect {
+                            texture_id: border_id,
+                            dest_x: self.panel_x,
+                            dest_y: panel_y,
+                            dest_width: 1.0,
+                            dest_height: rh - 20.0,
+                            rotation: 0.0,
+                            color: (255, 128, 128, 128),
+                        });
+                    }
+
+                    // Update and draw parameter displays
+                    let mut y_offset = panel_y + 10.0;
+                    let param_indices = [
+                        (None, 0),      // Title
+                        (None, 1),      // Randomize button
+                        (None, 2),      // Visual header
+                        (Some(0), 3),   // trail_fade
+                        (Some(1), 4),   // star_size
+                        (Some(2), 5),   // z_curve
+                        (Some(3), 6),   // blur_samples
+                        (Some(4), 7),   // chromatic
+                        (Some(5), 8),   // vortex
+                        (Some(6), 9),   // bloom
+                        (Some(7), 10),  // taper
+                        (None, 11),     // Distribution header
+                        (Some(8), 12),  // pattern
+                        (Some(9), 13),  // center_bias
+                        (Some(10), 14), // layers
+                        (Some(11), 15), // density
+                        (Some(12), 16), // spread
+                        (Some(13), 17), // cluster
+                        (None, 18),     // Animation header
+                        (Some(14), 19), // pulse
+                        (Some(15), 20), // wobble
+                        (Some(16), 21), // rotation
+                        (Some(17), 22), // dilation
+                        (Some(18), 23), // afterimage
+                        (Some(19), 24), // strobe
+                        (None, 25),     // Physics header
+                        (Some(20), 26), // drag
+                        (Some(21), 27), // gravity
+                        (Some(22), 28), // turbulence
+                        (Some(23), 29), // max_vel
+                        (Some(24), 30), // accel_curve
+                    ];
+
+                    // First, collect all the data we need
+                    let mut display_updates = Vec::new();
+                    let param_names = [
+                        "Trail Fade",
+                        "Star Size",
+                        "Z Curve",
+                        "Blur Samples",
+                        "Chromatic",
+                        "Vortex",
+                        "Bloom",
+                        "Taper",
+                        "Pattern",
+                        "Center Bias",
+                        "Layers",
+                        "Density",
+                        "Spread",
+                        "Cluster",
+                        "Pulse",
+                        "Wobble",
+                        "Rotation",
+                        "Dilation",
+                        "Afterimage",
+                        "Strobe",
+                        "Drag",
+                        "Gravity",
+                        "Turbulence",
+                        "Max Vel",
+                        "Accel Curve",
+                    ];
+
+                    for (param_idx, display_idx) in param_indices.iter() {
+                        let text_and_color = if let Some(idx) = param_idx {
+                            if let Some(value) = self.get_param_value(*idx) {
+                                let name = param_names.get(*idx).unwrap_or(&"Unknown");
+
+                                // Special formatting for integer parameters
+                                let value_str = match idx {
+                                    3 | 8 | 10 | 18 | 24 => format!("{:.0}", value),
+                                    23 => format!("{:.0}", value), // max velocity
+                                    _ => format!("{:.2}", value),
+                                };
+
+                                let text = format!("{}: {}", name, value_str);
+
+                                // Determine color
+                                let color = if self.selected_param == Some(*idx) {
+                                    (255, 255, 200, 255)
+                                } else if self.hovered_param == Some(*idx) {
+                                    (220, 220, 255, 255)
+                                } else {
+                                    (200, 200, 200, 255)
+                                };
+
+                                Some((text, color))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        let bar_data = if let Some(idx) = param_idx {
+                            if let (Some(value), Some((min, max))) =
+                                (self.get_param_value(*idx), self.get_param_range(*idx))
+                            {
+                                Some((value, min, max))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        display_updates.push((*display_idx, text_and_color, bar_data));
+                    }
+
+                    // Now apply the updates
+                    for (display_idx, text_and_color, bar_data) in display_updates {
+                        if let Some(display) = self.param_displays.get_mut(display_idx) {
+                            display.set_x(self.panel_x + 10.0);
+                            display.set_y(y_offset);
+
+                            // Apply the text and color
+                            if let Some((text, color)) = text_and_color {
+                                display.set_text(text);
+                                display.set_color(color);
+                            }
+
+                            display.generate_commands(gpu_renderer);
+
+                            // Draw value bars
+                            if let Some((value, min, max)) = bar_data {
+                                let bar_x = self.panel_x + 150.0;
+                                let bar_width = 120.0;
+                                let bar_height = 10.0;
+                                let normalized = (value - min) / (max - min);
+
+                                // Background bar
+                                if let Some(bg_id) = self.atlas_ids.get(0).and_then(|id| *id) {
+                                    gpu_renderer.add_command(RenderCommand::Rect {
+                                        texture_id: bg_id,
+                                        dest_x: bar_x,
+                                        dest_y: y_offset + 2.0,
+                                        dest_width: bar_width,
+                                        dest_height: bar_height,
+                                        rotation: 0.0,
+                                        color: (255, 60, 60, 60),
+                                    });
+                                }
+
+                                // Value bar
+                                if let Some(bar_id) = self.border_atlas_id {
+                                    gpu_renderer.add_command(RenderCommand::Rect {
+                                        texture_id: bar_id,
+                                        dest_x: bar_x,
+                                        dest_y: y_offset + 2.0,
+                                        dest_width: bar_width * normalized as f64,
+                                        dest_height: bar_height,
+                                        rotation: 0.0,
+                                        color: (255, 180, 105, 255), // Pink
+                                    });
+                                }
+                            }
+
+                            y_offset += self.param_height;
+                        }
+                    }
                 }
             }
         }
@@ -533,6 +1253,69 @@ hotline::object!({
             if let Some(rect) = &self.rect {
                 let (rx, ry, rw, rh) = rect.bounds();
 
+                // Check if click is in parameter panel
+                if self.panel_visible && x >= self.panel_x && x <= self.panel_x + self.panel_width {
+                    let panel_y = ry + 10.0;
+                    let relative_y = y - panel_y - 10.0;
+
+                    // Check if clicking on a parameter
+                    let param_index = (relative_y / self.param_height) as usize;
+
+                    // Map display index to parameter index
+                    let param_map = [
+                        None,
+                        None,
+                        None, // Title, Randomize, Visual header
+                        Some(0),
+                        Some(1),
+                        Some(2),
+                        Some(3),
+                        Some(4),
+                        Some(5),
+                        Some(6),
+                        Some(7), // Visual params
+                        None,    // Distribution header
+                        Some(8),
+                        Some(9),
+                        Some(10),
+                        Some(11),
+                        Some(12),
+                        Some(13), // Distribution params
+                        None,     // Animation header
+                        Some(14),
+                        Some(15),
+                        Some(16),
+                        Some(17),
+                        Some(18),
+                        Some(19), // Animation params
+                        None,     // Physics header
+                        Some(20),
+                        Some(21),
+                        Some(22),
+                        Some(23),
+                        Some(24), // Physics params
+                    ];
+
+                    if param_index < param_map.len() {
+                        if param_index == 1 {
+                            // Clicked on Randomize button
+                            self.randomize_params();
+                            return true;
+                        } else if let Some(idx) = param_map.get(param_index).and_then(|&p| p) {
+                            // Clicked on a parameter
+                            self.selected_param = Some(idx);
+                            self.dragging_param = true;
+                            self.drag_start_x = x;
+                            if let Some(value) = self.get_param_value(idx) {
+                                self.drag_start_value = value;
+                            }
+                            return true;
+                        }
+                    }
+
+                    return true;
+                }
+
                 // Check if we're on a resize edge
                 if let Some(edge) = self.get_resize_edge(x, y) {
                     self.resize_mode = Some(edge);
@@ -551,14 +1334,82 @@ hotline::object!({
         }
 
         pub fn handle_mouse_up(&mut self, _x: f64, _y: f64) -> bool {
-            let was_interacting = self.dragging || self.resize_mode.is_some();
+            let was_interacting = self.dragging || self.resize_mode.is_some() || self.dragging_param;
             self.dragging = false;
             self.resize_mode = None;
+            self.dragging_param = false;
             was_interacting
         }
 
         pub fn handle_mouse_move(&mut self, x: f64, y: f64) -> bool {
             if let Some(rect) = &mut self.rect {
+                let (_rx, ry, _, _) = rect.bounds();
+
+                // Handle parameter dragging
+                if self.dragging_param {
+                    if let Some(idx) = self.selected_param {
+                        let dx = x - self.drag_start_x;
+                        let sensitivity = 0.01;
+
+                        if let Some((min, max)) = self.get_param_range(idx) {
+                            let range = max - min;
+                            let delta = (dx * sensitivity * range as f64) as f32;
+                            let new_value = self.drag_start_value + delta;
+                            self.set_param_value(idx, new_value);
+                        }
+                    }
+                    return true;
+                }
+
+                // Update hovered parameter
+                if self.panel_visible && x >= self.panel_x && x <= self.panel_x + self.panel_width {
+                    let panel_y = ry + 10.0;
+                    let relative_y = y - panel_y - 10.0;
+                    let param_index = (relative_y / self.param_height) as usize;
+
+                    let param_map = [
+                        None,
+                        None,
+                        None,
+                        Some(0),
+                        Some(1),
+                        Some(2),
+                        Some(3),
+                        Some(4),
+                        Some(5),
+                        Some(6),
+                        Some(7),
+                        None,
+                        Some(8),
+                        Some(9),
+                        Some(10),
+                        Some(11),
+                        Some(12),
+                        Some(13),
+                        None,
+                        Some(14),
+                        Some(15),
+                        Some(16),
+                        Some(17),
+                        Some(18),
+                        Some(19),
+                        None,
+                        Some(20),
+                        Some(21),
+                        Some(22),
+                        Some(23),
+                        Some(24),
+                    ];
+
+                    if param_index < param_map.len() {
+                        self.hovered_param = param_map.get(param_index).and_then(|&p| p);
+                    } else {
+                        self.hovered_param = None;
+                    }
+                } else {
+                    self.hovered_param = None;
+                }
+
                 if self.dragging {
                     // Move the rect
                     let new_x = x - self.drag_offset.0;
