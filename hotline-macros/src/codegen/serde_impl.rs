@@ -209,7 +209,7 @@ fn generate_field_migration(field_name: &syn::Ident, field_type: &Type) -> Token
                 // Check if inner type is an object wrapper type
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                        if is_object_wrapper_type(inner_ty) || is_object_type(inner_ty) {
+                        if is_object_wrapper_type(inner_ty) {
                             // Vec<ObjectWrapper> - handle as wrapped objects
                             // Note: is_object_type returns true for wrapper types too since they're uppercase object names
                             return quote! {

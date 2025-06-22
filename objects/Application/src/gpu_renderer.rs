@@ -327,7 +327,7 @@ impl GpuRenderer {
         // Create transfer buffer
         let transfer_buffer = device
             .create_transfer_buffer()
-            .with_size(16 * 1024 * 1024) // 16MB transfer buffer
+            .with_size(32 * 1024 * 1024) // 32MB transfer buffer
             .with_usage(TransferBufferUsage::Upload)
             .build()
             .map_err(|e| e.to_string())?;
@@ -603,6 +603,12 @@ impl GpuRenderer {
             let copy_pass = inner.device.begin_copy_pass(&copy_cmd).map_err(|e| e.to_string())?;
 
             // Map transfer buffer and copy data
+            // Check if data fits in transfer buffer
+            if solid_data.len() > 32 * 1024 * 1024 {
+                eprintln!("Warning: Solid data size {} exceeds transfer buffer size, skipping", solid_data.len());
+                return Ok(());
+            }
+
             // Use cycle=true for proper synchronization when updating buffers frequently
             let mut map = inner.transfer_buffer.map::<u8>(&inner.device, true);
             map.mem_mut()[..solid_data.len()].copy_from_slice(solid_data);
@@ -697,6 +703,16 @@ impl GpuRenderer {
 
                 // Map transfer buffer and copy data
                 // Use cycle=true for proper synchronization when updating buffers frequently
+                // Check if data fits in transfer buffer
+                if quad_data.len() > 32 * 1024 * 1024 {
+                    eprintln!(
+                        "Warning: Quad data size {} bytes ({} vertices) exceeds transfer buffer size, skipping",
+                        quad_data.len(),
+                        inner.quad_vertices.len()
+                    );
+                    return Ok(());
+                }
+
                 let mut map = inner.transfer_buffer.map::<u8>(&inner.device, true);
                 let mem = map.mem_mut();
 

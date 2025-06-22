@@ -1,124 +1,140 @@
 hotline::object!({
     use rand::Rng;
 
+    // 3D star representation
+    #[derive(Clone, Copy, Debug, ::hotline::serde::Serialize, ::hotline::serde::Deserialize)]
+    #[serde(crate = "::hotline::serde")]
+    struct StarData {
+        pos: (f32, f32, f32), // World position
+        brightness: u8,
+        size: f32,
+    }
+
     #[derive(Default, Clone)]
     pub struct Starfield {
-        star_x: Vec<f32>,
-        star_y: Vec<f32>,
-        star_z: Vec<f32>,
-        star_brightness: Vec<u8>,
+        // 3D star field
+        stars: Vec<StarData>,
+
+        // Camera state
+        camera_pos: (f32, f32, f32),      // Camera position in world space
+        camera_velocity: (f32, f32, f32), // Current velocity
+        camera_yaw: f32,                  // Rotation around Y axis
+        camera_pitch: f32,                // Rotation around X axis
+
+        // Camera basis vectors (calculated from yaw/pitch)
+        camera_forward: (f32, f32, f32),
+        camera_right: (f32, f32, f32),
+        camera_up: (f32, f32, f32),
+
+        // Control inputs
+        forward_accel: f32,          // RT - LT
+        strafe_velocity: (f32, f32), // Left stick X/Y
+
+        // Rendering
         rect: Option<Rect>,
-        controller_velocity: (f32, f32),
-        base_velocity: (f32, f32),
-        z_velocity: f32, // Forward/backward velocity
-        acceleration_multiplier: f32,
         atlas_ids: Vec<Option<u32>>,
-        initialized: bool,
-        dragging: bool,
-        resize_mode: Option<u8>, // 0=None, 1=Top, 2=Bottom, 3=Left, 4=Right, 5=TopLeft, 6=TopRight, 7=BottomLeft, 8=BottomRight
-        drag_offset: (f64, f64),
+
+        // Movement parameters
+        acceleration_multiplier: f32,
+        strafe_speed: f32,
+        max_velocity: f32,
+        damping: f32,
+
+        // Visual parameters
+        fov: f32, // Field of view in radians
+        star_size_base: f32,
+        star_brightness_base: f32,
+        max_render_distance: f32,
+        streak_velocity_threshold: f32,
+        streak_length_multiplier: f32,
+
+        // Star field parameters
+        star_density: f32,   // Stars per cubic unit
+        spawn_radius: f32,   // Radius around camera to spawn stars
+        despawn_radius: f32, // Radius beyond which to remove stars
+
+        // UI elements
         speed_display: Option<TextRenderer>,
-        // Visual Effects Parameters
-        trail_fade_factor: f32,
-        star_size_multiplier: f32,
-        z_velocity_curve: f32,
-        motion_blur_samples: i32,
-        chromatic_aberration: f32,
-        vortex_twist_amount: f32,
-        bloom_radius: f32,
-        streak_taper_ratio: f32,
-
-        // Distribution Parameters
-        spawn_pattern: i32, // 0=random, 1=radial, 2=spiral, 3=tunnel
-        center_bias: f32,
-        star_layers: i32,
-        density_falloff: f32,
-        angular_spread: f32,
-        cluster_factor: f32,
-
-        // Animation Parameters
-        pulse_frequency: f32,
-        wobble_amount: f32,
-        rotation_speed: f32,
-        time_dilation: f32,
-
-        // Physics Parameters
-        drag_coefficient: f32,
-        gravity_strength: f32,
-        turbulence_scale: f32,
-        max_velocity_cap: f32,
-        acceleration_curve: i32, // 0=linear, 1=quadratic, 2=cubic
         param_displays: Vec<TextRenderer>,
         panel_visible: bool,
         selected_param: Option<usize>,
         hovered_param: Option<usize>,
         panel_x: f64,
         panel_width: f64,
-        param_start_y: f64,
         param_height: f64,
+
+        // Interaction state
+        dragging: bool,
+        resize_mode: Option<u8>,
+        drag_offset: (f64, f64),
         dragging_param: bool,
         drag_start_x: f64,
         drag_start_value: f32,
+
+        // Frame timing
+        last_update_time: f64,
+
+        // Random state for consistent star generation
+        seed: u64,
     }
 
     impl Starfield {
         pub fn initialize(&mut self) {
-            self.star_x.clear();
-            self.star_y.clear();
-            self.star_z.clear();
-            self.star_brightness.clear();
-            self.base_velocity = (0.0, 0.0);
-            self.controller_velocity = (0.0, 0.0);
-            self.z_velocity = 0.0;
-            self.acceleration_multiplier = 2.0; // Lower for more gradual effect
-            self.initialized = true;
-            self.dragging = false;
-            self.resize_mode = None;
-            self.drag_offset = (0.0, 0.0);
-            // Visual Effects defaults
-            self.trail_fade_factor = 0.8;
-            self.star_size_multiplier = 1.0;
-            self.z_velocity_curve = 1.0;
-            self.motion_blur_samples = 1;
-            self.chromatic_aberration = 0.0;
-            self.vortex_twist_amount = 0.0;
-            self.bloom_radius = 0.0;
-            self.streak_taper_ratio = 0.5;
+            // Clear existing stars
+            self.stars.clear();
 
-            // Distribution defaults
-            self.spawn_pattern = 1; // radial
-            self.center_bias = 1.0;
-            self.star_layers = 3;
-            self.density_falloff = 1.0;
-            self.angular_spread = 180.0;
-            self.cluster_factor = 0.0;
+            // Initialize camera at origin looking down -Z
+            self.camera_pos = (0.0, 0.0, 0.0);
+            self.camera_velocity = (0.0, 0.0, 0.0);
+            self.camera_yaw = 0.0;
+            self.camera_pitch = 0.0;
 
-            // Animation defaults
-            self.pulse_frequency = 0.0;
-            self.wobble_amount = 0.0;
-            self.rotation_speed = 0.0;
-            self.time_dilation = 1.0;
+            // Calculate initial camera basis vectors
+            self.update_camera_basis();
 
-            // Physics defaults
-            self.drag_coefficient = 0.0;
-            self.gravity_strength = 0.0;
-            self.turbulence_scale = 0.0;
-            self.max_velocity_cap = 100.0;
-            self.acceleration_curve = 0; // linear
+            // Movement parameters
+            self.acceleration_multiplier = 50.0;
+            self.strafe_speed = 30.0;
+            self.max_velocity = 200.0;
+            self.damping = 0.95; // Velocity damping per frame
+
+            // Visual parameters
+            self.fov = std::f32::consts::PI / 3.0; // 60 degrees
+            self.star_size_base = 2.0;
+            self.star_brightness_base = 200.0;
+            self.max_render_distance = 1000.0;
+            self.streak_velocity_threshold = 50.0;
+            self.streak_length_multiplier = 0.5;
+
+            // Star field parameters
+            self.star_density = 0.0001; // Stars per cubic unit (reduced for performance)
+            self.spawn_radius = 300.0;
+            self.despawn_radius = 400.0;
+
+            // UI state
             self.panel_visible = true;
             self.selected_param = None;
             self.hovered_param = None;
             self.panel_width = 300.0;
             self.param_height = 20.0;
-            self.param_start_y = 60.0;
+            self.dragging = false;
+            self.resize_mode = None;
+            self.drag_offset = (0.0, 0.0);
             self.dragging_param = false;
+
+            // Initialize random seed from current time
+            self.seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+            // Set initial time
+            self.last_update_time =
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
 
             // Initialize speed display
             if let Some(registry) = self.get_registry() {
                 ::hotline::set_library_registry(registry);
             }
             let mut display = TextRenderer::new();
-            display.set_text(format!("Speed: {:.1}x", self.acceleration_multiplier));
+            display.set_text("Speed: 0.0".to_string());
             display.set_color((255, 255, 255, 255));
             self.speed_display = Some(display);
 
@@ -127,86 +143,93 @@ hotline::object!({
 
             // Title
             let mut title = TextRenderer::new();
-            title.set_text("=== STARFIELD PARAMS ===".to_string());
+            title.set_text("=== 3D STARFIELD ===".to_string());
             title.set_color((255, 255, 255, 255));
             self.param_displays.push(title);
 
-            // Randomize button
-            let mut randomize = TextRenderer::new();
-            randomize.set_text("[R] Randomize All".to_string());
-            randomize.set_color((180, 180, 255, 255));
-            self.param_displays.push(randomize);
+            // Camera info
+            let mut cam_header = TextRenderer::new();
+            cam_header.set_text("-- Camera --".to_string());
+            cam_header.set_color((255, 200, 200, 255));
+            self.param_displays.push(cam_header);
 
-            // Visual Effects header
-            let mut visual_header = TextRenderer::new();
-            visual_header.set_text("-- Visual Effects --".to_string());
-            visual_header.set_color((255, 200, 200, 255));
-            self.param_displays.push(visual_header);
-
-            // Create displays for each parameter
+            // Create displays for new parameters
             let param_names = [
-                ("trail_fade", "Trail Fade Factor"),
-                ("star_size", "Star Size Mult"),
-                ("z_curve", "Z Velocity Curve"),
-                ("blur_samples", "Motion Blur Samples"),
-                ("chromatic", "Chromatic Aberration"),
-                ("vortex", "Vortex Twist"),
-                ("bloom", "Bloom Radius"),
-                ("taper", "Streak Taper Ratio"),
-                ("", "-- Distribution --"),
-                ("pattern", "Spawn Pattern"),
-                ("center_bias", "Center Bias"),
-                ("layers", "Star Layers"),
-                ("density", "Density Falloff"),
-                ("spread", "Angular Spread"),
-                ("cluster", "Cluster Factor"),
-                ("", "-- Animation --"),
-                ("pulse", "Pulse Frequency"),
-                ("wobble", "Wobble Amount"),
-                ("rotation", "Rotation Speed"),
-                ("dilation", "Time Dilation"),
-                ("afterimage", "Afterimage Count"),
-                ("", "-- Physics --"),
-                ("drag", "Drag Coefficient"),
-                ("gravity", "Gravity Strength"),
-                ("turbulence", "Turbulence Scale"),
-                ("max_vel", "Max Velocity Cap"),
-                ("accel_curve", "Acceleration Curve"),
+                "Position: (0, 0, 0)",
+                "Velocity: 0.0",
+                "Yaw: 0.0°",
+                "Pitch: 0.0°",
+                "",
+                "-- Movement --",
+                "Acceleration: 50.0",
+                "Strafe Speed: 30.0",
+                "Max Velocity: 200.0",
+                "Damping: 0.95",
+                "",
+                "-- Visual --",
+                "FOV: 60°",
+                "Star Size: 2.0",
+                "Render Distance: 1000",
+                "Streak Threshold: 50.0",
+                "",
+                "-- Star Field --",
+                "Star Count: 0",
+                "Density: 0.001",
+                "Spawn Radius: 500",
             ];
 
-            for (_, name) in param_names.iter() {
+            for name in param_names.iter() {
                 let mut param_display = TextRenderer::new();
                 param_display.set_text(name.to_string());
                 param_display.set_color((200, 200, 200, 255));
                 self.param_displays.push(param_display);
             }
+
+            // Spawn initial stars around origin
+            self.spawn_initial_stars();
         }
 
         pub fn set_rect(&mut self, rect: Rect) {
-            let (x, y, w, h) = rect.bounds();
+            let (x, _y, w, _h) = rect.bounds();
             self.rect = Some(rect);
             self.panel_x = x + w - self.panel_width - 10.0;
+        }
 
-            // Initialize stars if not already done
-            if self.star_x.is_empty() {
-                let mut rng = rand::rng();
-                let star_count = 300;
-                let center_x = x + w / 2.0;
-                let center_y = y + h / 2.0;
+        // Update camera basis vectors from yaw/pitch
+        fn update_camera_basis(&mut self) {
+            let yaw = self.camera_yaw;
+            let pitch = self.camera_pitch;
 
-                for _ in 0..star_count {
-                    // Distribute stars with slight bias toward center for better initial look
-                    let angle = rng.random_range(0.0..std::f32::consts::TAU);
-                    let u: f32 = rng.random_range(0.0..1.0);
-                    let max_radius = (w.min(h) / 2.0) as f32;
-                    // Use sqrt for more uniform initial distribution
-                    let radius = max_radius * u.sqrt();
+            // Calculate forward vector (default looking down -Z)
+            self.camera_forward = (yaw.sin() * pitch.cos(), -pitch.sin(), -yaw.cos() * pitch.cos());
 
-                    self.star_x.push(center_x as f32 + angle.cos() * radius);
-                    self.star_y.push(center_y as f32 + angle.sin() * radius);
-                    self.star_z.push(rng.random_range(0.01..1.0));
-                    self.star_brightness.push(rng.random_range(100..255));
-                }
+            // Right vector (perpendicular to forward and world up)
+            self.camera_right = (yaw.cos(), 0.0, yaw.sin());
+
+            // Up vector (cross product of right and forward)
+            self.camera_up = (-yaw.sin() * pitch.sin(), pitch.cos(), yaw.cos() * pitch.sin());
+        }
+
+        // Spawn initial stars in a sphere around origin
+        fn spawn_initial_stars(&mut self) {
+            let mut rng = rand::rng();
+            let volume = (4.0 / 3.0) * std::f32::consts::PI * self.spawn_radius.powi(3);
+            let star_count = (volume * self.star_density) as usize;
+
+            for _ in 0..star_count {
+                // Random position in sphere
+                let theta = rng.random_range(0.0..std::f32::consts::TAU);
+                let phi = rng.random_range(0.0..std::f32::consts::PI);
+                let r = rng.random_range(0.0..self.spawn_radius);
+
+                let x = r * phi.sin() * theta.cos();
+                let y = r * phi.sin() * theta.sin();
+                let z = r * phi.cos();
+
+                let brightness = rng.random_range(100..255);
+                let size = rng.random_range(0.5..2.0);
+
+                self.stars.push(StarData { pos: (x, y, z), brightness, size });
             }
         }
 
@@ -214,15 +237,33 @@ hotline::object!({
             &mut self,
             left_x: f32,
             left_y: f32,
-            _right_x: f32,
-            _right_y: f32,
-            _left_trigger: f32,
+            right_x: f32,
+            right_y: f32,
+            left_trigger: f32,
             right_trigger: f32,
         ) {
-            // Use left stick to control star movement
-            self.controller_velocity = (left_x * 200.0, left_y * 200.0);
-            // Use right trigger to accelerate forward into the starfield
-            self.z_velocity = right_trigger * self.acceleration_multiplier;
+            // Store control inputs
+            self.strafe_velocity = (left_x, left_y);
+            self.forward_accel = right_trigger - left_trigger;
+
+            // Update camera rotation from right stick
+            let rotation_speed = 0.03;
+            self.camera_yaw += right_x * rotation_speed;
+            self.camera_pitch -= right_y * rotation_speed; // Invert for intuitive control
+
+            // Clamp pitch to prevent gimbal lock
+            self.camera_pitch =
+                self.camera_pitch.clamp(-std::f32::consts::PI / 2.0 + 0.1, std::f32::consts::PI / 2.0 - 0.1);
+
+            // Wrap yaw to [-PI, PI]
+            if self.camera_yaw > std::f32::consts::PI {
+                self.camera_yaw -= std::f32::consts::TAU;
+            } else if self.camera_yaw < -std::f32::consts::PI {
+                self.camera_yaw += std::f32::consts::TAU;
+            }
+
+            // Update camera basis vectors
+            self.update_camera_basis();
         }
 
         pub fn set_acceleration_multiplier(&mut self, multiplier: f32) {
@@ -239,38 +280,24 @@ hotline::object!({
         pub fn randomize_params(&mut self) {
             let mut rng = rand::rng();
 
-            // Visual Effects
-            self.trail_fade_factor = rng.random_range(0.1..1.0);
-            self.star_size_multiplier = rng.random_range(0.5..5.0);
-            self.z_velocity_curve = rng.random_range(0.5..2.0);
-            self.motion_blur_samples = rng.random_range(1..10);
-            self.chromatic_aberration = rng.random_range(0.0..10.0);
-            self.vortex_twist_amount = rng.random_range(0.0..1.0);
-            self.bloom_radius = rng.random_range(0.0..20.0);
-            self.streak_taper_ratio = rng.random_range(0.1..1.0);
+            // Movement parameters
+            self.acceleration_multiplier = rng.random_range(10.0..100.0);
+            self.strafe_speed = rng.random_range(10.0..50.0);
+            self.max_velocity = rng.random_range(100.0..500.0);
+            self.damping = rng.random_range(0.9..0.99);
 
-            // Distribution
-            self.spawn_pattern = rng.random_range(0..4);
-            self.center_bias = rng.random_range(0.0..2.0);
-            self.star_layers = rng.random_range(1..10);
-            self.density_falloff = rng.random_range(0.1..5.0);
-            self.angular_spread = rng.random_range(0.0..180.0);
-            self.cluster_factor = rng.random_range(0.0..1.0);
+            // Visual parameters
+            self.fov = rng.random_range(30.0_f32..90.0_f32).to_radians();
+            self.star_size_base = rng.random_range(1.0..5.0);
+            self.streak_velocity_threshold = rng.random_range(20.0..100.0);
+            self.streak_length_multiplier = rng.random_range(0.1..2.0);
 
-            // Animation
-            self.pulse_frequency = rng.random_range(0.0..10.0);
-            self.wobble_amount = rng.random_range(0.0..5.0);
-            self.rotation_speed = rng.random_range(-10.0..10.0);
-            self.time_dilation = rng.random_range(0.1..5.0);
+            // Star field parameters
+            self.star_density = rng.random_range(0.0001..0.01);
 
-            // Physics
-            self.drag_coefficient = rng.random_range(0.0..1.0);
-            self.gravity_strength = rng.random_range(0.0..1.0);
-            self.turbulence_scale = rng.random_range(0.0..10.0);
-            self.max_velocity_cap = rng.random_range(10.0..1000.0);
-            self.acceleration_curve = rng.random_range(0..3);
-
-            eprintln!("Randomized starfield parameters!");
+            // Respawn stars with new density
+            self.stars.clear();
+            self.spawn_initial_stars();
         }
 
         pub fn toggle_panel(&mut self) {
@@ -279,334 +306,167 @@ hotline::object!({
 
         fn get_param_value(&self, index: usize) -> Option<f32> {
             match index {
-                0 => Some(self.trail_fade_factor),
-                1 => Some(self.star_size_multiplier),
-                2 => Some(self.z_velocity_curve),
-                3 => Some(self.motion_blur_samples as f32),
-                4 => Some(self.chromatic_aberration),
-                5 => Some(self.vortex_twist_amount),
-                6 => Some(self.bloom_radius),
-                7 => Some(self.streak_taper_ratio),
-                8 => Some(self.spawn_pattern as f32),
-                9 => Some(self.center_bias),
-                10 => Some(self.star_layers as f32),
-                11 => Some(self.density_falloff),
-                12 => Some(self.angular_spread),
-                13 => Some(self.cluster_factor),
-                14 => Some(self.pulse_frequency),
-                15 => Some(self.wobble_amount),
-                16 => Some(self.rotation_speed),
-                17 => Some(self.time_dilation),
-                18 => Some(self.drag_coefficient),
-                19 => Some(self.gravity_strength),
-                20 => Some(self.turbulence_scale),
-                21 => Some(self.max_velocity_cap),
-                22 => Some(self.acceleration_curve as f32),
+                0 => Some(self.acceleration_multiplier),
+                1 => Some(self.strafe_speed),
+                2 => Some(self.max_velocity),
+                3 => Some(self.damping),
+                4 => Some(self.fov.to_degrees()),
+                5 => Some(self.star_size_base),
+                6 => Some(self.streak_velocity_threshold),
+                7 => Some(self.streak_length_multiplier),
+                8 => Some(self.star_density * 10000.0), // Scale for display
                 _ => None,
             }
         }
 
         fn set_param_value(&mut self, index: usize, value: f32) {
             match index {
-                0 => self.trail_fade_factor = value.clamp(0.1, 1.0),
-                1 => self.star_size_multiplier = value.clamp(0.5, 5.0),
-                2 => self.z_velocity_curve = value.clamp(0.5, 2.0),
-                3 => self.motion_blur_samples = value.clamp(1.0, 10.0) as i32,
-                4 => self.chromatic_aberration = value.clamp(0.0, 10.0),
-                5 => self.vortex_twist_amount = value.clamp(0.0, 1.0),
-                6 => self.bloom_radius = value.clamp(0.0, 20.0),
-                7 => self.streak_taper_ratio = value.clamp(0.1, 1.0),
-                8 => self.spawn_pattern = value.clamp(0.0, 3.0) as i32,
-                9 => self.center_bias = value.clamp(0.0, 2.0),
-                10 => self.star_layers = value.clamp(1.0, 10.0) as i32,
-                11 => self.density_falloff = value.clamp(0.1, 5.0),
-                12 => self.angular_spread = value.clamp(0.0, 180.0),
-                13 => self.cluster_factor = value.clamp(0.0, 1.0),
-                14 => self.pulse_frequency = value.clamp(0.0, 10.0),
-                15 => self.wobble_amount = value.clamp(0.0, 5.0),
-                16 => self.rotation_speed = value.clamp(-10.0, 10.0),
-                17 => self.time_dilation = value.clamp(0.1, 5.0),
-                18 => self.drag_coefficient = value.clamp(0.0, 1.0),
-                19 => self.gravity_strength = value.clamp(0.0, 1.0),
-                20 => self.turbulence_scale = value.clamp(0.0, 10.0),
-                21 => self.max_velocity_cap = value.clamp(10.0, 1000.0),
-                22 => self.acceleration_curve = value.clamp(0.0, 2.0) as i32,
+                0 => self.acceleration_multiplier = value.clamp(10.0, 200.0),
+                1 => self.strafe_speed = value.clamp(10.0, 100.0),
+                2 => self.max_velocity = value.clamp(50.0, 1000.0),
+                3 => self.damping = value.clamp(0.8, 0.99),
+                4 => self.fov = value.clamp(30.0, 120.0).to_radians(),
+                5 => self.star_size_base = value.clamp(0.5, 10.0),
+                6 => self.streak_velocity_threshold = value.clamp(10.0, 200.0),
+                7 => self.streak_length_multiplier = value.clamp(0.1, 5.0),
+                8 => {
+                    self.star_density = (value / 10000.0).clamp(0.0001, 0.01);
+                    self.stars.clear();
+                    self.spawn_initial_stars();
+                }
                 _ => {}
             }
         }
 
         fn get_param_range(&self, index: usize) -> Option<(f32, f32)> {
             match index {
-                0 => Some((0.1, 1.0)),
-                1 => Some((0.5, 5.0)),
-                2 => Some((0.5, 2.0)),
-                3 => Some((1.0, 10.0)),
-                4 => Some((0.0, 10.0)),
-                5 => Some((0.0, 1.0)),
-                6 => Some((0.0, 20.0)),
-                7 => Some((0.1, 1.0)),
-                8 => Some((0.0, 3.0)),
-                9 => Some((0.0, 2.0)),
-                10 => Some((1.0, 10.0)),
-                11 => Some((0.1, 5.0)),
-                12 => Some((0.0, 180.0)),
-                13 => Some((0.0, 1.0)),
-                14 => Some((0.0, 10.0)),
-                15 => Some((0.0, 5.0)),
-                16 => Some((-10.0, 10.0)),
-                17 => Some((0.1, 5.0)),
-                18 => Some((0.0, 1.0)),
-                19 => Some((0.0, 1.0)),
-                20 => Some((0.0, 10.0)),
-                21 => Some((10.0, 1000.0)),
-                22 => Some((0.0, 2.0)),
+                0 => Some((10.0, 200.0)),
+                1 => Some((10.0, 100.0)),
+                2 => Some((50.0, 1000.0)),
+                3 => Some((0.8, 0.99)),
+                4 => Some((30.0, 120.0)),
+                5 => Some((0.5, 10.0)),
+                6 => Some((10.0, 200.0)),
+                7 => Some((0.1, 5.0)),
+                8 => Some((1.0, 100.0)),
                 _ => None,
             }
         }
 
         pub fn update(&mut self, _delta_time: f64) {
-            if let Some(rect) = &self.rect {
-                let (x, y, w, h) = rect.bounds();
-                let center_x = x + w / 2.0;
-                let center_y = y + h / 2.0;
+            // Calculate actual delta time
+            let current_time =
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+            let dt = (current_time - self.last_update_time).min(0.1) as f32; // Cap at 100ms
+            self.last_update_time = current_time;
 
-                // Update star positions based on velocity
-                let vx = self.base_velocity.0 + self.controller_velocity.0;
-                let vy = self.base_velocity.1 + self.controller_velocity.1;
+            // Apply acceleration to velocity
+            let accel_x = self.camera_forward.0 * self.forward_accel * self.acceleration_multiplier;
+            let accel_y = self.camera_forward.1 * self.forward_accel * self.acceleration_multiplier;
+            let accel_z = self.camera_forward.2 * self.forward_accel * self.acceleration_multiplier;
 
-                // Debug z_velocity
-                static mut LAST_Z_VEL: f32 = 0.0;
-                unsafe {
-                    if (self.z_velocity - LAST_Z_VEL).abs() > 0.1 {
-                        eprintln!("z_velocity changed: {:.2} -> {:.2}", LAST_Z_VEL, self.z_velocity);
-                        LAST_Z_VEL = self.z_velocity;
-                    }
+            // Apply strafe movement
+            let strafe_x = self.camera_right.0 * self.strafe_velocity.0 * self.strafe_speed
+                + self.camera_up.0 * self.strafe_velocity.1 * self.strafe_speed;
+            let strafe_y = self.camera_right.1 * self.strafe_velocity.0 * self.strafe_speed
+                + self.camera_up.1 * self.strafe_velocity.1 * self.strafe_speed;
+            let strafe_z = self.camera_right.2 * self.strafe_velocity.0 * self.strafe_speed
+                + self.camera_up.2 * self.strafe_velocity.1 * self.strafe_speed;
+
+            // Update velocity
+            self.camera_velocity.0 += (accel_x + strafe_x) * dt;
+            self.camera_velocity.1 += (accel_y + strafe_y) * dt;
+            self.camera_velocity.2 += (accel_z + strafe_z) * dt;
+
+            // Apply damping
+            self.camera_velocity.0 *= self.damping.powf(dt * 60.0);
+            self.camera_velocity.1 *= self.damping.powf(dt * 60.0);
+            self.camera_velocity.2 *= self.damping.powf(dt * 60.0);
+
+            // Clamp to max velocity
+            let vel_mag =
+                (self.camera_velocity.0.powi(2) + self.camera_velocity.1.powi(2) + self.camera_velocity.2.powi(2))
+                    .sqrt();
+            if vel_mag > self.max_velocity {
+                let scale = self.max_velocity / vel_mag;
+                self.camera_velocity.0 *= scale;
+                self.camera_velocity.1 *= scale;
+                self.camera_velocity.2 *= scale;
+            }
+
+            // Update camera position
+            self.camera_pos.0 += self.camera_velocity.0 * dt;
+            self.camera_pos.1 += self.camera_velocity.1 * dt;
+            self.camera_pos.2 += self.camera_velocity.2 * dt;
+
+            // Update speed display
+            if let Some(ref mut display) = self.speed_display {
+                display.set_text(format!("Speed: {:.1}", vel_mag));
+            }
+
+            // Update parameter displays
+            if self.param_displays.len() > 4 {
+                self.param_displays[2].set_text(format!(
+                    "Position: ({:.0}, {:.0}, {:.0})",
+                    self.camera_pos.0, self.camera_pos.1, self.camera_pos.2
+                ));
+                self.param_displays[3].set_text(format!("Velocity: {:.1}", vel_mag));
+                self.param_displays[4].set_text(format!("Yaw: {:.1}°", self.camera_yaw.to_degrees()));
+                self.param_displays[5].set_text(format!("Pitch: {:.1}°", self.camera_pitch.to_degrees()));
+
+                if self.param_displays.len() > 19 {
+                    self.param_displays[19].set_text(format!("Star Count: {}", self.stars.len()));
                 }
+            }
 
-                for i in 0..self.star_x.len() {
-                    // Apply lateral velocity with parallax effect
-                    self.star_x[i] -= vx * self.star_z[i] * 0.016;
-                    self.star_y[i] -= vy * self.star_z[i] * 0.016;
+            // Spawn/despawn stars based on camera movement
+            self.update_star_field();
+        }
 
-                    // Apply z-velocity (acceleration into starfield)
-                    if self.z_velocity > 0.0 {
-                        // Stars move towards us, getting bigger and brighter
-                        // Moderate z movement for visible warp effect
-                        self.star_z[i] += self.z_velocity * 0.016 * 1.0;
+        // Manage star spawning and despawning
+        fn update_star_field(&mut self) {
+            let mut to_remove = Vec::new();
 
-                        if self.star_z[i] > 1.0 {
-                            // Reset star to far distance
-                            self.star_z[i] = 0.01;
-                            let mut rng = rand::rng();
+            // Check for stars to despawn
+            for (i, star) in self.stars.iter().enumerate() {
+                let dx = star.pos.0 - self.camera_pos.0;
+                let dy = star.pos.1 - self.camera_pos.1;
+                let dz = star.pos.2 - self.camera_pos.2;
+                let dist_sq = dx * dx + dy * dy + dz * dz;
 
-                            // Use spawn pattern parameter
-                            match self.spawn_pattern {
-                                0 => {
-                                    // Random
-                                    self.star_x[i] = rng.random_range(x..x + w) as f32;
-                                    self.star_y[i] = rng.random_range(y..y + h) as f32;
-                                }
-                                1 => {
-                                    // Radial
-                                    let angle = rng.random_range(0.0..std::f32::consts::TAU);
-                                    let angle_range = self.angular_spread.to_radians();
-                                    let angle = if angle_range < std::f32::consts::TAU {
-                                        rng.random_range(-angle_range / 2.0..angle_range / 2.0)
-                                    } else {
-                                        angle
-                                    };
+                if dist_sq > self.despawn_radius * self.despawn_radius {
+                    to_remove.push(i);
+                }
+            }
 
-                                    // Apply center bias and density falloff
-                                    let u: f32 = rng.random_range(0.0..1.0);
-                                    let max_radius = (w.min(h) / 2.0) as f32;
-                                    let radius = if self.center_bias > 0.0 {
-                                        -max_radius * (1.0_f32 - u).ln().powf(self.center_bias)
-                                    } else {
-                                        u * max_radius
-                                    };
-                                    let radius = radius.min(max_radius * 0.9) * self.density_falloff;
+            // Remove despawned stars (in reverse order to maintain indices)
+            for &i in to_remove.iter().rev() {
+                self.stars.swap_remove(i);
+            }
 
-                                    self.star_x[i] = center_x as f32 + angle.cos() * radius;
-                                    self.star_y[i] = center_y as f32 + angle.sin() * radius;
-                                }
-                                2 => {
-                                    // Spiral
-                                    let t = rng.random_range(0.0..10.0_f32);
-                                    let spiral_tightness = 0.3;
-                                    let radius = t * (w.min(h) as f32 / 20.0);
-                                    let angle = t * spiral_tightness
-                                        + (i as f32 % self.star_layers as f32)
-                                            * (std::f32::consts::TAU / self.star_layers as f32);
+            // Calculate how many stars we should have
+            let volume = (4.0 / 3.0) * std::f32::consts::PI * self.spawn_radius.powi(3);
+            let target_count = (volume * self.star_density) as usize;
 
-                                    self.star_x[i] = center_x as f32 + angle.cos() * radius;
-                                    self.star_y[i] = center_y as f32 + angle.sin() * radius;
-                                }
-                                3 => {
-                                    // Tunnel
-                                    let layer = i % self.star_layers.max(1) as usize;
-                                    let layer_radius =
-                                        (layer as f32 + 1.0) / self.star_layers as f32 * (w.min(h) / 2.0) as f32;
-                                    let angle = rng.random_range(0.0..std::f32::consts::TAU);
+            // Spawn new stars if needed
+            if self.stars.len() < target_count {
+                let mut rng = rand::rng();
+                let to_spawn = target_count - self.stars.len();
 
-                                    // Add some randomness for natural look
-                                    let radius_variation = rng.random_range(0.8..1.2);
-                                    let final_radius = layer_radius * radius_variation * self.density_falloff;
+                for _ in 0..to_spawn {
+                    // Random position in sphere around camera
+                    let theta = rng.random_range(0.0..std::f32::consts::TAU);
+                    let phi = rng.random_range(0.0..std::f32::consts::PI);
+                    let r = rng.random_range(self.spawn_radius * 0.8..self.spawn_radius);
 
-                                    self.star_x[i] = center_x as f32 + angle.cos() * final_radius;
-                                    self.star_y[i] = center_y as f32 + angle.sin() * final_radius;
-                                }
-                                _ => {
-                                    self.star_x[i] = rng.random_range(x..x + w) as f32;
-                                    self.star_y[i] = rng.random_range(y..y + h) as f32;
-                                }
-                            }
+                    let x = self.camera_pos.0 + r * phi.sin() * theta.cos();
+                    let y = self.camera_pos.1 + r * phi.sin() * theta.sin();
+                    let z = self.camera_pos.2 + r * phi.cos();
 
-                            // Apply cluster factor
-                            if self.cluster_factor > 0.0 && i > 0 {
-                                let cluster_chance = rng.random_range(0.0..1.0);
-                                if cluster_chance < self.cluster_factor {
-                                    // Cluster near previous star
-                                    let cluster_dist = rng.random_range(5.0..30.0);
-                                    let cluster_angle = rng.random_range(0.0..std::f32::consts::TAU);
-                                    self.star_x[i] = self.star_x[i - 1] + cluster_angle.cos() * cluster_dist;
-                                    self.star_y[i] = self.star_y[i - 1] + cluster_angle.sin() * cluster_dist;
-                                }
-                            }
-                        }
+                    let brightness = rng.random_range(100..255);
+                    let size = rng.random_range(0.5..2.0);
 
-                        // Apply physics parameters
-                        let dx = self.star_x[i] - center_x as f32;
-                        let dy = self.star_y[i] - center_y as f32;
-                        let dist = (dx * dx + dy * dy).sqrt();
-
-                        if dist > 0.01 {
-                            // Normalize direction
-                            let ndx = dx / dist;
-                            let ndy = dy / dist;
-
-                            // Apply acceleration curve
-                            let accel_factor = match self.acceleration_curve {
-                                0 => self.z_velocity,                                     // Linear
-                                1 => self.z_velocity * self.z_velocity,                   // Quadratic
-                                2 => self.z_velocity * self.z_velocity * self.z_velocity, // Cubic
-                                _ => self.z_velocity,
-                            };
-
-                            // Base speed with max velocity cap
-                            let base_speed = accel_factor * self.star_z[i] * 20.0 * 0.016;
-                            let speed = base_speed.min(self.max_velocity_cap);
-
-                            // Apply drag
-                            let drag_adjusted_speed = speed * (1.0 - self.drag_coefficient * 0.016);
-
-                            // Add turbulence
-                            let mut turbulence_x = 0.0;
-                            let mut turbulence_y = 0.0;
-                            if self.turbulence_scale > 0.0 {
-                                let mut rng = rand::rng();
-                                turbulence_x = rng.random_range(-1.0..1.0) * self.turbulence_scale;
-                                turbulence_y = rng.random_range(-1.0..1.0) * self.turbulence_scale;
-                            }
-
-                            // Apply gravity towards center
-                            let gravity_x = if self.gravity_strength > 0.0 && dist > 50.0 {
-                                -ndx * self.gravity_strength * 0.016 / (dist / 100.0)
-                            } else {
-                                0.0
-                            };
-                            let gravity_y = if self.gravity_strength > 0.0 && dist > 50.0 {
-                                -ndy * self.gravity_strength * 0.016 / (dist / 100.0)
-                            } else {
-                                0.0
-                            };
-
-                            // Update position with all forces
-                            self.star_x[i] += ndx * drag_adjusted_speed + turbulence_x + gravity_x;
-                            self.star_y[i] += ndy * drag_adjusted_speed + turbulence_y + gravity_y;
-                        }
-                    }
-
-                    // Wrap around screen edges
-                    if self.star_x[i] < x as f32 - 50.0
-                        || self.star_x[i] > (x + w) as f32 + 50.0
-                        || self.star_y[i] < y as f32 - 50.0
-                        || self.star_y[i] > (y + h) as f32 + 50.0
-                    {
-                        // Reset position
-                        let mut rng = rand::rng();
-                        self.star_z[i] = 0.01;
-
-                        // Use same spawn pattern as above
-                        match self.spawn_pattern {
-                            0 => {
-                                // Random
-                                self.star_x[i] = rng.random_range(x..x + w) as f32;
-                                self.star_y[i] = rng.random_range(y..y + h) as f32;
-                            }
-                            1 => {
-                                // Radial
-                                let angle = rng.random_range(0.0..std::f32::consts::TAU);
-                                let angle_range = self.angular_spread.to_radians();
-                                let angle = if angle_range < std::f32::consts::TAU {
-                                    rng.random_range(-angle_range / 2.0..angle_range / 2.0)
-                                } else {
-                                    angle
-                                };
-
-                                let u: f32 = rng.random_range(0.0..1.0);
-                                let max_radius = (w.min(h) / 2.0) as f32;
-                                let radius = if self.center_bias > 0.0 {
-                                    -max_radius * (1.0_f32 - u).ln().powf(self.center_bias)
-                                } else {
-                                    u * max_radius
-                                };
-                                let radius = radius.min(max_radius * 0.9) * self.density_falloff;
-
-                                self.star_x[i] = center_x as f32 + angle.cos() * radius;
-                                self.star_y[i] = center_y as f32 + angle.sin() * radius;
-                            }
-                            2 => {
-                                // Spiral
-                                let t = rng.random_range(0.0..10.0_f32);
-                                let spiral_tightness = 0.3;
-                                let radius = t * (w.min(h) as f32 / 20.0);
-                                let angle = t * spiral_tightness
-                                    + (i as f32 % self.star_layers as f32)
-                                        * (std::f32::consts::TAU / self.star_layers as f32);
-
-                                self.star_x[i] = center_x as f32 + angle.cos() * radius;
-                                self.star_y[i] = center_y as f32 + angle.sin() * radius;
-                            }
-                            3 => {
-                                // Tunnel
-                                let layer = i % self.star_layers.max(1) as usize;
-                                let layer_radius =
-                                    (layer as f32 + 1.0) / self.star_layers as f32 * (w.min(h) / 2.0) as f32;
-                                let angle = rng.random_range(0.0..std::f32::consts::TAU);
-
-                                let radius_variation = rng.random_range(0.8..1.2);
-                                let final_radius = layer_radius * radius_variation * self.density_falloff;
-
-                                self.star_x[i] = center_x as f32 + angle.cos() * final_radius;
-                                self.star_y[i] = center_y as f32 + angle.sin() * final_radius;
-                            }
-                            _ => {
-                                self.star_x[i] = rng.random_range(x..x + w) as f32;
-                                self.star_y[i] = rng.random_range(y..y + h) as f32;
-                            }
-                        }
-
-                        // Apply cluster factor
-                        if self.cluster_factor > 0.0 && i > 0 {
-                            let cluster_chance = rng.random_range(0.0..1.0);
-                            if cluster_chance < self.cluster_factor {
-                                let cluster_dist = rng.random_range(5.0..30.0);
-                                let cluster_angle = rng.random_range(0.0..std::f32::consts::TAU);
-                                self.star_x[i] = self.star_x[i - 1] + cluster_angle.cos() * cluster_dist;
-                                self.star_y[i] = self.star_y[i - 1] + cluster_angle.sin() * cluster_dist;
-                            }
-                        }
-                    }
+                    self.stars.push(StarData { pos: (x, y, z), brightness, size });
                 }
             }
         }
@@ -649,23 +509,12 @@ hotline::object!({
         }
 
         pub fn render_gpu(&mut self, gpu_renderer: &mut dyn ::hotline::GpuRenderingContext) {
-            // Early exit if rect not set or no stars initialized
-            if self.rect.is_none() || self.star_x.is_empty() {
-                static mut LOGGED: bool = false;
-                unsafe {
-                    if !LOGGED {
-                        eprintln!(
-                            "Starfield: render_gpu called but not initialized (rect={}, stars={})",
-                            self.rect.is_some(),
-                            self.star_x.len()
-                        );
-                        LOGGED = true;
-                    }
-                }
+            // Early exit if rect not set
+            if self.rect.is_none() {
                 return;
             }
 
-            // Update stars
+            // Update simulation
             self.update(0.016);
 
             // Make sure atlases are registered
@@ -673,27 +522,10 @@ hotline::object!({
                 self.setup_gpu_rendering(gpu_renderer);
             }
 
-            // Debug when accelerating
-            static mut LAST_MODE: bool = false;
-            unsafe {
-                let accelerating = self.z_velocity > 0.1;
-                if accelerating != LAST_MODE {
-                    eprintln!("Starfield mode changed: accelerating={} z_vel={:.2}", accelerating, self.z_velocity);
-                    LAST_MODE = accelerating;
-                }
-            }
-
             if let Some(rect) = &self.rect {
                 let (rx, ry, rw, rh) = rect.bounds();
-
-                // Debug rect bounds once
-                static mut PRINTED_BOUNDS: bool = false;
-                unsafe {
-                    if !PRINTED_BOUNDS {
-                        eprintln!("Starfield bounds: ({:.0},{:.0}) {}x{}", rx, ry, rw, rh);
-                        PRINTED_BOUNDS = true;
-                    }
-                }
+                let screen_center_x = rx + rw / 2.0;
+                let screen_center_y = ry + rh / 2.0;
 
                 // Draw background
                 let bg_atlas = self.atlas_ids.get(0).and_then(|id| *id);
@@ -738,316 +570,124 @@ hotline::object!({
                 );
 
                 // Draw stars
-                let mut visible_count = 0;
-                let mut streak_count = 0;
+                let mut _visible_count = 0;
+                let vel_mag =
+                    (self.camera_velocity.0.powi(2) + self.camera_velocity.1.powi(2) + self.camera_velocity.2.powi(2))
+                        .sqrt();
 
-                for i in 0..self.star_x.len() {
-                    let z = self.star_z[i];
-                    // Choose atlas based on depth (closer stars are bigger)
-                    let atlas_idx = if z > 0.7 {
+                // Calculate FOV scale
+                let fov_scale = (rh / 2.0) / (self.fov / 2.0).tan() as f64;
+
+                // Sort stars by distance for proper rendering order (far to near)
+                let mut star_render_data: Vec<(f32, f64, f64, StarData)> = Vec::new();
+
+                for star in &self.stars {
+                    // Transform star to view space
+                    let dx = star.pos.0 - self.camera_pos.0;
+                    let dy = star.pos.1 - self.camera_pos.1;
+                    let dz = star.pos.2 - self.camera_pos.2;
+
+                    // Apply view matrix (rotate by camera orientation)
+                    let view_x = self.camera_right.0 * dx + self.camera_right.1 * dy + self.camera_right.2 * dz;
+                    let view_y = self.camera_up.0 * dx + self.camera_up.1 * dy + self.camera_up.2 * dz;
+                    let view_z =
+                        -(self.camera_forward.0 * dx + self.camera_forward.1 * dy + self.camera_forward.2 * dz);
+
+                    // Skip stars behind camera
+                    if view_z <= 0.1 {
+                        continue;
+                    }
+
+                    // Skip stars too far away
+                    if view_z > self.max_render_distance {
+                        continue;
+                    }
+
+                    // Project to screen space
+                    let screen_x = screen_center_x + (view_x / view_z) as f64 * fov_scale;
+                    let screen_y = screen_center_y + (view_y / view_z) as f64 * fov_scale;
+
+                    // Check if on screen
+                    if screen_x >= rx - 50.0
+                        && screen_x <= rx + rw + 50.0
+                        && screen_y >= ry - 50.0
+                        && screen_y <= ry + rh + 50.0
+                    {
+                        _visible_count += 1;
+                        star_render_data.push((view_z, screen_x, screen_y, *star));
+                    }
+                }
+
+                // Sort by depth (far to near)
+                star_render_data.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+
+                // Limit to reasonable number of stars to prevent GPU buffer overflow
+                const MAX_VISIBLE_STARS: usize = 50000;
+                if star_render_data.len() > MAX_VISIBLE_STARS {
+                    star_render_data.truncate(MAX_VISIBLE_STARS);
+                }
+
+                // Render stars
+                for (view_z, screen_x, screen_y, star) in star_render_data {
+                    // Choose atlas based on size
+                    let atlas_idx = if star.size > 1.5 {
                         2
-                    } else if z > 0.4 {
+                    } else if star.size > 1.0 {
                         1
                     } else {
                         0
                     };
 
                     if let Some(Some(atlas_id)) = self.atlas_ids.get(atlas_idx) {
-                        // Debug atlas availability
-                        // if i == 0 && self.z_velocity > 0.1 {
-                        //     eprintln!("Star 0: atlas_idx={} atlas_id={} z={:.2}", atlas_idx, atlas_id, z);
-                        // }
-                        let base_size = (atlas_idx + 1) as f64;
-                        let size = base_size * (1.0 + z as f64 * 2.0); // Bigger when closer
-                        let brightness = (self.star_brightness[i] as f32 * z).min(255.0) as u8;
+                        // Calculate size based on distance
+                        let size = (star.size * self.star_size_base / view_z.sqrt()) as f64;
 
-                        let star_x = self.star_x[i] as f64;
-                        let star_y = self.star_y[i] as f64;
+                        // Calculate brightness based on distance
+                        let distance_fade = (1.0 - view_z / self.max_render_distance).max(0.0);
+                        let brightness =
+                            (star.brightness as f32 * distance_fade * self.star_brightness_base / 255.0).min(1.0);
 
-                        // Skip stars that are at or very near the origin (likely uninitialized)
-                        if star_x.abs() < 1.0 && star_y.abs() < 1.0 {
-                            continue;
+                        // Draw velocity streaks if moving fast
+                        if vel_mag > self.streak_velocity_threshold {
+                            // Calculate streak based on velocity direction in screen space
+                            let velocity_screen_x = self.camera_velocity.0 * self.camera_right.0
+                                + self.camera_velocity.1 * self.camera_right.1
+                                + self.camera_velocity.2 * self.camera_right.2;
+                            let velocity_screen_y = self.camera_velocity.0 * self.camera_up.0
+                                + self.camera_velocity.1 * self.camera_up.1
+                                + self.camera_velocity.2 * self.camera_up.2;
+
+                            let streak_length =
+                                (vel_mag - self.streak_velocity_threshold) * self.streak_length_multiplier / view_z;
+                            let vel_norm = ((velocity_screen_x * velocity_screen_x
+                                + velocity_screen_y * velocity_screen_y)
+                                .sqrt())
+                            .max(0.001);
+                            let streak_dx = (velocity_screen_x / vel_norm * streak_length) as f32;
+                            let streak_dy = (velocity_screen_y / vel_norm * streak_length) as f32;
+
+                            // Draw streak line
+                            gpu_renderer.add_line(
+                                screen_x as f32,
+                                screen_y as f32,
+                                screen_x as f32 - streak_dx,
+                                screen_y as f32 - streak_dy,
+                                1.0,
+                                [brightness, brightness, brightness, brightness * 0.5],
+                            );
                         }
 
-                        // Check if star is within visible bounds
-                        if star_x >= rx && star_x <= rx + rw && star_y >= ry && star_y <= ry + rh {
-                            visible_count += 1;
-                        }
-
-                        // Apply visual parameters to star rendering
-                        let center_x = rx + rw / 2.0;
-                        let center_y = ry + rh / 2.0;
-                        let dx = star_x - center_x;
-                        let dy = star_y - center_y;
-                        let dist = (dx * dx + dy * dy).sqrt();
-
-                        // Apply animation effects
-                        let time =
-                            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32()
-                                * self.time_dilation.max(0.1);
-
-                        // Pulse effect
-                        let pulse = if self.pulse_frequency > 0.0 {
-                            1.0 + (time * self.pulse_frequency).sin() * 0.2
-                        } else {
-                            1.0
-                        };
-
-                        // Wobble effect
-                        let wobble_offset_x = if self.wobble_amount > 0.0 {
-                            (time * 3.0 + i as f32 * 0.5).sin() * self.wobble_amount
-                        } else {
-                            0.0
-                        };
-                        let wobble_offset_y = if self.wobble_amount > 0.0 {
-                            (time * 2.7 + i as f32 * 0.7).cos() * self.wobble_amount
-                        } else {
-                            0.0
-                        };
-
-                        // Apply rotation
-                        let rotation_angle = if self.rotation_speed > 0.0 { time * self.rotation_speed } else { 0.0 };
-
-                        // Vortex twist effect
-                        let twist_angle = if self.vortex_twist_amount > 0.0 && dist > 0.01 {
-                            ((dist / 100.0) * self.vortex_twist_amount as f64) as f32
-                        } else {
-                            0.0
-                        };
-
-                        // Apply rotation and twist
-                        let total_angle = rotation_angle + twist_angle;
-                        let cos_a = total_angle.cos() as f64;
-                        let sin_a = total_angle.sin() as f64;
-                        let rotated_x = dx * cos_a - dy * sin_a;
-                        let rotated_y = dx * sin_a + dy * cos_a;
-                        let final_x = center_x + rotated_x + wobble_offset_x as f64;
-                        let final_y = center_y + rotated_y + wobble_offset_y as f64;
-
-                        // Skip stars whose final position is near origin (likely due to transformation errors)
-                        if final_x.abs() < 50.0 && final_y.abs() < 50.0 {
-                            static mut ORIGIN_DEBUG: u32 = 0;
-                            unsafe {
-                                if ORIGIN_DEBUG < 5 {
-                                    eprintln!("Star transformed near origin: final=({:.1}, {:.1}), original=({:.1}, {:.1}), center=({:.1}, {:.1})", 
-                                        final_x, final_y, star_x, star_y, center_x, center_y);
-                                    ORIGIN_DEBUG += 1;
-                                }
-                            }
-                            continue;
-                        }
-
-                        // Size with star_size_multiplier and pulse
-                        let final_size = size * self.star_size_multiplier as f64 * pulse as f64;
-
-                        // Brightness with bloom effect
-                        let bloom_brightness = if self.bloom_radius > 0.0 {
-                            ((brightness as f32) * (1.0 + self.bloom_radius * 0.5)).min(255.0) as u8
-                        } else {
-                            brightness
-                        };
-
-                        // Gradual transition from dots to streaks based on z_velocity
-                        let z_vel_adjusted = self.z_velocity.powf(self.z_velocity_curve);
-                        let streak_factor = (z_vel_adjusted * 5.0).min(1.0); // 0 to 1 transition over 0.0 to 0.2 velocity
-
-                        if z_vel_adjusted > 0.01 && streak_factor > 0.1 {
-                            streak_count += 1;
-
-                            if dist < 5.0 {
-                                // Draw motion blur samples for close stars
-                                for j in 0..self.motion_blur_samples.max(1) {
-                                    let blur_offset = j as f64 / self.motion_blur_samples.max(1) as f64;
-                                    let blur_alpha = ((255.0 * (1.0 - blur_offset * 0.7)) as u8).min(bloom_brightness);
-
-                                    let brightness_f = bloom_brightness as f32 / 255.0;
-                                    let alpha_f = blur_alpha as f32 / 255.0;
-                                    if let Some(Some(atlas_id)) = self.atlas_ids.get(atlas_idx) {
-                                        let brightness_f = bloom_brightness as f32 / 255.0;
-                                        let alpha_f = blur_alpha as f32 / 255.0;
-                                        gpu_renderer.add_textured_rect(
-                                            (final_x - final_size / 2.0 - wobble_offset_x as f64 * blur_offset) as f32,
-                                            (final_y - final_size / 2.0 - wobble_offset_y as f64 * blur_offset) as f32,
-                                            final_size as f32,
-                                            final_size as f32,
-                                            *atlas_id,
-                                            [brightness_f, brightness_f, brightness_f, alpha_f],
-                                        );
-                                    }
-                                }
-                            } else {
-                                // Streak length with trail_fade_factor and gradual transition
-                                let base_streak = 2.0; // Shorter base for smoother transition
-                                let streak_length = (base_streak
-                                    + (z_vel_adjusted * z * 100.0 * self.trail_fade_factor) as f64)
-                                    * streak_factor as f64;
-
-                                // Normalize direction (avoid division by zero)
-                                let ndx = if dist > 0.1 { dx / dist } else { 0.0 };
-                                let ndy = if dist > 0.1 { dy / dist } else { 0.0 };
-
-                                // Skip if direction is invalid OR star is too close to center
-                                if (ndx == 0.0 && ndy == 0.0) || dist < 5.0 {
-                                    continue;
-                                }
-
-                                // Debug stars near center that might cause origin lines
-                                if dist < 50.0 {
-                                    static mut CENTER_DEBUG: u32 = 0;
-                                    unsafe {
-                                        if CENTER_DEBUG < 5 {
-                                            eprintln!("Star near center: star_pos=({:.1}, {:.1}), center=({:.1}, {:.1}), dist={:.1}, dx={:.1}, dy={:.1}", 
-                                                star_x, star_y, center_x, center_y, dist, dx, dy);
-                                            CENTER_DEBUG += 1;
-                                        }
-                                    }
-                                }
-
-                                // Apply chromatic aberration to streaks
-                                for chroma_idx in 0..if self.chromatic_aberration > 0.0 { 3 } else { 1 } {
-                                    let chroma_offset = (chroma_idx as f32 - 1.0) * self.chromatic_aberration * 2.0;
-                                    let chroma_x1 = final_x - ndx * streak_length + chroma_offset as f64 * ndy;
-                                    let chroma_y1 = final_y - ndy * streak_length - chroma_offset as f64 * ndx;
-                                    let chroma_x2 = final_x + chroma_offset as f64 * ndy;
-                                    let chroma_y2 = final_y - chroma_offset as f64 * ndx;
-
-                                    // Color based on chromatic channel
-                                    let (r, g, b) = match chroma_idx {
-                                        0 => (bloom_brightness, 0, 0),
-                                        1 => (0, bloom_brightness, 0),
-                                        2 => (0, 0, bloom_brightness),
-                                        _ => (bloom_brightness, bloom_brightness, bloom_brightness),
-                                    };
-
-                                    // Thickness with taper
-                                    let thickness = (1.0 + z * 2.0) * (1.0 - self.streak_taper_ratio * 0.5);
-
-                                    // Draw main line only
-                                    let r_f = r as f32 / 255.0;
-                                    let g_f = g as f32 / 255.0;
-                                    let b_f = b as f32 / 255.0;
-                                    let alpha_f = bloom_brightness as f32 / 255.0;
-
-                                    // Validate line coordinates to prevent spurious lines from origin
-                                    let x1 = chroma_x1 as f32;
-                                    let y1 = chroma_y1 as f32;
-                                    let x2 = chroma_x2 as f32;
-                                    let y2 = chroma_y2 as f32;
-
-                                    // Only draw if coordinates are valid and within reasonable bounds
-                                    if x1.is_finite() && y1.is_finite() && x2.is_finite() && y2.is_finite() {
-                                        // Skip lines near origin (likely uninitialized or invalid)
-                                        if (x1.abs() < 10.0 && y1.abs() < 10.0) || (x2.abs() < 10.0 && y2.abs() < 10.0)
-                                        {
-                                            continue;
-                                        }
-
-                                        // Also check that the line isn't degenerate (same start and end)
-                                        let dx = x2 - x1;
-                                        let dy = y2 - y1;
-                                        if dx.abs() > 0.001 || dy.abs() > 0.001 {
-                                            // Bounds check - skip lines that go way outside viewport
-                                            if x1.abs() < 10000.0
-                                                && y1.abs() < 10000.0
-                                                && x2.abs() < 10000.0
-                                                && y2.abs() < 10000.0
-                                            {
-                                                // Debug spurious lines
-                                                static mut DEBUG_COUNT: u32 = 0;
-                                                unsafe {
-                                                    if DEBUG_COUNT < 5 {
-                                                        eprintln!("Starfield line: ({:.1}, {:.1}) to ({:.1}, {:.1}), star_pos=({:.1}, {:.1}), dist={:.1}, ndx={:.3}, ndy={:.3}, streak_len={:.1}", 
-                                                            x1, y1, x2, y2, star_x, star_y, dist, ndx, ndy, streak_length);
-                                                        DEBUG_COUNT += 1;
-                                                    }
-                                                }
-                                                gpu_renderer.add_line(
-                                                    x1,
-                                                    y1,
-                                                    x2,
-                                                    y2,
-                                                    thickness,
-                                                    [r_f, g_f, b_f, alpha_f],
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Always draw the star dot (fade it based on streak_factor)
-                        if final_x >= rx - final_size
-                            && final_x <= rx + rw + final_size
-                            && final_y >= ry - final_size
-                            && final_y <= ry + rh + final_size
-                        {
-                            // Fade the dot as streaks get stronger
-                            let dot_alpha = ((1.0 - streak_factor * 0.7) * 255.0) as u8;
-
-                            // Draw bloom effect
-                            if self.bloom_radius > 0.0 {
-                                let bloom_size = final_size * (1.0 + self.bloom_radius as f64);
-                                let bloom_alpha = ((64.0 * (1.0 - streak_factor * 0.5)) as u8).min(64);
-                                let bloom_brightness_f = (bloom_brightness / 2) as f32 / 255.0;
-                                let bloom_alpha_f = bloom_alpha as f32 / 255.0;
-                                if let Some(Some(atlas_id)) = self.atlas_ids.get(atlas_idx) {
-                                    let bloom_brightness_f = (bloom_brightness / 2) as f32 / 255.0;
-                                    let bloom_alpha_f = bloom_alpha as f32 / 255.0;
-                                    gpu_renderer.add_textured_rect(
-                                        (final_x - bloom_size / 2.0) as f32,
-                                        (final_y - bloom_size / 2.0) as f32,
-                                        bloom_size as f32,
-                                        bloom_size as f32,
-                                        *atlas_id,
-                                        [bloom_brightness_f, bloom_brightness_f, bloom_brightness_f, bloom_alpha_f],
-                                    );
-                                }
-                            }
-
-                            // Draw main star
-                            let brightness_f = bloom_brightness as f32 / 255.0;
-                            let alpha_f = dot_alpha as f32 / 255.0;
-                            if let Some(Some(atlas_id)) = self.atlas_ids.get(atlas_idx) {
-                                let brightness_f = bloom_brightness as f32 / 255.0;
-                                let alpha_f = dot_alpha as f32 / 255.0;
-                                gpu_renderer.add_textured_rect(
-                                    (final_x - final_size / 2.0) as f32,
-                                    (final_y - final_size / 2.0) as f32,
-                                    final_size as f32,
-                                    final_size as f32,
-                                    *atlas_id,
-                                    [brightness_f, brightness_f, brightness_f, alpha_f],
-                                );
-                            }
-                        }
-                    }
-                }
-
-                // Debug star visibility
-                static mut FRAME_COUNT: u32 = 0;
-                unsafe {
-                    FRAME_COUNT += 1;
-                    if FRAME_COUNT % 30 == 0 {
-                        eprintln!(
-                            "Stars: {} visible, {} streaks rendered (z_vel={:.2})",
-                            visible_count, streak_count, self.z_velocity
+                        // Draw star dot
+                        gpu_renderer.add_textured_rect(
+                            (screen_x - size / 2.0) as f32,
+                            (screen_y - size / 2.0) as f32,
+                            size as f32,
+                            size as f32,
+                            *atlas_id,
+                            [brightness, brightness, brightness, 1.0],
                         );
                     }
                 }
-
-                // Debug: Draw a test line when accelerating
-                // if self.z_velocity > 0.1 {
-                //     gpu_renderer.add_command(RenderCommand::Line {
-                //         x1: rx + 10.0,
-                //         y1: ry + 10.0,
-                //         x2: rx + 100.0,
-                //         y2: ry + 100.0,
-                //         thickness: 3.0,
-                //         color: (255, 255, 0, 0), // ABGR: red line
-                //     });
-                //     eprintln!("Added test line at ({:.0},{:.0})", rx + 10.0, ry + 10.0);
-                // }
 
                 // Draw speed display
                 if let Some(ref mut display) = self.speed_display {
@@ -1430,14 +1070,6 @@ hotline::object!({
                     let new_y = y - self.drag_offset.1;
                     let (_, _, w, h) = rect.bounds();
                     rect.resize(new_x, new_y, w, h);
-
-                    // Update star positions to move with the rect
-                    let dx = new_x - (x - self.drag_offset.0);
-                    let dy = new_y - (y - self.drag_offset.1);
-                    for i in 0..self.star_x.len() {
-                        self.star_x[i] += dx as f32;
-                        self.star_y[i] += dy as f32;
-                    }
                     return true;
                 } else if let Some(edge) = self.resize_mode {
                     // Resize the rect
