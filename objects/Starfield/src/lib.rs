@@ -41,7 +41,6 @@ hotline::object!({
         wobble_amount: f32,
         rotation_speed: f32,
         time_dilation: f32,
-        afterimage_count: i32,
 
         // Physics Parameters
         drag_coefficient: f32,
@@ -99,7 +98,6 @@ hotline::object!({
             self.wobble_amount = 0.0;
             self.rotation_speed = 0.0;
             self.time_dilation = 1.0;
-            self.afterimage_count = 0;
 
             // Physics defaults
             self.drag_coefficient = 0.0;
@@ -264,7 +262,6 @@ hotline::object!({
             self.wobble_amount = rng.random_range(0.0..5.0);
             self.rotation_speed = rng.random_range(-10.0..10.0);
             self.time_dilation = rng.random_range(0.1..5.0);
-            self.afterimage_count = rng.random_range(0..5);
 
             // Physics
             self.drag_coefficient = rng.random_range(0.0..1.0);
@@ -300,12 +297,11 @@ hotline::object!({
                 15 => Some(self.wobble_amount),
                 16 => Some(self.rotation_speed),
                 17 => Some(self.time_dilation),
-                18 => Some(self.afterimage_count as f32),
-                19 => Some(self.drag_coefficient),
-                20 => Some(self.gravity_strength),
-                21 => Some(self.turbulence_scale),
-                22 => Some(self.max_velocity_cap),
-                23 => Some(self.acceleration_curve as f32),
+                18 => Some(self.drag_coefficient),
+                19 => Some(self.gravity_strength),
+                20 => Some(self.turbulence_scale),
+                21 => Some(self.max_velocity_cap),
+                22 => Some(self.acceleration_curve as f32),
                 _ => None,
             }
         }
@@ -330,12 +326,11 @@ hotline::object!({
                 15 => self.wobble_amount = value.clamp(0.0, 5.0),
                 16 => self.rotation_speed = value.clamp(-10.0, 10.0),
                 17 => self.time_dilation = value.clamp(0.1, 5.0),
-                18 => self.afterimage_count = value.clamp(0.0, 5.0) as i32,
-                19 => self.drag_coefficient = value.clamp(0.0, 1.0),
-                20 => self.gravity_strength = value.clamp(0.0, 1.0),
-                21 => self.turbulence_scale = value.clamp(0.0, 10.0),
-                22 => self.max_velocity_cap = value.clamp(10.0, 1000.0),
-                23 => self.acceleration_curve = value.clamp(0.0, 2.0) as i32,
+                18 => self.drag_coefficient = value.clamp(0.0, 1.0),
+                19 => self.gravity_strength = value.clamp(0.0, 1.0),
+                20 => self.turbulence_scale = value.clamp(0.0, 10.0),
+                21 => self.max_velocity_cap = value.clamp(10.0, 1000.0),
+                22 => self.acceleration_curve = value.clamp(0.0, 2.0) as i32,
                 _ => {}
             }
         }
@@ -360,12 +355,11 @@ hotline::object!({
                 15 => Some((0.0, 5.0)),
                 16 => Some((-10.0, 10.0)),
                 17 => Some((0.1, 5.0)),
-                18 => Some((0.0, 5.0)),
+                18 => Some((0.0, 1.0)),
                 19 => Some((0.0, 1.0)),
-                20 => Some((0.0, 1.0)),
-                21 => Some((0.0, 10.0)),
-                22 => Some((10.0, 1000.0)),
-                23 => Some((0.0, 2.0)),
+                20 => Some((0.0, 10.0)),
+                21 => Some((10.0, 1000.0)),
+                22 => Some((0.0, 2.0)),
                 _ => None,
             }
         }
@@ -928,63 +922,53 @@ hotline::object!({
                                     // Thickness with taper
                                     let thickness = (1.0 + z * 2.0) * (1.0 - self.streak_taper_ratio * 0.5);
 
-                                    // Draw afterimages
-                                    for after_idx in 0..self.afterimage_count.max(1) {
-                                        let after_fade =
-                                            1.0 - (after_idx as f32 / self.afterimage_count.max(1) as f32) * 0.8;
-                                        let after_alpha = (255.0 * after_fade) as u8;
-                                        let after_offset = after_idx as f64 * 5.0;
+                                    // Draw main line only
+                                    let r_f = r as f32 / 255.0;
+                                    let g_f = g as f32 / 255.0;
+                                    let b_f = b as f32 / 255.0;
+                                    let alpha_f = bloom_brightness as f32 / 255.0;
 
-                                        let r_f = r as f32 / 255.0;
-                                        let g_f = g as f32 / 255.0;
-                                        let b_f = b as f32 / 255.0;
-                                        let alpha_f = after_alpha as f32 / 255.0;
-                                        let r_f = r as f32 / 255.0;
-                                        let g_f = g as f32 / 255.0;
-                                        let b_f = b as f32 / 255.0;
-                                        let alpha_f = after_alpha as f32 / 255.0;
-                                        // Validate line coordinates to prevent spurious lines from origin
-                                        let x1 = (chroma_x1 - ndx * after_offset) as f32;
-                                        let y1 = (chroma_y1 - ndy * after_offset) as f32;
-                                        let x2 = (chroma_x2 - ndx * after_offset) as f32;
-                                        let y2 = (chroma_y2 - ndy * after_offset) as f32;
+                                    // Validate line coordinates to prevent spurious lines from origin
+                                    let x1 = chroma_x1 as f32;
+                                    let y1 = chroma_y1 as f32;
+                                    let x2 = chroma_x2 as f32;
+                                    let y2 = chroma_y2 as f32;
 
-                                        // Only draw if coordinates are valid and within reasonable bounds
-                                        if x1.is_finite() && y1.is_finite() && x2.is_finite() && y2.is_finite() {
-                                            // Skip lines near origin (likely uninitialized or invalid)
-                                            if (x1.abs() < 10.0 && y1.abs() < 10.0)
-                                                || (x2.abs() < 10.0 && y2.abs() < 10.0)
+                                    // Only draw if coordinates are valid and within reasonable bounds
+                                    if x1.is_finite() && y1.is_finite() && x2.is_finite() && y2.is_finite() {
+                                        // Skip lines near origin (likely uninitialized or invalid)
+                                        if (x1.abs() < 10.0 && y1.abs() < 10.0) || (x2.abs() < 10.0 && y2.abs() < 10.0)
+                                        {
+                                            continue;
+                                        }
+
+                                        // Also check that the line isn't degenerate (same start and end)
+                                        let dx = x2 - x1;
+                                        let dy = y2 - y1;
+                                        if dx.abs() > 0.001 || dy.abs() > 0.001 {
+                                            // Bounds check - skip lines that go way outside viewport
+                                            if x1.abs() < 10000.0
+                                                && y1.abs() < 10000.0
+                                                && x2.abs() < 10000.0
+                                                && y2.abs() < 10000.0
                                             {
-                                                continue;
-                                            }
-                                            // Also check that the line isn't degenerate (same start and end)
-                                            let dx = x2 - x1;
-                                            let dy = y2 - y1;
-                                            if dx.abs() > 0.001 || dy.abs() > 0.001 {
-                                                // Bounds check - skip lines that go way outside viewport
-                                                if x1.abs() < 10000.0
-                                                    && y1.abs() < 10000.0
-                                                    && x2.abs() < 10000.0
-                                                    && y2.abs() < 10000.0
-                                                {
-                                                    // Debug spurious lines
-                                                    static mut DEBUG_COUNT: u32 = 0;
-                                                    unsafe {
-                                                        if DEBUG_COUNT < 5 {
-                                                            eprintln!("Starfield line: ({:.1}, {:.1}) to ({:.1}, {:.1}), star_pos=({:.1}, {:.1}), dist={:.1}, ndx={:.3}, ndy={:.3}, streak_len={:.1}", 
-                                                                x1, y1, x2, y2, star_x, star_y, dist, ndx, ndy, streak_length);
-                                                            DEBUG_COUNT += 1;
-                                                        }
+                                                // Debug spurious lines
+                                                static mut DEBUG_COUNT: u32 = 0;
+                                                unsafe {
+                                                    if DEBUG_COUNT < 5 {
+                                                        eprintln!("Starfield line: ({:.1}, {:.1}) to ({:.1}, {:.1}), star_pos=({:.1}, {:.1}), dist={:.1}, ndx={:.3}, ndy={:.3}, streak_len={:.1}", 
+                                                            x1, y1, x2, y2, star_x, star_y, dist, ndx, ndy, streak_length);
+                                                        DEBUG_COUNT += 1;
                                                     }
-                                                    gpu_renderer.add_line(
-                                                        x1,
-                                                        y1,
-                                                        x2,
-                                                        y2,
-                                                        thickness,
-                                                        [r_f, g_f, b_f, alpha_f],
-                                                    );
                                                 }
+                                                gpu_renderer.add_line(
+                                                    x1,
+                                                    y1,
+                                                    x2,
+                                                    y2,
+                                                    thickness,
+                                                    [r_f, g_f, b_f, alpha_f],
+                                                );
                                             }
                                         }
                                     }
@@ -1121,13 +1105,12 @@ hotline::object!({
                         (Some(15), 20), // wobble
                         (Some(16), 21), // rotation
                         (Some(17), 22), // dilation
-                        (Some(18), 23), // afterimage
-                        (None, 24),     // Physics header
-                        (Some(19), 25), // drag
-                        (Some(20), 26), // gravity
-                        (Some(21), 27), // turbulence
-                        (Some(22), 28), // max_vel
-                        (Some(23), 29), // accel_curve
+                        (None, 23),     // Physics header
+                        (Some(18), 24), // drag
+                        (Some(19), 25), // gravity
+                        (Some(20), 26), // turbulence
+                        (Some(21), 27), // max_vel
+                        (Some(22), 28), // accel_curve
                     ];
 
                     // First, collect all the data we need
@@ -1151,7 +1134,6 @@ hotline::object!({
                         "Wobble",
                         "Rotation",
                         "Dilation",
-                        "Afterimage",
                         "Drag",
                         "Gravity",
                         "Turbulence",
@@ -1166,8 +1148,8 @@ hotline::object!({
 
                                 // Special formatting for integer parameters
                                 let value_str = match idx {
-                                    3 | 8 | 10 | 18 | 23 => format!("{:.0}", value),
-                                    22 => format!("{:.0}", value), // max velocity
+                                    3 | 8 | 10 | 22 => format!("{:.0}", value),
+                                    21 => format!("{:.0}", value), // max velocity
                                     _ => format!("{:.2}", value),
                                 };
 

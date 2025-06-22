@@ -753,11 +753,6 @@ impl GpuRenderer {
                         continue;
                     }
 
-                    // Debug first few batches
-                    if batch_idx < 3 {
-                        eprintln!("Batch {}: tex_id={}, start={}, count={}", batch_idx, tex_id, start_index, count);
-                    }
-
                     // Get the texture or use white texture as fallback
                     let texture = if let Some(tex) = inner.textures.get(&tex_id) { tex } else { &inner.white_texture };
 
