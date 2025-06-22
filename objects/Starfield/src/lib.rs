@@ -394,11 +394,11 @@ hotline::object!({
                 // Left stick Y: strafe up/down (vertical movement)
                 (
                     self.camera_right.0 * self.strafe_velocity.0 * self.strafe_speed
-                        + self.camera_up.0 * -self.strafe_velocity.1 * self.strafe_speed,
+                        + self.camera_up.0 * self.strafe_velocity.1 * self.strafe_speed,
                     self.camera_right.1 * self.strafe_velocity.0 * self.strafe_speed
-                        + self.camera_up.1 * -self.strafe_velocity.1 * self.strafe_speed,
+                        + self.camera_up.1 * self.strafe_velocity.1 * self.strafe_speed,
                     self.camera_right.2 * self.strafe_velocity.0 * self.strafe_speed
-                        + self.camera_up.2 * -self.strafe_velocity.1 * self.strafe_speed,
+                        + self.camera_up.2 * self.strafe_velocity.1 * self.strafe_speed,
                 )
             } else {
                 // FPS-style movement
@@ -406,11 +406,11 @@ hotline::object!({
                 // Left stick Y: move forward/back
                 (
                     self.camera_right.0 * self.strafe_velocity.0 * self.strafe_speed
-                        + self.camera_forward.0 * -self.strafe_velocity.1 * self.strafe_speed,
+                        + self.camera_forward.0 * self.strafe_velocity.1 * self.strafe_speed,
                     self.camera_right.1 * self.strafe_velocity.0 * self.strafe_speed
-                        + self.camera_forward.1 * -self.strafe_velocity.1 * self.strafe_speed,
+                        + self.camera_forward.1 * self.strafe_velocity.1 * self.strafe_speed,
                     self.camera_right.2 * self.strafe_velocity.0 * self.strafe_speed
-                        + self.camera_forward.2 * -self.strafe_velocity.1 * self.strafe_speed,
+                        + self.camera_forward.2 * self.strafe_velocity.1 * self.strafe_speed,
                 )
             };
 
