@@ -769,63 +769,45 @@ hotline::object!({
                     // Update and draw parameter displays
                     let mut y_offset = panel_y + 10.0;
                     let param_indices = [
-                        (None, 0),      // Title
-                        (None, 1),      // Randomize button
-                        (None, 2),      // Visual header
-                        (Some(0), 3),   // trail_fade
-                        (Some(1), 4),   // star_size
-                        (Some(2), 5),   // z_curve
-                        (Some(3), 6),   // blur_samples
-                        (Some(4), 7),   // chromatic
-                        (Some(5), 8),   // vortex
-                        (Some(6), 9),   // bloom
-                        (Some(7), 10),  // taper
-                        (None, 11),     // Distribution header
-                        (Some(8), 12),  // pattern
-                        (Some(9), 13),  // center_bias
-                        (Some(10), 14), // layers
-                        (Some(11), 15), // density
-                        (Some(12), 16), // spread
-                        (Some(13), 17), // cluster
-                        (None, 18),     // Animation header
-                        (Some(14), 19), // pulse
-                        (Some(15), 20), // wobble
-                        (Some(16), 21), // rotation
-                        (Some(17), 22), // dilation
-                        (None, 23),     // Physics header
-                        (Some(18), 24), // drag
-                        (Some(19), 25), // gravity
-                        (Some(20), 26), // turbulence
-                        (Some(21), 27), // max_vel
-                        (Some(22), 28), // accel_curve
+                        (None, 0),     // Title
+                        (None, 1),     // Camera header
+                        (None, 2),     // Position display
+                        (None, 3),     // Velocity display
+                        (None, 4),     // Yaw display
+                        (None, 5),     // Pitch display
+                        (None, 6),     // blank
+                        (None, 7),     // Movement header
+                        (None, 8),     // Mode display
+                        (Some(0), 9),  // Acceleration
+                        (Some(1), 10), // Strafe Speed
+                        (Some(2), 11), // Max Velocity
+                        (Some(3), 12), // Damping
+                        (None, 13),    // blank
+                        (None, 14),    // Visual header
+                        (Some(4), 15), // FOV
+                        (Some(5), 16), // Star Size
+                        (None, 17),    // Render Distance display
+                        (Some(6), 18), // Streak Threshold
+                        (Some(7), 19), // Streak Length (multiplier)
+                        (None, 20),    // blank
+                        (None, 21),    // Star Field header
+                        (None, 22),    // Star Count display
+                        (Some(8), 23), // Density
+                        (None, 24),    // Spawn Radius display
                     ];
 
                     // First, collect all the data we need
                     let mut display_updates = Vec::new();
                     let param_names = [
-                        "Trail Fade",
-                        "Star Size",
-                        "Z Curve",
-                        "Blur Samples",
-                        "Chromatic",
-                        "Vortex",
-                        "Bloom",
-                        "Taper",
-                        "Pattern",
-                        "Center Bias",
-                        "Layers",
-                        "Density",
-                        "Spread",
-                        "Cluster",
-                        "Pulse",
-                        "Wobble",
-                        "Rotation",
-                        "Dilation",
-                        "Drag",
-                        "Gravity",
-                        "Turbulence",
-                        "Max Vel",
-                        "Accel Curve",
+                        "Acceleration",     // 0
+                        "Strafe Speed",     // 1
+                        "Max Velocity",     // 2
+                        "Damping",          // 3
+                        "FOV",              // 4
+                        "Star Size",        // 5
+                        "Streak Threshold", // 6
+                        "Streak Length",    // 7
+                        "Star Density",     // 8
                     ];
 
                     for (param_idx, display_idx) in param_indices.iter() {
@@ -833,11 +815,13 @@ hotline::object!({
                             if let Some(value) = self.get_param_value(*idx) {
                                 let name = param_names.get(*idx).unwrap_or(&"Unknown");
 
-                                // Special formatting for integer parameters
+                                // Special formatting for parameters
                                 let value_str = match idx {
-                                    3 | 8 | 10 | 22 => format!("{:.0}", value),
-                                    21 => format!("{:.0}", value), // max velocity
-                                    _ => format!("{:.2}", value),
+                                    2 => format!("{:.0}", value),  // max velocity
+                                    3 => format!("{:.3}", value),  // damping (needs precision)
+                                    4 => format!("{:.0}°", value), // FOV in degrees
+                                    8 => format!("{:.4}", value),  // density (small number)
+                                    _ => format!("{:.1}", value),
                                 };
 
                                 let text = format!("{}: {}", name, value_str);
@@ -966,44 +950,35 @@ hotline::object!({
 
                     // Map display index to parameter index
                     let param_map = [
-                        None,
-                        None,
-                        None, // Title, Randomize, Visual header
-                        Some(0),
-                        Some(1),
-                        Some(2),
-                        Some(3),
-                        Some(4),
-                        Some(5),
-                        Some(6),
-                        Some(7), // Visual params
-                        None,    // Distribution header
-                        Some(8),
-                        Some(9),
-                        Some(10),
-                        Some(11),
-                        Some(12),
-                        Some(13), // Distribution params
-                        None,     // Animation header
-                        Some(14),
-                        Some(15),
-                        Some(16),
-                        Some(17),
-                        Some(18), // Animation params
-                        None,     // Physics header
-                        Some(19),
-                        Some(20),
-                        Some(21),
-                        Some(22),
-                        Some(23), // Physics params
+                        None,    // 0: Title
+                        None,    // 1: Camera header
+                        None,    // 2: Position display
+                        None,    // 3: Velocity display
+                        None,    // 4: Yaw display
+                        None,    // 5: Pitch display
+                        None,    // 6: blank
+                        None,    // 7: Movement header
+                        None,    // 8: Mode display
+                        Some(0), // 9: Acceleration
+                        Some(1), // 10: Strafe Speed
+                        Some(2), // 11: Max Velocity
+                        Some(3), // 12: Damping
+                        None,    // 13: blank
+                        None,    // 14: Visual header
+                        Some(4), // 15: FOV
+                        Some(5), // 16: Star Size
+                        None,    // 17: Render Distance display
+                        Some(6), // 18: Streak Threshold
+                        Some(7), // 19: Streak Length
+                        None,    // 20: blank
+                        None,    // 21: Star Field header
+                        None,    // 22: Star Count display
+                        Some(8), // 23: Density
+                        None,    // 24: Spawn Radius display
                     ];
 
                     if param_index < param_map.len() {
-                        if param_index == 1 {
-                            // Clicked on Randomize button
-                            self.randomize_params();
-                            return true;
-                        } else if let Some(idx) = param_map.get(param_index).and_then(|&p| p) {
+                        if let Some(idx) = param_map.get(param_index).and_then(|&p| p) {
                             // Clicked on a parameter
                             self.selected_param = Some(idx);
                             self.dragging_param = true;
@@ -1070,36 +1045,31 @@ hotline::object!({
                     let param_index = (relative_y / self.param_height) as usize;
 
                     let param_map = [
-                        None,
-                        None,
-                        None,
-                        Some(0),
-                        Some(1),
-                        Some(2),
-                        Some(3),
-                        Some(4),
-                        Some(5),
-                        Some(6),
-                        Some(7),
-                        None,
-                        Some(8),
-                        Some(9),
-                        Some(10),
-                        Some(11),
-                        Some(12),
-                        Some(13),
-                        None,
-                        Some(14),
-                        Some(15),
-                        Some(16),
-                        Some(17),
-                        Some(18),
-                        None,
-                        Some(19),
-                        Some(20),
-                        Some(21),
-                        Some(22),
-                        Some(23),
+                        None,    // 0: Title
+                        None,    // 1: Camera header
+                        None,    // 2: Position display
+                        None,    // 3: Velocity display
+                        None,    // 4: Yaw display
+                        None,    // 5: Pitch display
+                        None,    // 6: blank
+                        None,    // 7: Movement header
+                        None,    // 8: Mode display
+                        Some(0), // 9: Acceleration
+                        Some(1), // 10: Strafe Speed
+                        Some(2), // 11: Max Velocity
+                        Some(3), // 12: Damping
+                        None,    // 13: blank
+                        None,    // 14: Visual header
+                        Some(4), // 15: FOV
+                        Some(5), // 16: Star Size
+                        None,    // 17: Render Distance display
+                        Some(6), // 18: Streak Threshold
+                        Some(7), // 19: Streak Length
+                        None,    // 20: blank
+                        None,    // 21: Star Field header
+                        None,    // 22: Star Count display
+                        Some(8), // 23: Density
+                        None,    // 24: Spawn Radius display
                     ];
 
                     if param_index < param_map.len() {
