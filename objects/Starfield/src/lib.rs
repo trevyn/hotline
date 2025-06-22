@@ -43,7 +43,6 @@ hotline::object!({
         rotation_speed: f32,
         time_dilation: f32,
         afterimage_count: i32,
-        strobe_interval: f32,
 
         // Physics Parameters
         drag_coefficient: f32,
@@ -102,7 +101,6 @@ hotline::object!({
             self.rotation_speed = 0.0;
             self.time_dilation = 1.0;
             self.afterimage_count = 0;
-            self.strobe_interval = 0.0;
 
             // Physics defaults
             self.drag_coefficient = 0.0;
@@ -171,7 +169,6 @@ hotline::object!({
                 ("rotation", "Rotation Speed"),
                 ("dilation", "Time Dilation"),
                 ("afterimage", "Afterimage Count"),
-                ("strobe", "Strobe Interval"),
                 ("", "-- Physics --"),
                 ("drag", "Drag Coefficient"),
                 ("gravity", "Gravity Strength"),
@@ -269,7 +266,6 @@ hotline::object!({
             self.rotation_speed = rng.random_range(-10.0..10.0);
             self.time_dilation = rng.random_range(0.1..5.0);
             self.afterimage_count = rng.random_range(0..5);
-            self.strobe_interval = rng.random_range(0.0..1.0);
 
             // Physics
             self.drag_coefficient = rng.random_range(0.0..1.0);
@@ -306,12 +302,11 @@ hotline::object!({
                 16 => Some(self.rotation_speed),
                 17 => Some(self.time_dilation),
                 18 => Some(self.afterimage_count as f32),
-                19 => Some(self.strobe_interval),
-                20 => Some(self.drag_coefficient),
-                21 => Some(self.gravity_strength),
-                22 => Some(self.turbulence_scale),
-                23 => Some(self.max_velocity_cap),
-                24 => Some(self.acceleration_curve as f32),
+                19 => Some(self.drag_coefficient),
+                20 => Some(self.gravity_strength),
+                21 => Some(self.turbulence_scale),
+                22 => Some(self.max_velocity_cap),
+                23 => Some(self.acceleration_curve as f32),
                 _ => None,
             }
         }
@@ -337,12 +332,11 @@ hotline::object!({
                 16 => self.rotation_speed = value.clamp(-10.0, 10.0),
                 17 => self.time_dilation = value.clamp(0.1, 5.0),
                 18 => self.afterimage_count = value.clamp(0.0, 5.0) as i32,
-                19 => self.strobe_interval = value.clamp(0.0, 1.0),
-                20 => self.drag_coefficient = value.clamp(0.0, 1.0),
-                21 => self.gravity_strength = value.clamp(0.0, 1.0),
-                22 => self.turbulence_scale = value.clamp(0.0, 10.0),
-                23 => self.max_velocity_cap = value.clamp(10.0, 1000.0),
-                24 => self.acceleration_curve = value.clamp(0.0, 2.0) as i32,
+                19 => self.drag_coefficient = value.clamp(0.0, 1.0),
+                20 => self.gravity_strength = value.clamp(0.0, 1.0),
+                21 => self.turbulence_scale = value.clamp(0.0, 10.0),
+                22 => self.max_velocity_cap = value.clamp(10.0, 1000.0),
+                23 => self.acceleration_curve = value.clamp(0.0, 2.0) as i32,
                 _ => {}
             }
         }
@@ -370,10 +364,9 @@ hotline::object!({
                 18 => Some((0.0, 5.0)),
                 19 => Some((0.0, 1.0)),
                 20 => Some((0.0, 1.0)),
-                21 => Some((0.0, 1.0)),
-                22 => Some((0.0, 10.0)),
-                23 => Some((10.0, 1000.0)),
-                24 => Some((0.0, 2.0)),
+                21 => Some((0.0, 10.0)),
+                22 => Some((10.0, 1000.0)),
+                23 => Some((0.0, 2.0)),
                 _ => None,
             }
         }
@@ -861,17 +854,6 @@ hotline::object!({
                             brightness
                         };
 
-                        // Strobe effect - skip rendering when off
-                        let strobe_visible = if self.strobe_interval > 0.0 {
-                            (time / self.strobe_interval).floor() as i32 % 2 == 0
-                        } else {
-                            true
-                        };
-
-                        if !strobe_visible {
-                            continue; // Skip this star entirely when strobe is off
-                        }
-
                         // Gradual transition from dots to streaks based on z_velocity
                         let z_vel_adjusted = self.z_velocity.powf(self.z_velocity_curve);
                         let streak_factor = (z_vel_adjusted * 5.0).min(1.0); // 0 to 1 transition over 0.0 to 0.2 velocity
@@ -1078,13 +1060,12 @@ hotline::object!({
                         (Some(16), 21), // rotation
                         (Some(17), 22), // dilation
                         (Some(18), 23), // afterimage
-                        (Some(19), 24), // strobe
-                        (None, 25),     // Physics header
-                        (Some(20), 26), // drag
-                        (Some(21), 27), // gravity
-                        (Some(22), 28), // turbulence
-                        (Some(23), 29), // max_vel
-                        (Some(24), 30), // accel_curve
+                        (None, 24),     // Physics header
+                        (Some(19), 25), // drag
+                        (Some(20), 26), // gravity
+                        (Some(21), 27), // turbulence
+                        (Some(22), 28), // max_vel
+                        (Some(23), 29), // accel_curve
                     ];
 
                     // First, collect all the data we need
@@ -1109,7 +1090,6 @@ hotline::object!({
                         "Rotation",
                         "Dilation",
                         "Afterimage",
-                        "Strobe",
                         "Drag",
                         "Gravity",
                         "Turbulence",
@@ -1124,8 +1104,8 @@ hotline::object!({
 
                                 // Special formatting for integer parameters
                                 let value_str = match idx {
-                                    3 | 8 | 10 | 18 | 24 => format!("{:.0}", value),
-                                    23 => format!("{:.0}", value), // max velocity
+                                    3 | 8 | 10 | 18 | 23 => format!("{:.0}", value),
+                                    22 => format!("{:.0}", value), // max velocity
                                     _ => format!("{:.2}", value),
                                 };
 
@@ -1286,14 +1266,13 @@ hotline::object!({
                         Some(15),
                         Some(16),
                         Some(17),
-                        Some(18),
-                        Some(19), // Animation params
+                        Some(18), // Animation params
                         None,     // Physics header
+                        Some(19),
                         Some(20),
                         Some(21),
                         Some(22),
-                        Some(23),
-                        Some(24), // Physics params
+                        Some(23), // Physics params
                     ];
 
                     if param_index < param_map.len() {
@@ -1392,13 +1371,12 @@ hotline::object!({
                         Some(16),
                         Some(17),
                         Some(18),
-                        Some(19),
                         None,
+                        Some(19),
                         Some(20),
                         Some(21),
                         Some(22),
                         Some(23),
-                        Some(24),
                     ];
 
                     if param_index < param_map.len() {
