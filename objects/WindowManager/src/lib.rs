@@ -510,39 +510,5 @@ hotline::object!({
             // GPU only - no CPU rendering
             let _ = (buffer, buffer_width, buffer_height, pitch);
         }
-
-        pub fn setup_gpu_rendering(&mut self, gpu_renderer: &mut GPURenderer) {
-            // Register text atlas if we have one
-            if let Some(ref mut text_renderer) = self.text_renderer {
-                if text_renderer.has_atlas() {
-                    let atlas_id = gpu_renderer.register_atlas(
-                        text_renderer.atlas_data(),
-                        text_renderer.atlas_dimensions().0,
-                        text_renderer.atlas_dimensions().1,
-                        AtlasFormat::GrayscaleAlpha,
-                    );
-                    text_renderer.set_atlas_id(atlas_id);
-                }
-            }
-
-            // Register atlas for all rects
-            for rect in &mut self.rects {
-                rect.register_atlas(gpu_renderer);
-            }
-        }
-
-        pub fn render_gpu(&mut self, gpu_renderer: &mut GPURenderer) {
-            // Don't clear commands here - Application will manage that
-
-            // Generate render commands for all rects
-            for rect in &mut self.rects {
-                rect.generate_commands(gpu_renderer);
-            }
-
-            // Generate render commands from text renderer
-            if let Some(ref mut text_renderer) = self.text_renderer {
-                text_renderer.generate_commands(gpu_renderer);
-            }
-        }
     }
 });

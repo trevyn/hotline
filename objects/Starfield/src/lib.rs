@@ -13,7 +13,6 @@ hotline::object!({
         z_velocity: f32, // Forward/backward velocity
         acceleration_multiplier: f32,
         atlas_ids: Vec<Option<u32>>,
-        border_atlas_id: Option<u32>,
         initialized: bool,
         dragging: bool,
         resize_mode: Option<u8>, // 0=None, 1=Top, 2=Bottom, 3=Left, 4=Right, 5=TopLeft, 6=TopRight, 7=BottomLeft, 8=BottomRight
@@ -618,7 +617,7 @@ hotline::object!({
             }
         }
 
-        pub fn register_atlases(&mut self, gpu_renderer: &mut GPURenderer) {
+        pub fn setup_gpu_rendering(&mut self, gpu_renderer: &mut dyn ::hotline::GpuRenderingContext) {
             // Create different sized star textures
             let sizes = [1, 2, 3];
 
@@ -639,41 +638,45 @@ hotline::object!({
                         }
                     }
 
-                    let id = gpu_renderer.register_atlas(
-                        texture_data,
-                        texture_size as u32,
-                        texture_size as u32,
-                        AtlasFormat::RGBA,
-                    );
+                    let id = gpu_renderer
+                        .create_rgba_texture(&texture_data, texture_size as u32, texture_size as u32)
+                        .unwrap();
                     self.atlas_ids.push(Some(id));
                 }
             }
 
-            // Create border atlas if not already created
-            if self.border_atlas_id.is_none() {
-                let border_pixel = vec![100u8, 100, 255, 255]; // Light blue border
-                let id = gpu_renderer.register_atlas(border_pixel, 1, 1, AtlasFormat::RGBA);
-                self.border_atlas_id = Some(id);
-            }
-
-            // Register speed display atlas
-            if let Some(ref mut display) = self.speed_display {
-                display.register_atlas(gpu_renderer);
-            }
-
-            // Register parameter display atlases
-            for display in &mut self.param_displays {
-                display.register_atlas(gpu_renderer);
-            }
+            // TODO: Update TextRenderer to use new GPU API
+            // if let Some(ref mut display) = self.speed_display {
+            //     display.register_atlas(gpu_renderer);
+            // }
+            // for display in &mut self.param_displays {
+            //     display.register_atlas(gpu_renderer);
+            // }
         }
 
-        pub fn generate_commands(&mut self, gpu_renderer: &mut GPURenderer) {
+        pub fn render_gpu(&mut self, gpu_renderer: &mut dyn ::hotline::GpuRenderingContext) {
+            // Early exit if rect not set or no stars initialized
+            if self.rect.is_none() || self.star_x.is_empty() {
+                static mut LOGGED: bool = false;
+                unsafe {
+                    if !LOGGED {
+                        eprintln!(
+                            "Starfield: render_gpu called but not initialized (rect={}, stars={})",
+                            self.rect.is_some(),
+                            self.star_x.len()
+                        );
+                        LOGGED = true;
+                    }
+                }
+                return;
+            }
+
             // Update stars
             self.update(0.016);
 
             // Make sure atlases are registered
             if self.atlas_ids.is_empty() {
-                self.register_atlases(gpu_renderer);
+                self.setup_gpu_rendering(gpu_renderer);
             }
 
             // Debug when accelerating
@@ -702,65 +705,43 @@ hotline::object!({
                 let bg_atlas = self.atlas_ids.get(0).and_then(|id| *id);
                 if let Some(atlas_id) = bg_atlas {
                     // Black background
-                    gpu_renderer.add_command(RenderCommand::Rect {
-                        texture_id: atlas_id,
-                        dest_x: rx,
-                        dest_y: ry,
-                        dest_width: rw,
-                        dest_height: rh,
-                        rotation: 0.0,
-                        color: (255, 0, 0, 0), // ABGR: black
-                    });
+                    gpu_renderer.add_textured_rect(
+                        rx as f32,
+                        ry as f32,
+                        rw as f32,
+                        rh as f32,
+                        atlas_id,
+                        [0.0, 0.0, 0.0, 1.0], // Black
+                    );
                 }
 
                 // Draw border
-                if let Some(border_id) = self.border_atlas_id {
-                    let border_width = 2.0;
+                let border_width = 2.0f32;
+                let border_color = [100.0 / 255.0, 100.0 / 255.0, 255.0 / 255.0, 1.0]; // Light blue
 
-                    // Top border
-                    gpu_renderer.add_command(RenderCommand::Rect {
-                        texture_id: border_id,
-                        dest_x: rx,
-                        dest_y: ry,
-                        dest_width: rw,
-                        dest_height: border_width,
-                        rotation: 0.0,
-                        color: (255, 255, 255, 255),
-                    });
+                // Top border
+                gpu_renderer.add_solid_rect(rx as f32, ry as f32, rw as f32, border_width, border_color);
 
-                    // Bottom border
-                    gpu_renderer.add_command(RenderCommand::Rect {
-                        texture_id: border_id,
-                        dest_x: rx,
-                        dest_y: ry + rh - border_width,
-                        dest_width: rw,
-                        dest_height: border_width,
-                        rotation: 0.0,
-                        color: (255, 255, 255, 255),
-                    });
+                // Bottom border
+                gpu_renderer.add_solid_rect(
+                    rx as f32,
+                    (ry + rh - border_width as f64) as f32,
+                    rw as f32,
+                    border_width,
+                    border_color,
+                );
 
-                    // Left border
-                    gpu_renderer.add_command(RenderCommand::Rect {
-                        texture_id: border_id,
-                        dest_x: rx,
-                        dest_y: ry,
-                        dest_width: border_width,
-                        dest_height: rh,
-                        rotation: 0.0,
-                        color: (255, 255, 255, 255),
-                    });
+                // Left border
+                gpu_renderer.add_solid_rect(rx as f32, ry as f32, border_width, rh as f32, border_color);
 
-                    // Right border
-                    gpu_renderer.add_command(RenderCommand::Rect {
-                        texture_id: border_id,
-                        dest_x: rx + rw - border_width,
-                        dest_y: ry,
-                        dest_width: border_width,
-                        dest_height: rh,
-                        rotation: 0.0,
-                        color: (255, 255, 255, 255),
-                    });
-                }
+                // Right border
+                gpu_renderer.add_solid_rect(
+                    (rx + rw - border_width as f64) as f32,
+                    ry as f32,
+                    border_width,
+                    rh as f32,
+                    border_color,
+                );
 
                 // Draw stars
                 let mut visible_count = 0;
@@ -788,6 +769,11 @@ hotline::object!({
 
                         let star_x = self.star_x[i] as f64;
                         let star_y = self.star_y[i] as f64;
+
+                        // Skip stars that are at or very near the origin (likely uninitialized)
+                        if star_x.abs() < 1.0 && star_y.abs() < 1.0 {
+                            continue;
+                        }
 
                         // Check if star is within visible bounds
                         if star_x >= rx && star_x <= rx + rw && star_y >= ry && star_y <= ry + rh {
@@ -844,6 +830,19 @@ hotline::object!({
                         let final_x = center_x + rotated_x + wobble_offset_x as f64;
                         let final_y = center_y + rotated_y + wobble_offset_y as f64;
 
+                        // Skip stars whose final position is near origin (likely due to transformation errors)
+                        if final_x.abs() < 50.0 && final_y.abs() < 50.0 {
+                            static mut ORIGIN_DEBUG: u32 = 0;
+                            unsafe {
+                                if ORIGIN_DEBUG < 5 {
+                                    eprintln!("Star transformed near origin: final=({:.1}, {:.1}), original=({:.1}, {:.1}), center=({:.1}, {:.1})", 
+                                        final_x, final_y, star_x, star_y, center_x, center_y);
+                                    ORIGIN_DEBUG += 1;
+                                }
+                            }
+                            continue;
+                        }
+
                         // Size with star_size_multiplier and pulse
                         let final_size = size * self.star_size_multiplier as f64 * pulse as f64;
 
@@ -867,15 +866,20 @@ hotline::object!({
                                     let blur_offset = j as f64 / self.motion_blur_samples.max(1) as f64;
                                     let blur_alpha = ((255.0 * (1.0 - blur_offset * 0.7)) as u8).min(bloom_brightness);
 
-                                    gpu_renderer.add_command(RenderCommand::Rect {
-                                        texture_id: *atlas_id,
-                                        dest_x: final_x - final_size / 2.0 - wobble_offset_x as f64 * blur_offset,
-                                        dest_y: final_y - final_size / 2.0 - wobble_offset_y as f64 * blur_offset,
-                                        dest_width: final_size,
-                                        dest_height: final_size,
-                                        rotation: 0.0,
-                                        color: (blur_alpha, bloom_brightness, bloom_brightness, bloom_brightness),
-                                    });
+                                    let brightness_f = bloom_brightness as f32 / 255.0;
+                                    let alpha_f = blur_alpha as f32 / 255.0;
+                                    if let Some(Some(atlas_id)) = self.atlas_ids.get(atlas_idx) {
+                                        let brightness_f = bloom_brightness as f32 / 255.0;
+                                        let alpha_f = blur_alpha as f32 / 255.0;
+                                        gpu_renderer.add_textured_rect(
+                                            (final_x - final_size / 2.0 - wobble_offset_x as f64 * blur_offset) as f32,
+                                            (final_y - final_size / 2.0 - wobble_offset_y as f64 * blur_offset) as f32,
+                                            final_size as f32,
+                                            final_size as f32,
+                                            *atlas_id,
+                                            [brightness_f, brightness_f, brightness_f, alpha_f],
+                                        );
+                                    }
                                 }
                             } else {
                                 // Streak length with trail_fade_factor and gradual transition
@@ -884,9 +888,26 @@ hotline::object!({
                                     + (z_vel_adjusted * z * 100.0 * self.trail_fade_factor) as f64)
                                     * streak_factor as f64;
 
-                                // Normalize direction
-                                let ndx = dx / dist;
-                                let ndy = dy / dist;
+                                // Normalize direction (avoid division by zero)
+                                let ndx = if dist > 0.1 { dx / dist } else { 0.0 };
+                                let ndy = if dist > 0.1 { dy / dist } else { 0.0 };
+
+                                // Skip if direction is invalid OR star is too close to center
+                                if (ndx == 0.0 && ndy == 0.0) || dist < 5.0 {
+                                    continue;
+                                }
+
+                                // Debug stars near center that might cause origin lines
+                                if dist < 50.0 {
+                                    static mut CENTER_DEBUG: u32 = 0;
+                                    unsafe {
+                                        if CENTER_DEBUG < 5 {
+                                            eprintln!("Star near center: star_pos=({:.1}, {:.1}), center=({:.1}, {:.1}), dist={:.1}, dx={:.1}, dy={:.1}", 
+                                                star_x, star_y, center_x, center_y, dist, dx, dy);
+                                            CENTER_DEBUG += 1;
+                                        }
+                                    }
+                                }
 
                                 // Apply chromatic aberration to streaks
                                 for chroma_idx in 0..if self.chromatic_aberration > 0.0 { 3 } else { 1 } {
@@ -914,14 +935,58 @@ hotline::object!({
                                         let after_alpha = (255.0 * after_fade) as u8;
                                         let after_offset = after_idx as f64 * 5.0;
 
-                                        gpu_renderer.add_command(RenderCommand::Line {
-                                            x1: chroma_x1 - ndx * after_offset,
-                                            y1: chroma_y1 - ndy * after_offset,
-                                            x2: chroma_x2 - ndx * after_offset,
-                                            y2: chroma_y2 - ndy * after_offset,
-                                            thickness: thickness as f64,
-                                            color: (after_alpha, b, g, r), // ABGR format
-                                        });
+                                        let r_f = r as f32 / 255.0;
+                                        let g_f = g as f32 / 255.0;
+                                        let b_f = b as f32 / 255.0;
+                                        let alpha_f = after_alpha as f32 / 255.0;
+                                        let r_f = r as f32 / 255.0;
+                                        let g_f = g as f32 / 255.0;
+                                        let b_f = b as f32 / 255.0;
+                                        let alpha_f = after_alpha as f32 / 255.0;
+                                        // Validate line coordinates to prevent spurious lines from origin
+                                        let x1 = (chroma_x1 - ndx * after_offset) as f32;
+                                        let y1 = (chroma_y1 - ndy * after_offset) as f32;
+                                        let x2 = (chroma_x2 - ndx * after_offset) as f32;
+                                        let y2 = (chroma_y2 - ndy * after_offset) as f32;
+
+                                        // Only draw if coordinates are valid and within reasonable bounds
+                                        if x1.is_finite() && y1.is_finite() && x2.is_finite() && y2.is_finite() {
+                                            // Skip lines near origin (likely uninitialized or invalid)
+                                            if (x1.abs() < 10.0 && y1.abs() < 10.0)
+                                                || (x2.abs() < 10.0 && y2.abs() < 10.0)
+                                            {
+                                                continue;
+                                            }
+                                            // Also check that the line isn't degenerate (same start and end)
+                                            let dx = x2 - x1;
+                                            let dy = y2 - y1;
+                                            if dx.abs() > 0.001 || dy.abs() > 0.001 {
+                                                // Bounds check - skip lines that go way outside viewport
+                                                if x1.abs() < 10000.0
+                                                    && y1.abs() < 10000.0
+                                                    && x2.abs() < 10000.0
+                                                    && y2.abs() < 10000.0
+                                                {
+                                                    // Debug spurious lines
+                                                    static mut DEBUG_COUNT: u32 = 0;
+                                                    unsafe {
+                                                        if DEBUG_COUNT < 5 {
+                                                            eprintln!("Starfield line: ({:.1}, {:.1}) to ({:.1}, {:.1}), star_pos=({:.1}, {:.1}), dist={:.1}, ndx={:.3}, ndy={:.3}, streak_len={:.1}", 
+                                                                x1, y1, x2, y2, star_x, star_y, dist, ndx, ndy, streak_length);
+                                                            DEBUG_COUNT += 1;
+                                                        }
+                                                    }
+                                                    gpu_renderer.add_line(
+                                                        x1,
+                                                        y1,
+                                                        x2,
+                                                        y2,
+                                                        thickness,
+                                                        [r_f, g_f, b_f, alpha_f],
+                                                    );
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -940,32 +1005,37 @@ hotline::object!({
                             if self.bloom_radius > 0.0 {
                                 let bloom_size = final_size * (1.0 + self.bloom_radius as f64);
                                 let bloom_alpha = ((64.0 * (1.0 - streak_factor * 0.5)) as u8).min(64);
-                                gpu_renderer.add_command(RenderCommand::Rect {
-                                    texture_id: *atlas_id,
-                                    dest_x: final_x - bloom_size / 2.0,
-                                    dest_y: final_y - bloom_size / 2.0,
-                                    dest_width: bloom_size,
-                                    dest_height: bloom_size,
-                                    rotation: 0.0,
-                                    color: (
-                                        bloom_alpha,
-                                        bloom_brightness / 2,
-                                        bloom_brightness / 2,
-                                        bloom_brightness / 2,
-                                    ),
-                                });
+                                let bloom_brightness_f = (bloom_brightness / 2) as f32 / 255.0;
+                                let bloom_alpha_f = bloom_alpha as f32 / 255.0;
+                                if let Some(Some(atlas_id)) = self.atlas_ids.get(atlas_idx) {
+                                    let bloom_brightness_f = (bloom_brightness / 2) as f32 / 255.0;
+                                    let bloom_alpha_f = bloom_alpha as f32 / 255.0;
+                                    gpu_renderer.add_textured_rect(
+                                        (final_x - bloom_size / 2.0) as f32,
+                                        (final_y - bloom_size / 2.0) as f32,
+                                        bloom_size as f32,
+                                        bloom_size as f32,
+                                        *atlas_id,
+                                        [bloom_brightness_f, bloom_brightness_f, bloom_brightness_f, bloom_alpha_f],
+                                    );
+                                }
                             }
 
                             // Draw main star
-                            gpu_renderer.add_command(RenderCommand::Rect {
-                                texture_id: *atlas_id,
-                                dest_x: final_x - final_size / 2.0,
-                                dest_y: final_y - final_size / 2.0,
-                                dest_width: final_size,
-                                dest_height: final_size,
-                                rotation: 0.0,
-                                color: (dot_alpha, bloom_brightness, bloom_brightness, bloom_brightness),
-                            });
+                            let brightness_f = bloom_brightness as f32 / 255.0;
+                            let alpha_f = dot_alpha as f32 / 255.0;
+                            if let Some(Some(atlas_id)) = self.atlas_ids.get(atlas_idx) {
+                                let brightness_f = bloom_brightness as f32 / 255.0;
+                                let alpha_f = dot_alpha as f32 / 255.0;
+                                gpu_renderer.add_textured_rect(
+                                    (final_x - final_size / 2.0) as f32,
+                                    (final_y - final_size / 2.0) as f32,
+                                    final_size as f32,
+                                    final_size as f32,
+                                    *atlas_id,
+                                    [brightness_f, brightness_f, brightness_f, alpha_f],
+                                );
+                            }
                         }
                     }
                 }
@@ -999,7 +1069,7 @@ hotline::object!({
                 if let Some(ref mut display) = self.speed_display {
                     display.set_x(rx + 10.0);
                     display.set_y(ry + rh - 20.0);
-                    display.generate_commands(gpu_renderer);
+                    display.render_gpu(gpu_renderer);
                 }
 
                 // Draw parameter panel
@@ -1007,31 +1077,23 @@ hotline::object!({
                     let panel_y = ry + 10.0;
 
                     // Draw panel background
-                    if let Some(bg_id) = self.atlas_ids.get(0).and_then(|id| *id) {
-                        gpu_renderer.add_command(RenderCommand::Rect {
-                            texture_id: bg_id,
-                            dest_x: self.panel_x,
-                            dest_y: panel_y,
-                            dest_width: self.panel_width,
-                            dest_height: rh - 20.0,
-                            rotation: 0.0,
-                            color: (200, 40, 40, 40), // Semi-transparent dark background
-                        });
-                    }
+                    gpu_renderer.add_solid_rect(
+                        self.panel_x as f32,
+                        panel_y as f32,
+                        self.panel_width as f32,
+                        (rh - 20.0) as f32,
+                        [0.156, 0.156, 0.156, 0.784], // Semi-transparent dark background
+                    );
 
                     // Draw panel border
-                    if let Some(border_id) = self.border_atlas_id {
-                        // Left border
-                        gpu_renderer.add_command(RenderCommand::Rect {
-                            texture_id: border_id,
-                            dest_x: self.panel_x,
-                            dest_y: panel_y,
-                            dest_width: 1.0,
-                            dest_height: rh - 20.0,
-                            rotation: 0.0,
-                            color: (255, 128, 128, 128),
-                        });
-                    }
+                    // Left border
+                    gpu_renderer.add_solid_rect(
+                        self.panel_x as f32,
+                        panel_y as f32,
+                        1.0,
+                        (rh - 20.0) as f32,
+                        [0.5, 0.5, 0.5, 1.0], // Gray border
+                    );
 
                     // Update and draw parameter displays
                     let mut y_offset = panel_y + 10.0;
@@ -1155,7 +1217,7 @@ hotline::object!({
                                 display.set_color(color);
                             }
 
-                            display.generate_commands(gpu_renderer);
+                            display.render_gpu(gpu_renderer);
 
                             // Draw value bars
                             if let Some((value, min, max)) = bar_data {
@@ -1165,30 +1227,22 @@ hotline::object!({
                                 let normalized = (value - min) / (max - min);
 
                                 // Background bar
-                                if let Some(bg_id) = self.atlas_ids.get(0).and_then(|id| *id) {
-                                    gpu_renderer.add_command(RenderCommand::Rect {
-                                        texture_id: bg_id,
-                                        dest_x: bar_x,
-                                        dest_y: y_offset + 2.0,
-                                        dest_width: bar_width,
-                                        dest_height: bar_height,
-                                        rotation: 0.0,
-                                        color: (255, 60, 60, 60),
-                                    });
-                                }
+                                gpu_renderer.add_solid_rect(
+                                    bar_x as f32,
+                                    (y_offset + 2.0) as f32,
+                                    bar_width as f32,
+                                    bar_height as f32,
+                                    [60.0 / 255.0, 60.0 / 255.0, 60.0 / 255.0, 1.0], // Dark gray
+                                );
 
                                 // Value bar
-                                if let Some(bar_id) = self.border_atlas_id {
-                                    gpu_renderer.add_command(RenderCommand::Rect {
-                                        texture_id: bar_id,
-                                        dest_x: bar_x,
-                                        dest_y: y_offset + 2.0,
-                                        dest_width: bar_width * normalized as f64,
-                                        dest_height: bar_height,
-                                        rotation: 0.0,
-                                        color: (255, 180, 105, 255), // Pink
-                                    });
-                                }
+                                gpu_renderer.add_solid_rect(
+                                    bar_x as f32,
+                                    (y_offset + 2.0) as f32,
+                                    (bar_width * normalized as f64) as f32,
+                                    bar_height as f32,
+                                    [255.0 / 255.0, 105.0 / 255.0, 180.0 / 255.0, 1.0], // Pink
+                                );
                             }
 
                             y_offset += self.param_height;

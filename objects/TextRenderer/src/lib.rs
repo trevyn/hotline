@@ -235,6 +235,116 @@ hotline::object!({
             }
         }
 
+        pub fn render_gpu(&mut self, gpu_renderer: &mut dyn ::hotline::GpuRenderingContext) {
+            if !self.initialized {
+                self.initialize();
+            }
+
+            let font = match &mut self.font {
+                Some(f) => f,
+                None => return,
+            };
+
+            // Create texture atlas if needed
+            if self.atlas_id.is_none() && !self.atlas.is_empty() {
+                // Convert grayscale alpha to RGBA
+                // Input is 2 bytes per pixel (gray, alpha), output is 4 bytes per pixel (RGBA)
+                let pixel_count = self.atlas.len() / 2;
+                let mut rgba_atlas = Vec::with_capacity(pixel_count * 4);
+
+                // Debug logging
+                static mut LOGGED: bool = false;
+                unsafe {
+                    if !LOGGED {
+                        eprintln!("TextRenderer: Creating font atlas texture");
+                        eprintln!("  Atlas size: {}x{}", self.atlas_width, self.atlas_height);
+                        eprintln!("  Input atlas len: {}, pixel count: {}", self.atlas.len(), pixel_count);
+                        LOGGED = true;
+                    }
+                }
+
+                for i in (0..self.atlas.len()).step_by(2) {
+                    let gray = self.atlas[i];
+                    let alpha = self.atlas[i + 1];
+                    // Use the gray channel as the texture color and alpha as transparency
+                    // This way the shader can tint it with the vertex color
+                    rgba_atlas.push(gray); // R
+                    rgba_atlas.push(gray); // G
+                    rgba_atlas.push(gray); // B
+                    rgba_atlas.push(alpha); // A
+                }
+
+                match gpu_renderer.create_rgba_texture(&rgba_atlas, self.atlas_width, self.atlas_height) {
+                    Ok(id) => {
+                        self.atlas_id = Some(id);
+                        eprintln!("TextRenderer: Created texture atlas with ID {}", id);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to create text atlas: {}", e);
+                        return;
+                    }
+                }
+            }
+
+            let atlas_id = match self.atlas_id {
+                Some(id) => id,
+                None => return,
+            };
+
+            let mut cursor_x = self.x;
+            let cursor_y = self.y;
+            let mut prev_char: Option<char> = None;
+
+            // Convert color from ABGR u8 to RGBA f32
+            let color = [
+                self.color.2 as f32 / 255.0, // R
+                self.color.1 as f32 / 255.0, // G
+                self.color.0 as f32 / 255.0, // B
+                self.color.3 as f32 / 255.0, // A
+            ];
+
+            for ch in self.text.chars() {
+                // Apply kerning before rendering
+                if let Some(prev) = prev_char {
+                    cursor_x += font.kerning(prev, ch) as f64;
+                }
+
+                if ch == ' ' {
+                    cursor_x += font.space_width() as f64;
+                    prev_char = Some(ch);
+                    continue;
+                }
+
+                if let Some((glyph_x, glyph_y, glyph_width, glyph_height, offset_x, offset_y, advance)) = font.glyph(ch)
+                {
+                    let dest_x = cursor_x + offset_x as f64;
+                    let dest_y = cursor_y + offset_y as f64 + font.size() as f64;
+
+                    // Calculate texture coordinates for the glyph
+                    let u0 = glyph_x as f32 / self.atlas_width as f32;
+                    let v0 = glyph_y as f32 / self.atlas_height as f32;
+                    let u1 = (glyph_x + glyph_width) as f32 / self.atlas_width as f32;
+                    let v1 = (glyph_y + glyph_height) as f32 / self.atlas_height as f32;
+
+                    gpu_renderer.add_textured_rect_with_coords(
+                        dest_x as f32,
+                        dest_y as f32,
+                        glyph_width as f32,
+                        glyph_height as f32,
+                        atlas_id,
+                        u0,
+                        v0,
+                        u1,
+                        v1,
+                        color,
+                    );
+
+                    cursor_x += advance as f64;
+                    prev_char = Some(ch);
+                }
+            }
+        }
+
         pub fn char_width(&self, ch: char) -> f64 {
             let font = match &self.font {
                 Some(f) => f,

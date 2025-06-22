@@ -1145,7 +1145,7 @@ impl MachoLoader {
                 }
                 BIND_OPCODE_ADD_ADDR_ULEB => {
                     let (offset, consumed) = self.read_uleb128(&data[p..]);
-                    segment_offset += offset;
+                    segment_offset = segment_offset.wrapping_add(offset);
                     p += consumed;
                 }
                 BIND_OPCODE_DO_BIND => {

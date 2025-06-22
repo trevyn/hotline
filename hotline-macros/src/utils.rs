@@ -24,6 +24,21 @@ pub mod types {
                 let elems: Vec<_> = type_tuple.elems.iter().map(type_to_string).collect();
                 format!("tuple_{}", elems.join("_comma_"))
             }
+            Type::TraitObject(trait_obj) => {
+                // For trait objects like `dyn Trait`, we'll use a simplified representation
+                let mut result = String::from("dyn");
+                for (i, bound) in trait_obj.bounds.iter().enumerate() {
+                    if i > 0 {
+                        result.push_str("_plus_");
+                    }
+                    if let syn::TypeParamBound::Trait(trait_bound) = bound {
+                        result.push_str("_");
+                        result
+                            .push_str(&path_to_string(&syn::TypePath { qself: None, path: trait_bound.path.clone() }));
+                    }
+                }
+                result
+            }
             _ => abort_call_site!(format!("Unsupported type in hotline macro: {:?}", ty)),
         }
     }
@@ -126,6 +141,7 @@ pub mod types {
             Type::Slice(ts) => contains_external_type(&ts.elem),
             Type::Array(ta) => contains_external_type(&ta.elem),
             Type::Tuple(tt) => tt.elems.iter().any(contains_external_type),
+            Type::TraitObject(_) => false, // Trait objects are not considered external
             _ => false,
         }
     }
@@ -147,6 +163,7 @@ pub mod types {
             Type::Slice(_) => true, // slices are reference types
             Type::Array(ta) => contains_reference(&ta.elem),
             Type::Tuple(tt) => tt.elems.iter().any(contains_reference),
+            Type::TraitObject(_) => false, // Trait objects by themselves are not references (but &dyn Trait would be)
             _ => false,
         }
     }

@@ -1,11 +1,10 @@
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton;
-use sdl3::pixels::{Color, PixelFormat};
-use sdl3::render::BlendMode;
-use std::convert::TryFrom;
 
 use std::time::{Duration, Instant};
+
+pub mod gpu_renderer;
 
 #[cfg(target_os = "linux")]
 use png::{BitDepth, ColorType, Encoder};
@@ -197,9 +196,10 @@ impl hotline::EventHandler for ChatInterfaceAdapter {
 }
 
 impl ChatInterfaceAdapter {
-    fn render_gpu(&mut self, gpu_renderer: &mut GPURenderer) {
-        self.chat.generate_commands(gpu_renderer);
-    }
+    // TODO: Update to use new GPU API
+    // fn render_gpu(&mut self, gpu_renderer: &mut GpuRenderer) {
+    //     self.chat.generate_commands(gpu_renderer);
+    // }
 }
 
 impl StarfieldAdapter {
@@ -235,11 +235,8 @@ hotline::object!({
         window_manager: Option<WindowManager>,
         #[serde(skip)]
         event_handlers: Vec<Box<dyn hotline::EventHandler>>,
-        gpu_renderer: Option<GPURenderer>,
         #[serde(skip)]
-        gpu_atlases: Vec<AtlasData>,
-        #[serde(skip)]
-        gpu_commands: Vec<RenderCommand>,
+        gpu_renderer: Option<gpu_renderer::GpuRenderer>,
         #[serde(skip)]
         gpu_texture_cache: std::collections::HashMap<u32, Vec<u8>>,
         fps_counter: Option<TextRenderer>,
@@ -271,13 +268,8 @@ hotline::object!({
 
     impl Application {
         // Helper to transform mouse coordinates
-        fn transform_mouse_coords(
-            &self,
-            x: f32,
-            y: f32,
-            canvas: &sdl3::render::Canvas<sdl3::video::Window>,
-        ) -> (f64, f64) {
-            let (win_w, win_h) = canvas.window().size();
+        fn transform_mouse_coords(&self, x: f32, y: f32, window: &sdl3::video::Window) -> (f64, f64) {
+            let (win_w, win_h) = window.size();
             let scale_x = self.width as f64 / win_w as f64;
             let scale_y = self.height as f64 / win_h as f64;
             // Transform to texture coordinates
@@ -296,12 +288,12 @@ hotline::object!({
             }
 
             // Create GPU renderer
-            self.gpu_renderer = Some(GPURenderer::new());
+            // GPU renderer will be initialized when window is available
 
-            // Create a shared white pixel atlas for all objects
+            // Create a shared white pixel texture for all objects
             if let Some(ref mut gpu) = self.gpu_renderer {
                 let white_pixel = vec![255u8, 255, 255, 255]; // RGBA
-                let id = gpu.register_atlas(white_pixel, 1, 1, AtlasFormat::RGBA);
+                let id = gpu.create_texture(&white_pixel, 1, 1, sdl3::gpu::TextureFormat::R8g8b8a8Unorm)?;
                 self.white_pixel_atlas_id = Some(id);
             }
 
@@ -312,7 +304,8 @@ hotline::object!({
 
                 // Set up GPU rendering
                 if let Some(ref mut gpu) = self.gpu_renderer {
-                    wm.setup_gpu_rendering(gpu);
+                    // TODO: Update to use new GPU API
+                    // wm.setup_gpu_rendering(gpu);
                 }
             }
 
@@ -405,12 +398,13 @@ hotline::object!({
                 fps.initialize();
                 fps.set_x(10.0);
                 fps.set_y(10.0);
-                fps.set_color((255, 0, 255, 0)); // Green color (ABGR)
+                fps.set_color((0, 255, 0, 255)); // Green color (tuple order is B,G,R,A)
                 fps.set_text("FPS: 0".to_string());
 
                 // Register GPU atlas for FPS counter
                 if let Some(ref mut gpu) = self.gpu_renderer {
-                    fps.register_atlas(gpu);
+                    // TODO: Update to use new GPU API
+                    // fps.register_atlas(gpu);
                 }
             }
 
@@ -438,9 +432,9 @@ hotline::object!({
                 r_ref.initialize(200.0, 400.0, 200.0, 370.0);
                 gc.set_rect(r_ref);
 
-                // Register GPU atlases once during initialization
+                // Set up GPU rendering
                 if let Some(ref mut gpu) = self.gpu_renderer {
-                    gc.register_atlases(gpu);
+                    gc.setup_gpu_rendering(gpu);
                 }
             }
 
@@ -452,9 +446,9 @@ hotline::object!({
             r_ref.initialize(500.0, 100.0, 400.0, 300.0);
             starfield.set_rect(r_ref);
 
-            // Register GPU atlases
+            // Set up GPU rendering
             if let Some(ref mut gpu) = self.gpu_renderer {
-                starfield.register_atlases(gpu);
+                starfield.setup_gpu_rendering(gpu);
             }
 
             // Store a clone for Application's reference
@@ -469,6 +463,10 @@ hotline::object!({
         pub fn run(&mut self) -> Result<(), String> {
             // Allow joystick events even when window is not in focus
             sdl3::hint::set("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
+
+            // Enable GPU driver
+            eprintln!("[Application] Setting SDL_RENDER_DRIVER hint to 'gpu'");
+            sdl3::hint::set("SDL_RENDER_DRIVER", "gpu");
 
             let sdl_context = sdl3::init().map_err(|e| e.to_string())?;
             let video_subsystem = sdl_context.video().map_err(|e| e.to_string())?;
@@ -488,74 +486,22 @@ hotline::object!({
                 .build()
                 .map_err(|e| e.to_string())?;
 
-            let mut canvas = sdl3::render::create_renderer(window, None).map_err(|e| e.to_string())?;
-
-            // Query the native texture format from SDL3
-            use sdl3::sys::everything::SDL_PROP_RENDERER_TEXTURE_FORMATS_POINTER;
-            use sdl3::sys::properties::{SDL_GetPointerProperty, SDL_PropertiesID};
-            use sdl3::sys::render::SDL_GetRendererProperties;
-
-            let renderer_ptr = canvas.raw();
-            let props_id: SDL_PropertiesID = unsafe { SDL_GetRendererProperties(renderer_ptr) };
-
-            let formats_ptr = unsafe {
-                SDL_GetPointerProperty(props_id, SDL_PROP_RENDERER_TEXTURE_FORMATS_POINTER, std::ptr::null_mut())
-            };
-
-            let mut native_format_u32: u32 = 0x16362004; // SDL_PIXELFORMAT_ARGB8888
-
-            if !formats_ptr.is_null() {
-                let formats = unsafe { formats_ptr as *const u32 };
-                eprintln!("Native texture formats:");
-
-                // Read formats until we hit 0 (SDL_PIXELFORMAT_UNKNOWN)
-                let mut i = 0;
-                loop {
-                    let format = unsafe { *formats.offset(i) };
-                    if format == 0 {
-                        break;
-                    }
-
-                    // Convert format code to name
-                    let format_name = match format {
-                        0x15151002 => "SDL_PIXELFORMAT_RGB565",
-                        0x16161804 => "SDL_PIXELFORMAT_ARGB8888",
-                        0x16261804 => "SDL_PIXELFORMAT_RGBA8888",
-                        0x16362004 => "SDL_PIXELFORMAT_ABGR8888",
-                        0x16462004 => "SDL_PIXELFORMAT_BGRA8888",
-                        _ => "Unknown format",
-                    };
-
-                    eprintln!("  Format {}: {} (0x{:08x})", i, format_name, format);
-                    i += 1;
+            // Initialize GPU renderer with the window
+            match gpu_renderer::GpuRenderer::new(&window) {
+                Ok(renderer) => {
+                    self.gpu_renderer = Some(renderer);
                 }
-
-                // Use the first format as our native format
-                if i > 0 {
-                    native_format_u32 = unsafe { *formats };
-                    eprintln!("Using native format: 0x{:08x}", native_format_u32);
+                Err(e) => {
+                    return Err(format!("Failed to initialize GPU renderer: {}", e));
                 }
-            } else {
-                eprintln!("Could not query native texture formats, using ARGB8888");
             }
 
-            let texture_creator = canvas.texture_creator();
             let mut event_pump = sdl_context.event_pump().map_err(|e| e.to_string())?;
-            video_subsystem.text_input().start(canvas.window());
+            video_subsystem.text_input().start(&window);
 
-            let (dw, dh) = canvas.output_size().map_err(|e| e.to_string())?;
+            let (dw, dh) = window.size_in_pixels();
             self.width = dw;
             self.height = dh;
-
-            // Create texture at scaled resolution with render target support
-            let mut texture = texture_creator
-                .create_texture_target(
-                    PixelFormat::try_from(native_format_u32 as i64).unwrap(),
-                    self.width / self.pixel_multiple,
-                    self.height / self.pixel_multiple,
-                )
-                .map_err(|e| e.to_string())?;
-            texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
 
             // Check for connected game controllers
             let controllers = game_controller_subsystem.gamepads().map_err(|e| e.to_string())?;
@@ -579,13 +525,6 @@ hotline::object!({
                 }
             }
 
-            #[cfg(target_os = "linux")]
-            {
-                self.run_linux_test(&mut texture)?;
-                return Ok(());
-            }
-
-            #[cfg_attr(target_os = "linux", allow(unreachable_code))]
             'running: loop {
                 // Track frame time
                 let now = std::time::Instant::now();
@@ -615,9 +554,6 @@ hotline::object!({
                     }
                 }
 
-                canvas.set_draw_color(Color::RGB(30, 30, 30));
-                canvas.clear();
-
                 // Handle events
                 for event in event_pump.poll_iter() {
                     match event {
@@ -626,20 +562,12 @@ hotline::object!({
                         }
                         Event::Window { win_event: sdl3::event::WindowEvent::Resized(_, _), .. }
                         | Event::Window { win_event: sdl3::event::WindowEvent::PixelSizeChanged(_, _), .. } => {
-                            let (dw, dh) = canvas.window().size_in_pixels();
+                            let (dw, dh) = window.size_in_pixels();
                             self.width = dw;
                             self.height = dh;
-                            texture = texture_creator
-                                .create_texture_target(
-                                    PixelFormat::try_from(native_format_u32 as i64).unwrap(),
-                                    self.width / self.pixel_multiple,
-                                    self.height / self.pixel_multiple,
-                                )
-                                .map_err(|e| e.to_string())?;
-                            texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
-                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &canvas);
+                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &window);
 
                             let mut consumed = false;
                             // Dispatch to event handlers in order
@@ -685,7 +613,7 @@ hotline::object!({
                             }
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
-                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &canvas);
+                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &window);
 
                             // TODO: Add right-click support to EventHandler trait if needed
 
@@ -696,7 +624,7 @@ hotline::object!({
                             self.mouse_y = y as f64;
                         }
                         Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
-                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &canvas);
+                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &window);
 
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_up(adj_x, adj_y);
@@ -714,7 +642,7 @@ hotline::object!({
                             self.mouse_y = y as f64;
                         }
                         Event::MouseMotion { x, y, .. } => {
-                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &canvas);
+                            let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &window);
 
                             if let Some(ref mut wm) = self.window_manager {
                                 wm.handle_mouse_motion(adj_x, adj_y);
@@ -734,7 +662,7 @@ hotline::object!({
                             self.mouse_y = y as f64;
                         }
                         Event::MouseWheel { y, .. } => {
-                            let (win_w, win_h) = canvas.window().size();
+                            let (win_w, win_h) = window.size();
                             let scale_x = self.width as f64 / win_w as f64;
                             let scale_y = self.height as f64 / win_h as f64;
                             let adj_x = self.mouse_x * scale_x / self.pixel_multiple as f64;
@@ -775,15 +703,6 @@ hotline::object!({
                                         zoom.set_text(format!("{}x", self.pixel_multiple));
                                     }
                                     self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
-                                    // Recreate texture at new size
-                                    texture = texture_creator
-                                        .create_texture_target(
-                                            PixelFormat::try_from(native_format_u32 as i64).unwrap(),
-                                            self.width / self.pixel_multiple,
-                                            self.height / self.pixel_multiple,
-                                        )
-                                        .map_err(|e| e.to_string())?;
-                                    texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                                 }
                                 Keycode::Minus | Keycode::KpMinus if cmd && self.pixel_multiple > 1 => {
                                     self.pixel_multiple -= 1;
@@ -791,15 +710,6 @@ hotline::object!({
                                         zoom.set_text(format!("{}x", self.pixel_multiple));
                                     }
                                     self.zoom_display_until = Some(Instant::now() + Duration::from_secs(1));
-                                    // Recreate texture at new size
-                                    texture = texture_creator
-                                        .create_texture_target(
-                                            PixelFormat::try_from(native_format_u32 as i64).unwrap(),
-                                            self.width / self.pixel_multiple,
-                                            self.height / self.pixel_multiple,
-                                        )
-                                        .map_err(|e| e.to_string())?;
-                                    texture.set_scale_mode(sdl3::render::ScaleMode::Nearest);
                                 }
                                 Keycode::R => {
                                     // Check if any handler is focused (i.e., editing)
@@ -860,7 +770,7 @@ hotline::object!({
                         }
                         Event::DropFile { filename, .. } => {
                             if filename.to_lowercase().ends_with(".png") {
-                                let (win_w, win_h) = canvas.window().size();
+                                let (win_w, win_h) = window.size();
                                 let scale_x = self.width as f64 / win_w as f64;
                                 let scale_y = self.height as f64 / win_h as f64;
                                 let adj_x = self.mouse_x * scale_x / self.pixel_multiple as f64;
@@ -991,383 +901,78 @@ hotline::object!({
                     // (This is a bit hacky but necessary due to the split architecture)
                 }
 
-                // Clear GPU commands once before all objects render
+                // Begin GPU frame
                 if let Some(gpu) = &mut self.gpu_renderer {
-                    gpu.clear_commands();
+                    // Begin frame
+                    gpu.begin_frame();
+                } else {
+                    // No GPU renderer
                 }
 
-                // GPU render window manager objects first
-                if let (Some(gpu), Some(wm)) = (&mut self.gpu_renderer, &mut self.window_manager) {
-                    wm.render_gpu(gpu);
-                }
-
-                // GPU render starfield
-                if let (Some(gpu), Some(sf)) = (&mut self.gpu_renderer, &mut self.starfield) {
-                    sf.generate_commands(gpu);
-                }
-
-                // GPU render game controller
-                if let (Some(gpu), Some(gc)) = (&mut self.gpu_renderer, &mut self.game_controller) {
-                    // Only generate commands, don't re-register atlases every frame
-                    gc.generate_commands(gpu);
-                }
-
-                // GPU render FPS counter
-                if let (Some(gpu), Some(fps)) = (&mut self.gpu_renderer, &mut self.fps_counter) {
-                    fps.generate_commands(gpu);
-                }
-
-                // GPU render chat interface - DISABLED to isolate segfault
-                // if let (Some(gpu), Some(chat)) = (&mut self.gpu_renderer, &mut self.chat_interface) {
-                //     chat.generate_commands(gpu);
-                // }
-
-                // Process GPU rendering
+                // Render objects using new GPU API
                 if let Some(gpu) = &mut self.gpu_renderer {
-                    // Clear commands AND atlases from previous frame
-                    self.gpu_commands.clear();
-                    self.gpu_atlases.clear();
+                    // Render WindowManager rects
+                    if let Some(wm) = &mut self.window_manager {
+                        // Directly render rects from WindowManager
+                        for i in 0..wm.get_rects_count() {
+                            if let Some(rect) = wm.get_rect_at(i) {
+                                let (x, y, w, h) = rect.bounds();
 
-                    // Debug: print if GPU renderer has commands
-                    let gpu_cmd_count = gpu.get_commands().len();
-                    if gpu_cmd_count > 0 {
-                        static mut LAST_COUNT: usize = 0;
-                        unsafe {
-                            if gpu_cmd_count != LAST_COUNT {
-                                eprintln!("GPU renderer has {} commands", gpu_cmd_count);
-                                LAST_COUNT = gpu_cmd_count;
+                                // Generate color based on position and time (matching Rect's render method)
+                                let t = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_millis();
+                                let r = (x as u32 % 255) as f32 / 255.0;
+                                let g = (y as u32 % 128) as f32 / 255.0;
+                                let b = (t / 6 % 255) as f32 / 255.0;
+                                let a = 1.0;
+
+                                gpu.add_solid_rect(x as f32, y as f32, w as f32, h as f32, [r, g, b, a]);
                             }
                         }
                     }
 
-                    // Only collect new atlases we haven't seen before
-                    let gpu_atlases = gpu.get_atlases();
-                    for atlas in gpu_atlases {
-                        // Check if we already have this atlas
-                        if !self.gpu_atlases.iter().any(|a| a.id == atlas.id) {
-                            self.gpu_atlases.push(atlas);
-                        }
+                    // Render GameController
+                    if let Some(gc) = &mut self.game_controller {
+                        gc.render_gpu(gpu);
                     }
 
-                    // Collect commands for this frame
-                    let commands = gpu.get_commands();
-                    // Count line commands for debugging
-                    static mut LAST_LINE_COUNT: usize = 0;
-                    let line_count = commands.iter().filter(|c| matches!(c, RenderCommand::Line { .. })).count();
-                    unsafe {
-                        if line_count != LAST_LINE_COUNT {
-                            eprintln!("Line commands: {}", line_count);
-                            LAST_LINE_COUNT = line_count;
-                        }
-                    }
-                    for command in commands {
-                        self.gpu_commands.push(command.clone());
+                    // Render Starfield
+                    if let Some(sf) = &mut self.starfield {
+                        sf.render_gpu(gpu);
                     }
 
-                    // Clear GPU renderer's commands after collecting them
-                    gpu.clear_commands();
-
-                    // Render to texture
-                    let native_format = native_format_u32;
-                    let self_ptr = self as *mut Self;
-                    canvas
-                        .with_texture_canvas(&mut texture, |texture_canvas| {
-                            texture_canvas.set_draw_color(Color::RGB(30, 30, 30));
-                            texture_canvas.clear();
-
-                            // Execute the received commands to texture
-                            // Safety: We're borrowing self mutably through the pointer
-                            unsafe {
-                                (*self_ptr).execute_gpu_render(texture_canvas, native_format).unwrap();
-                            }
-                        })
-                        .map_err(|e| e.to_string())?;
-                }
-
-                // Copy texture to window with scaling
-                canvas.set_draw_color(Color::RGB(30, 30, 30));
-                canvas.clear();
-                canvas.copy(&texture, None, None).map_err(|e| e.to_string())?;
-                canvas.present();
-            }
-
-            Ok(())
-        }
-
-        fn render_frame(&mut self, texture: &mut sdl3::render::Texture) -> Result<(), String> {
-            let query = texture.query();
-            let _bw = query.width as i64;
-            let _bh = query.height as i64;
-
-            // Skip texture lock/clear when using GPU-only rendering
-            // texture
-            //     .with_lock(None, |buffer: &mut [u8], pitch: usize| {
-            //         // Clear buffer
-            //         for pixel in buffer.chunks_exact_mut(4) {
-            //             pixel[0] = 30; // B
-            //             pixel[1] = 30; // G
-            //             pixel[2] = 30; // R
-            //             pixel[3] = 255; // A
-            //         }
-
-            //         // NO CPU RENDERING - GPU ONLY
-            //         let _ = (buffer, bw, bh, pitch);
-            //     })
-            //     .map_err(|e| e.to_string())?;
-            Ok(())
-        }
-
-        #[cfg(target_os = "linux")]
-        fn run_linux_test(&mut self, texture: &mut sdl3::render::Texture) -> Result<(), String> {
-            println!("[linux] creating test rects");
-
-            if let Some(ref mut wm) = self.window_manager {
-                wm.handle_mouse_down(50.0, 50.0);
-                wm.handle_mouse_up(250.0, 150.0);
-                wm.handle_mouse_down(300.0, 200.0);
-                wm.handle_mouse_up(450.0, 350.0);
-            }
-
-            println!("[linux] rendering");
-            let q = texture.query();
-            let bw = q.width as i64;
-            let bh = q.height as i64;
-            let mut png_data = vec![0u8; (bw * bh * 4) as usize];
-            texture
-                .with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                    // Clear buffer
-                    for pixel in buffer.chunks_exact_mut(4) {
-                        pixel[0] = 30; // B
-                        pixel[1] = 30; // G
-                        pixel[2] = 30; // R
-                        pixel[3] = 255; // A
+                    // Render ColorWheel
+                    if let Some(cw) = &mut self.color_wheel {
+                        // TODO: Update ColorWheel to use new GPU API
                     }
 
-                    // Render window manager
-                    if let Some(ref mut wm) = self.window_manager {
-                        wm.render(buffer, bw, bh, pitch as i64);
+                    // Render checkboxes
+                    if let Some(cb) = &mut self.autonomy_checkbox {
+                        // TODO: Update Checkbox to use new GPU API
                     }
-
-                    // Render all event handlers
-                    for handler in &mut self.event_handlers {
-                        handler.render(buffer, bw, bh, pitch as i64);
-                    }
-
-                    if let Some(ref mut wheel) = self.color_wheel {
-                        wheel.render(buffer, bw, bh, pitch as i64);
-                    }
-
-                    if let Some(ref mut cb) = self.autonomy_checkbox {
-                        cb.render(buffer, 800, 600, pitch as i64);
+                    if let Some(cb) = &mut self.render_time_checkbox {
+                        // TODO: Update Checkbox to use new GPU API
                     }
 
                     // Render FPS counter
-                    if let Some(ref mut fps) = self.fps_counter {
-                        fps.render(buffer, bw, bh, pitch as i64);
+                    if let Some(fps) = &mut self.fps_counter {
+                        fps.render_gpu(gpu);
                     }
 
-                    for y in 0..bh {
-                        for x in 0..bw {
-                            let src = (y * pitch as i64 + x * 4) as usize;
-                            let dst = (y * bw + x) as usize * 4;
-                            png_data[dst] = buffer[src + 2];
-                            png_data[dst + 1] = buffer[src + 1];
-                            png_data[dst + 2] = buffer[src];
-                            png_data[dst + 3] = buffer[src + 3];
-                        }
+                    // Render code editor through event handler
+                    for handler in &mut self.event_handlers {
+                        // TODO: Update event handlers to support GPU rendering
                     }
-                })
-                .map_err(|e| e.to_string())?;
-
-            println!("[linux] saving test_output.png");
-            save_png("test_output.png", bw as u32, bh as u32, &png_data)?;
-            println!("[linux] image saved");
-            Ok(())
-        }
-
-        pub fn gpu_receive_atlas(&mut self, atlas: AtlasData) -> Result<(), String> {
-            self.gpu_atlases.push(atlas);
-            Ok(())
-        }
-
-        pub fn gpu_receive_command(&mut self, command: RenderCommand) -> Result<(), String> {
-            self.gpu_commands.push(command);
-            Ok(())
-        }
-
-        fn execute_gpu_render(
-            &mut self,
-            canvas: &mut sdl3::render::Canvas<sdl3::video::Window>,
-            native_format_u32: u32,
-        ) -> Result<(), String> {
-            use sdl3::rect::Rect;
-            use std::collections::HashMap;
-
-            // Print once per second instead of every 60 frames
-            let now = std::time::Instant::now();
-            if self.last_gpu_print.is_none() || now.duration_since(self.last_gpu_print.unwrap()).as_secs() >= 1 {
-                self.last_gpu_print = Some(now);
-                let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
-                eprintln!(
-                    "[{}.{}] GPU render: {} atlases, {} commands, FPS: {:.1}",
-                    timestamp.as_secs() % 3600,
-                    timestamp.subsec_millis(),
-                    self.gpu_atlases.len(),
-                    self.gpu_commands.len(),
-                    self.current_fps
-                );
-            }
-
-            let texture_creator = canvas.texture_creator();
-            let mut textures = HashMap::new();
-
-            // Create textures for all atlases
-            for atlas in &self.gpu_atlases {
-                let mut texture = match atlas.format {
-                    AtlasFormat::GrayscaleAlpha => texture_creator
-                        .create_texture_static(
-                            PixelFormat::try_from(native_format_u32 as i64).unwrap(),
-                            atlas.width,
-                            atlas.height,
-                        )
-                        .map_err(|e| e.to_string())?,
-                    AtlasFormat::RGBA => texture_creator
-                        .create_texture_static(
-                            PixelFormat::try_from(native_format_u32 as i64).unwrap(),
-                            atlas.width,
-                            atlas.height,
-                        )
-                        .map_err(|e| e.to_string())?,
-                };
-
-                // Convert atlas data to texture format
-                let rgba_data = match atlas.format {
-                    AtlasFormat::GrayscaleAlpha => {
-                        let mut rgba = vec![0u8; (atlas.width * atlas.height * 4) as usize];
-                        for i in 0..(atlas.width * atlas.height) as usize {
-                            // For font atlases: gray channel contains the glyph coverage
-                            let coverage = atlas.data[i * 2]; // This is the opacity of the glyph
-                            let _alpha = atlas.data[i * 2 + 1]; // Usually 255 for fonts
-
-                            // For ABGR8888 format - use coverage in all channels
-                            rgba[i * 4] = coverage; // A
-                            rgba[i * 4 + 1] = coverage; // B
-                            rgba[i * 4 + 2] = coverage; // G
-                            rgba[i * 4 + 3] = coverage; // R
-                        }
-                        rgba
-                    }
-                    AtlasFormat::RGBA => {
-                        // Convert from RGBA to ABGR
-                        let mut abgr = vec![0u8; atlas.data.len()];
-                        for i in 0..(atlas.width * atlas.height) as usize {
-                            let r = atlas.data[i * 4];
-                            let g = atlas.data[i * 4 + 1];
-                            let b = atlas.data[i * 4 + 2];
-                            let a = atlas.data[i * 4 + 3];
-                            abgr[i * 4] = a; // A
-                            abgr[i * 4 + 1] = b; // B
-                            abgr[i * 4 + 2] = g; // G
-                            abgr[i * 4 + 3] = r; // R
-                        }
-                        abgr
-                    }
-                };
-
-                texture.update(None, &rgba_data, (atlas.width * 4) as usize).map_err(|e| e.to_string())?;
-
-                // Enable blending for text atlases
-                if matches!(atlas.format, AtlasFormat::GrayscaleAlpha) {
-                    texture.set_blend_mode(BlendMode::Blend);
                 }
 
-                textures.insert(atlas.id, texture);
-            }
-
-            // Execute received render commands
-            for command in &self.gpu_commands {
-                match command {
-                    RenderCommand::Atlas { texture_id, src_x, src_y, src_width, src_height, dest_x, dest_y, color } => {
-                        if let Some(texture) = textures.get_mut(texture_id) {
-                            let src_rect = Rect::new(*src_x as i32, *src_y as i32, *src_width, *src_height);
-                            let dst_rect = Rect::new(*dest_x as i32, *dest_y as i32, *src_width, *src_height);
-
-                            // Set texture color modulation
-                            // SDL expects RGB order for set_color_mod regardless of texture format
-                            // The color tuple is (A, B, G, R) - ABGR order in our data
-                            texture.set_color_mod(color.3, color.2, color.1); // R, G, B
-                            texture.set_alpha_mod(color.0); // A
-
-                            canvas.copy(texture, src_rect, dst_rect).map_err(|e| e.to_string())?;
-                        }
-                    }
-                    RenderCommand::Rect { texture_id, dest_x, dest_y, dest_width, dest_height, rotation: _, color } => {
-                        // eprintln!(
-                        //     "  Rect command: id={} pos=({},{}) size=({},{})",
-                        //     texture_id, dest_x, dest_y, dest_width, dest_height
-                        // );
-                        // Skip invalid rectangles
-                        if *dest_width <= 0.0 || *dest_height <= 0.0 {
-                            continue;
-                        }
-
-                        if let Some(texture) = textures.get_mut(texture_id) {
-                            let dst_rect =
-                                Rect::new(*dest_x as i32, *dest_y as i32, *dest_width as u32, *dest_height as u32);
-
-                            // Set texture color modulation
-                            // SDL expects RGB order for set_color_mod regardless of texture format
-                            // The color tuple is (A, B, G, R) - ABGR order in our data
-                            texture.set_color_mod(color.3, color.2, color.1); // R, G, B
-                            texture.set_alpha_mod(color.0); // A
-
-                            // eprintln!("  Drawing rect at {:?}", dst_rect);
-                            canvas.copy(texture, None, dst_rect).map_err(|e| e.to_string())?;
-                        } else {
-                            // eprintln!("  WARNING: Texture {} not found!", texture_id);
-                        }
-                    }
-                    RenderCommand::Line { x1, y1, x2, y2, thickness, color } => {
-                        // Set draw color (ABGR format in our data)
-                        canvas.set_draw_color(Color::RGBA(color.3, color.2, color.1, color.0));
-
-                        // Draw line with thickness by drawing multiple parallel lines
-                        if *thickness <= 1.0 {
-                            canvas
-                                .draw_line(
-                                    sdl3::rect::Point::new(*x1 as i32, *y1 as i32),
-                                    sdl3::rect::Point::new(*x2 as i32, *y2 as i32),
-                                )
-                                .map_err(|e| e.to_string())?;
-                        } else {
-                            // For thicker lines, draw multiple parallel lines
-                            let dx = *x2 - *x1;
-                            let dy = *y2 - *y1;
-                            let len = (dx * dx + dy * dy).sqrt();
-                            if len > 0.0 {
-                                // Calculate perpendicular offset
-                                let px = -dy / len * thickness / 2.0;
-                                let py = dx / len * thickness / 2.0;
-
-                                let half_thick = (*thickness / 2.0).ceil() as i32;
-                                for i in -half_thick..=half_thick {
-                                    let offset = i as f64 / half_thick as f64;
-                                    canvas
-                                        .draw_line(
-                                            sdl3::rect::Point::new(
-                                                (*x1 + px * offset) as i32,
-                                                (*y1 + py * offset) as i32,
-                                            ),
-                                            sdl3::rect::Point::new(
-                                                (*x2 + px * offset) as i32,
-                                                (*y2 + py * offset) as i32,
-                                            ),
-                                        )
-                                        .map_err(|e| e.to_string())?;
-                                }
-                            }
-                        }
-                    }
+                // Render using SDL3 GPU API
+                if let Some(gpu) = &mut self.gpu_renderer {
+                    // Render frame
+                    gpu.render_frame(&window)?;
+                } else {
+                    eprintln!("[Application] ERROR: gpu_renderer is None during render!");
                 }
             }
 

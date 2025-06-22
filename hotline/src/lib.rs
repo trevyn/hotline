@@ -12,6 +12,27 @@ pub use serde_json;
 
 pub mod object_serde;
 
+// GPU rendering trait that objects can use
+pub trait GpuRenderingContext {
+    fn create_rgba_texture(&mut self, data: &[u8], width: u32, height: u32) -> Result<u32, String>;
+    fn add_textured_rect(&mut self, x: f32, y: f32, w: f32, h: f32, tex_id: u32, color: [f32; 4]);
+    fn add_textured_rect_with_coords(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        tex_id: u32,
+        u0: f32,
+        v0: f32,
+        u1: f32,
+        v1: f32,
+        color: [f32; 4],
+    );
+    fn add_solid_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]);
+    fn add_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: [f32; 4]);
+}
+
 // Re-export libloading for objects to use
 pub use libloading;
 

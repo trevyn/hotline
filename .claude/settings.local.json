@@ -18,15 +18,19 @@
       "Bash(touch:*)",
       "Bash(sed:*)",
       "Bash(cargo fmt:*)",
-      "mcp__ide__getDiagnostics",
       "Bash(otool:*)",
       "Bash(size:*)",
       "Bash(./target/release/test_load:*)",
       "Bash(./target/release/test_symbol:*)",
       "Bash(./runtime/target/release/test_symbol:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "WebFetch(domain:wiki.libsdl.org)",
+      "Bash(RUSTFLAGS=\"-Z macro-backtrace\" cargo +nightly build)",
+      "Bash(cargo run:*)"
     ],
-    "deny": []
+    "deny": [
+          "Bash(git checkout:*)"
+    ]
   },
   "enableAllProjectMcpServers": false
 }
