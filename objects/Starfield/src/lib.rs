@@ -27,8 +27,9 @@ hotline::object!({
         camera_up: (f32, f32, f32),
 
         // Control inputs
-        forward_accel: f32,          // RT - LT
+        forward_accel: f32,          // LT - RT (LT forward, RT backward)
         strafe_velocity: (f32, f32), // Left stick X/Y
+        six_dof_mode: bool,          // True for space sim, false for FPS-style
 
         // Rendering
         rect: Option<Rect>,
@@ -92,11 +93,14 @@ hotline::object!({
             // Calculate initial camera basis vectors
             self.update_camera_basis();
 
+            // Control mode
+            self.six_dof_mode = true; // Default to 6DOF space movement
+
             // Movement parameters
-            self.acceleration_multiplier = 50.0;
-            self.strafe_speed = 30.0;
-            self.max_velocity = 200.0;
-            self.damping = 0.95; // Velocity damping per frame
+            self.acceleration_multiplier = 40.0; // Slightly reduced for better control
+            self.strafe_speed = 25.0; // Slightly reduced for better control
+            self.max_velocity = 300.0; // Increased for more exciting movement
+            self.damping = 0.98; // Less damping for more responsive feel
 
             // Visual parameters
             self.fov = std::f32::consts::PI / 3.0; // 60 degrees
@@ -161,10 +165,11 @@ hotline::object!({
                 "Pitch: 0.0°",
                 "",
                 "-- Movement --",
-                "Acceleration: 50.0",
-                "Strafe Speed: 30.0",
-                "Max Velocity: 200.0",
-                "Damping: 0.95",
+                "Mode: 6DOF Space",
+                "Acceleration: 40.0",
+                "Strafe Speed: 25.0",
+                "Max Velocity: 300.0",
+                "Damping: 0.98",
                 "",
                 "-- Visual --",
                 "FOV: 60°",
@@ -175,7 +180,7 @@ hotline::object!({
                 "-- Star Field --",
                 "Star Count: 0",
                 "Density: 0.001",
-                "Spawn Radius: 500",
+                "Spawn Radius: 300",
             ];
 
             for name in param_names.iter() {
@@ -200,14 +205,27 @@ hotline::object!({
             let yaw = self.camera_yaw;
             let pitch = self.camera_pitch;
 
-            // Calculate forward vector (default looking down -Z)
-            self.camera_forward = (yaw.sin() * pitch.cos(), -pitch.sin(), -yaw.cos() * pitch.cos());
+            // Calculate forward vector using standard FPS camera math
+            // Yaw rotates around Y axis, pitch rotates around X axis
+            self.camera_forward = (
+                -yaw.sin() * pitch.cos(), // X: -sin(yaw) * cos(pitch)
+                pitch.sin(),              // Y: sin(pitch)
+                -yaw.cos() * pitch.cos(), // Z: -cos(yaw) * cos(pitch)
+            );
 
-            // Right vector (perpendicular to forward and world up)
-            self.camera_right = (yaw.cos(), 0.0, yaw.sin());
+            // Right vector is perpendicular to forward in XZ plane
+            self.camera_right = (
+                yaw.cos(),  // X: cos(yaw)
+                0.0,        // Y: 0 (always horizontal)
+                -yaw.sin(), // Z: -sin(yaw)
+            );
 
-            // Up vector (cross product of right and forward)
-            self.camera_up = (-yaw.sin() * pitch.sin(), pitch.cos(), yaw.cos() * pitch.sin());
+            // Up vector via cross product: up = right × forward
+            self.camera_up = (
+                self.camera_right.1 * self.camera_forward.2 - self.camera_right.2 * self.camera_forward.1,
+                self.camera_right.2 * self.camera_forward.0 - self.camera_right.0 * self.camera_forward.2,
+                self.camera_right.0 * self.camera_forward.1 - self.camera_right.1 * self.camera_forward.0,
+            );
         }
 
         // Spawn initial stars in a sphere around origin
@@ -244,10 +262,10 @@ hotline::object!({
         ) {
             // Store control inputs
             self.strafe_velocity = (left_x, left_y);
-            self.forward_accel = right_trigger - left_trigger;
+            self.forward_accel = left_trigger - right_trigger; // Swapped: LT forward, RT backward
 
             // Update camera rotation from right stick
-            let rotation_speed = 0.03;
+            let rotation_speed = 0.015; // Doubled for more responsive feel
             self.camera_yaw += right_x * rotation_speed;
             self.camera_pitch -= right_y * rotation_speed; // Invert for intuitive control
 
@@ -302,6 +320,10 @@ hotline::object!({
 
         pub fn toggle_panel(&mut self) {
             self.panel_visible = !self.panel_visible;
+        }
+
+        pub fn toggle_movement_mode(&mut self) {
+            self.six_dof_mode = !self.six_dof_mode;
         }
 
         fn get_param_value(&self, index: usize) -> Option<f32> {
@@ -365,13 +387,32 @@ hotline::object!({
             let accel_y = self.camera_forward.1 * self.forward_accel * self.acceleration_multiplier;
             let accel_z = self.camera_forward.2 * self.forward_accel * self.acceleration_multiplier;
 
-            // Apply strafe movement
-            let strafe_x = self.camera_right.0 * self.strafe_velocity.0 * self.strafe_speed
-                + self.camera_up.0 * self.strafe_velocity.1 * self.strafe_speed;
-            let strafe_y = self.camera_right.1 * self.strafe_velocity.0 * self.strafe_speed
-                + self.camera_up.1 * self.strafe_velocity.1 * self.strafe_speed;
-            let strafe_z = self.camera_right.2 * self.strafe_velocity.0 * self.strafe_speed
-                + self.camera_up.2 * self.strafe_velocity.1 * self.strafe_speed;
+            // Apply strafe movement based on mode
+            let (strafe_x, strafe_y, strafe_z) = if self.six_dof_mode {
+                // 6DOF space movement
+                // Left stick X: strafe left/right
+                // Left stick Y: strafe up/down (vertical movement)
+                (
+                    self.camera_right.0 * self.strafe_velocity.0 * self.strafe_speed
+                        + self.camera_up.0 * -self.strafe_velocity.1 * self.strafe_speed,
+                    self.camera_right.1 * self.strafe_velocity.0 * self.strafe_speed
+                        + self.camera_up.1 * -self.strafe_velocity.1 * self.strafe_speed,
+                    self.camera_right.2 * self.strafe_velocity.0 * self.strafe_speed
+                        + self.camera_up.2 * -self.strafe_velocity.1 * self.strafe_speed,
+                )
+            } else {
+                // FPS-style movement
+                // Left stick X: strafe left/right
+                // Left stick Y: move forward/back
+                (
+                    self.camera_right.0 * self.strafe_velocity.0 * self.strafe_speed
+                        + self.camera_forward.0 * -self.strafe_velocity.1 * self.strafe_speed,
+                    self.camera_right.1 * self.strafe_velocity.0 * self.strafe_speed
+                        + self.camera_forward.1 * -self.strafe_velocity.1 * self.strafe_speed,
+                    self.camera_right.2 * self.strafe_velocity.0 * self.strafe_speed
+                        + self.camera_forward.2 * -self.strafe_velocity.1 * self.strafe_speed,
+                )
+            };
 
             // Update velocity
             self.camera_velocity.0 += (accel_x + strafe_x) * dt;
@@ -414,8 +455,14 @@ hotline::object!({
                 self.param_displays[4].set_text(format!("Yaw: {:.1}°", self.camera_yaw.to_degrees()));
                 self.param_displays[5].set_text(format!("Pitch: {:.1}°", self.camera_pitch.to_degrees()));
 
-                if self.param_displays.len() > 19 {
-                    self.param_displays[19].set_text(format!("Star Count: {}", self.stars.len()));
+                // Update movement mode display
+                if self.param_displays.len() > 8 {
+                    self.param_displays[8]
+                        .set_text(format!("Mode: {}", if self.six_dof_mode { "6DOF Space" } else { "FPS Style" }));
+                }
+
+                if self.param_displays.len() > 21 {
+                    self.param_displays[21].set_text(format!("Star Count: {}", self.stars.len()));
                 }
             }
 

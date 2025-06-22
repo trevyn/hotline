@@ -125,6 +125,12 @@ struct StarfieldAdapter {
     starfield: Starfield,
 }
 
+impl StarfieldAdapter {
+    fn starfield_mut(&mut self) -> &mut Starfield {
+        &mut self.starfield
+    }
+}
+
 impl ChatInterfaceAdapter {
     fn new(chat: ChatInterface) -> Self {
         Self { chat }
@@ -438,13 +444,10 @@ hotline::object!({
                 }
             }
 
-            // Create starfield
+            // Create starfield (will be sized to full window in run())
             let mut starfield = Starfield::new();
             starfield.initialize();
-            let rect = Rect::new();
-            let mut r_ref = rect.clone();
-            r_ref.initialize(500.0, 100.0, 400.0, 300.0);
-            starfield.set_rect(r_ref);
+            // Don't set rect here - will be set to full window size in run()
 
             // Set up GPU rendering
             if let Some(ref mut gpu) = self.gpu_renderer {
@@ -502,6 +505,14 @@ hotline::object!({
             let (dw, dh) = window.size_in_pixels();
             self.width = dw;
             self.height = dh;
+
+            // Set starfield to full window size
+            if let Some(ref mut sf) = self.starfield {
+                let rect = Rect::new();
+                let mut r_ref = rect.clone();
+                r_ref.initialize(0.0, 0.0, (dw / self.pixel_multiple) as f64, (dh / self.pixel_multiple) as f64);
+                sf.set_rect(r_ref);
+            }
 
             // Check for connected game controllers
             let controllers = game_controller_subsystem.gamepads().map_err(|e| e.to_string())?;
@@ -565,6 +576,19 @@ hotline::object!({
                             let (dw, dh) = window.size_in_pixels();
                             self.width = dw;
                             self.height = dh;
+
+                            // Update starfield to new window size
+                            if let Some(ref mut sf) = self.starfield {
+                                let rect = Rect::new();
+                                let mut r_ref = rect.clone();
+                                r_ref.initialize(
+                                    0.0,
+                                    0.0,
+                                    (dw / self.pixel_multiple) as f64,
+                                    (dh / self.pixel_multiple) as f64,
+                                );
+                                sf.set_rect(r_ref);
+                            }
                         }
                         Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
                             let (adj_x, adj_y) = self.transform_mouse_coords(x, y, &window);
@@ -732,6 +756,15 @@ hotline::object!({
                                     // Toggle starfield parameter panel
                                     if let Some(ref mut sf) = self.starfield {
                                         sf.toggle_panel();
+                                    }
+                                }
+                                Keycode::M => {
+                                    // Toggle movement mode
+                                    let editing = self.event_handlers.iter().any(|h| h.is_focused());
+                                    if !editing {
+                                        if let Some(ref mut sf) = self.starfield {
+                                            sf.toggle_movement_mode();
+                                        }
                                     }
                                 }
                                 Keycode::Minus | Keycode::KpMinus => {
