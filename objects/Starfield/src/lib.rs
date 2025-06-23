@@ -33,7 +33,8 @@ hotline::object!({
         // Code posters
         code_posters: Vec<CodePoster>,
         all_source_files: Vec<PathBuf>, // All discovered source files
-        poster_text_renderers: HashMap<usize, Vec<TextRenderer>>, // Poster index -> text renderers
+        cpu_text_renderer: Option<CpuTextRenderer>,
+        line_texture_cache: HashMap<u64, (u32, f32, f32)>, // hash -> (tex_id, width, height)
 
         // Camera state
         camera_pos: (f32, f32, f32),      // Camera position in world space
@@ -157,7 +158,6 @@ hotline::object!({
             // Clear existing stars and posters
             self.stars.clear();
             self.code_posters.clear();
-            self.poster_text_renderers.clear();
 
             // Initialize camera at origin looking down -Z
             self.camera_pos = (0.0, 0.0, 0.0);
@@ -219,6 +219,13 @@ hotline::object!({
             if let Some(registry) = self.get_registry() {
                 ::hotline::set_library_registry(registry);
             }
+
+            // Create CPU text renderer
+            let mut cpu_text_renderer = CpuTextRenderer::new();
+            cpu_text_renderer.initialize();
+            self.cpu_text_renderer = Some(cpu_text_renderer);
+            self.line_texture_cache.clear();
+
             let mut display = TextRenderer::new();
             display.set_text("Speed: 0.0".to_string());
             display.set_color((255, 255, 255, 255));
@@ -1244,7 +1251,7 @@ hotline::object!({
 
             // Render each visible poster
             for (idx, view_z, screen_x, screen_y) in poster_render_data {
-                let poster_start = std::time::Instant::now();
+                let _poster_start = std::time::Instant::now();
                 let poster = &self.code_posters[idx];
 
                 // Calculate poster size based on distance
@@ -1301,124 +1308,90 @@ hotline::object!({
                     border_color,
                 );
 
-                // Create or update text renderers for this poster
-                if !self.poster_text_renderers.contains_key(&idx) {
-                    self.poster_text_renderers.insert(idx, Vec::new());
-                }
-
-                let text_renderers = self.poster_text_renderers.get_mut(&idx).unwrap();
-
-                // Render file path as title
-                let _title_scale = (scale as f32 / 20.0).clamp(0.5, 2.0);
+                // Calculate line height and opacity
+                let line_height = 14.0 * scale as f64 / 20.0;
+                let opacity = (1.0 - view_z / self.max_poster_distance) as f32;
                 let title_y = screen_y - poster_height as f64 / 2.0 + 5.0;
 
-                if text_renderers.is_empty() {
-                    let new_start = std::time::Instant::now();
-                    let mut title_renderer = TextRenderer::new();
-                    title_renderer.set_text(poster.display_name.clone());
-                    title_renderer.set_color(poster.color);
-                    text_renderers.push(title_renderer);
-                    let new_elapsed = new_start.elapsed();
-                    if new_elapsed.as_micros() > 500 {
-                        eprintln!(
-                            "WARNING: TextRenderer::new for title '{}' took {}μs (>500μs budget)",
-                            poster.display_name,
-                            new_elapsed.as_micros()
-                        );
-                    }
-                }
+                // Render title
+                let title_hash = {
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    std::hash::Hash::hash(&poster.display_name, &mut hasher);
+                    std::hash::Hash::hash(&poster.color, &mut hasher);
+                    std::hash::Hasher::finish(&hasher)
+                };
 
-                let title_render_start = std::time::Instant::now();
-                text_renderers[0].set_x(screen_x - poster_width as f64 / 2.0 + 5.0);
-                text_renderers[0].set_y(title_y);
-                text_renderers[0].render_gpu(gpu_renderer);
-                let title_render_elapsed = title_render_start.elapsed();
-                if title_render_elapsed.as_micros() > 500 {
-                    eprintln!("WARNING: title render_gpu took {}μs (>500μs budget)", title_render_elapsed.as_micros());
-                }
+                let (title_tex_id, title_width, title_height) = if let Some(&cached) =
+                    self.line_texture_cache.get(&title_hash)
+                {
+                    cached
+                } else {
+                    let (rgba_data, w, h) =
+                        self.cpu_text_renderer.as_ref().unwrap().render_line(poster.display_name.clone(), poster.color);
+                    match gpu_renderer.create_rgba_texture(&rgba_data, w, h) {
+                        Ok(tex_id) => {
+                            self.line_texture_cache.insert(title_hash, (tex_id, w as f32, h as f32));
+                            (tex_id, w as f32, h as f32)
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to create texture for title: {}", e);
+                            continue;
+                        }
+                    }
+                };
+
+                gpu_renderer.add_textured_rect(
+                    (screen_x - poster_width as f64 / 2.0 + 5.0) as f32,
+                    title_y as f32,
+                    title_width,
+                    title_height,
+                    title_tex_id,
+                    [1.0, 1.0, 1.0, opacity],
+                );
 
                 // Render code lines
                 if let Some(content) = &poster.content {
                     let lines: Vec<&str> = content.lines().take(poster.lines_to_show).collect();
-                    let line_height = 14.0 * scale as f64 / 20.0;
                     let start_y = title_y + 20.0 * scale as f64 / 20.0;
+                    let line_color = (200, 200, 200, 255); // Light gray for code
 
-                    // Ensure we have enough text renderers
-                    if text_renderers.len() <= lines.len() {
-                        let create_start = std::time::Instant::now();
-                        let needed = lines.len() + 1 - text_renderers.len();
-                        while text_renderers.len() <= lines.len() {
-                            let mut line_renderer = TextRenderer::new();
-                            line_renderer.set_color((200, 200, 200, 255));
-                            text_renderers.push(line_renderer);
-                        }
-                        let create_elapsed = create_start.elapsed();
-                        if create_elapsed.as_millis() > 2 {
-                            eprintln!(
-                                "WARNING: creating {} TextRenderers took {}ms (>2ms budget)",
-                                needed,
-                                create_elapsed.as_millis()
-                            );
-                        }
-                    }
-
-                    let lines_render_start = std::time::Instant::now();
                     for (i, line) in lines.iter().enumerate() {
-                        let line_start = std::time::Instant::now();
                         let line_y = start_y + i as f64 * line_height;
-                        let renderer_idx = i + 1; // +1 because title is at index 0
 
-                        let set_text_start = std::time::Instant::now();
-                        text_renderers[renderer_idx].set_text(line.to_string());
-                        let set_text_elapsed = set_text_start.elapsed();
-                        if set_text_elapsed.as_micros() > 100 {
-                            eprintln!(
-                                "WARNING: set_text for line {} took {}μs (>100μs budget)",
-                                i,
-                                set_text_elapsed.as_micros()
-                            );
-                        }
+                        // Hash line content + color
+                        let line_hash = {
+                            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                            std::hash::Hash::hash(line, &mut hasher);
+                            std::hash::Hash::hash(&line_color, &mut hasher);
+                            std::hash::Hasher::finish(&hasher)
+                        };
 
-                        text_renderers[renderer_idx].set_x(screen_x - poster_width as f64 / 2.0 + 10.0);
-                        text_renderers[renderer_idx].set_y(line_y);
+                        let (tex_id, width, height) = if let Some(&cached) = self.line_texture_cache.get(&line_hash) {
+                            cached
+                        } else {
+                            let (rgba_data, w, h) =
+                                self.cpu_text_renderer.as_ref().unwrap().render_line(line.to_string(), line_color);
+                            match gpu_renderer.create_rgba_texture(&rgba_data, w, h) {
+                                Ok(tex_id) => {
+                                    self.line_texture_cache.insert(line_hash, (tex_id, w as f32, h as f32));
+                                    (tex_id, w as f32, h as f32)
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to create texture for line: {}", e);
+                                    continue;
+                                }
+                            }
+                        };
 
-                        let render_start = std::time::Instant::now();
-                        text_renderers[renderer_idx].render_gpu(gpu_renderer);
-                        let render_elapsed = render_start.elapsed();
-                        if render_elapsed.as_micros() > 100 {
-                            eprintln!(
-                                "WARNING: render_gpu for line {} took {}μs (>100μs budget)",
-                                i,
-                                render_elapsed.as_micros()
-                            );
-                        }
-
-                        let line_elapsed = line_start.elapsed();
-                        if line_elapsed.as_micros() > 200 {
-                            eprintln!(
-                                "WARNING: rendering line {} took {}μs total (>200μs budget)",
-                                i,
-                                line_elapsed.as_micros()
-                            );
-                        }
-                    }
-                    let lines_render_elapsed = lines_render_start.elapsed();
-                    if lines_render_elapsed.as_millis() > 2 {
-                        eprintln!(
-                            "WARNING: rendering {} lines took {}ms (>2ms budget)",
-                            lines.len(),
-                            lines_render_elapsed.as_millis()
+                        gpu_renderer.add_textured_rect(
+                            (screen_x - poster_width as f64 / 2.0 + 10.0) as f32,
+                            line_y as f32,
+                            width,
+                            height,
+                            tex_id,
+                            [1.0, 1.0, 1.0, opacity],
                         );
                     }
-                }
-
-                let poster_elapsed = poster_start.elapsed();
-                if poster_elapsed.as_millis() > 2 {
-                    eprintln!(
-                        "WARNING: rendering poster '{}' took {}ms (>2ms budget)",
-                        poster.display_name,
-                        poster_elapsed.as_millis()
-                    );
                 }
             }
 

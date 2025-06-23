@@ -420,9 +420,10 @@ hotline::object!({
             }
 
             // Register text renderer atlas
-            if let Some(ref mut tr) = self.text_renderer {
-                tr.register_atlas(gpu_renderer);
-            }
+            // TODO: TextRenderer no longer has register_atlas method
+            // if let Some(ref mut tr) = self.text_renderer {
+            //     tr.register_atlas(gpu_renderer);
+            // }
         }
 
         pub fn generate_commands(&mut self, gpu_renderer: &mut GPURenderer) {
@@ -517,7 +518,8 @@ hotline::object!({
                         tr.set_text(line.to_string());
                         tr.set_x(x + 10.0);
                         tr.set_y(cursor_y);
-                        tr.generate_commands(gpu_renderer);
+                        // TODO: TextRenderer no longer has generate_commands, uses render_gpu instead
+                        // tr.generate_commands(gpu_renderer);
                     }
                     cursor_y += line_height;
                 }
