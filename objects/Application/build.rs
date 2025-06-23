@@ -15,7 +15,7 @@ fn main() {
     fs::create_dir_all(&out_shader_dir).unwrap();
 
     // List of shaders to compile
-    let shaders = [("quad.vert", "vert"), ("quad.frag", "frag"), ("solid.vert", "vert"), ("solid.frag", "frag")];
+    let shaders = [("quad.vert", "vert"), ("quad.frag", "frag")];
 
     for (shader_name, _shader_type) in &shaders {
         let input_path = shader_dir.join(shader_name);
@@ -52,7 +52,7 @@ fn main() {
 fn copy_precompiled_shaders(out_dir: &Path) {
     // In a real project, you might include pre-compiled shaders
     // For now, we'll just create empty files to allow the build to continue
-    let shaders = ["quad.vert.spv", "quad.frag.spv", "solid.vert.spv", "solid.frag.spv"];
+    let shaders = ["quad.vert.spv", "quad.frag.spv"];
 
     for shader in &shaders {
         let path = out_dir.join(shader);

@@ -16,13 +16,6 @@ pub struct QuadVertex {
     pub color: [f32; 4],
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct SolidVertex {
-    pub pos: [f32; 2],
-    pub color: [f32; 4],
-}
-
 // Wrapper to make GpuRenderer thread-safe for Hotline
 pub struct GpuRenderer {
     // Store as raw pointer to work around Send+Sync requirements
@@ -59,15 +52,11 @@ impl Drop for GpuRenderer {
 struct GpuRendererInner {
     device: Device,
     quad_pipeline: GraphicsPipeline,
-    solid_pipeline: GraphicsPipeline,
     sampler: Sampler,
     textures: HashMap<u32, Texture<'static>>,
-    white_texture: Texture<'static>,
     transfer_buffer: TransferBuffer,
     quad_vertex_buffer: Buffer,
-    solid_vertex_buffer: Buffer,
     quad_vertices: Vec<QuadVertex>,
-    solid_vertices: Vec<SolidVertex>,
     next_texture_id: u32,
     // Track texture batches: texture_id -> (start_index, count)
     texture_batches: Vec<(u32, usize, usize)>,
@@ -160,8 +149,6 @@ impl GpuRenderer {
         // Load shaders
         let quad_vs = include_bytes!(concat!(env!("OUT_DIR"), "/shaders/quad.vert.spv"));
         let quad_fs = include_bytes!(concat!(env!("OUT_DIR"), "/shaders/quad.frag.spv"));
-        let solid_vs = include_bytes!(concat!(env!("OUT_DIR"), "/shaders/solid.vert.spv"));
-        let solid_fs = include_bytes!(concat!(env!("OUT_DIR"), "/shaders/solid.frag.spv"));
 
         // Create shaders
         let quad_vs_shader = device
@@ -176,21 +163,6 @@ impl GpuRenderer {
             .create_shader()
             .with_code(ShaderFormat::SpirV, quad_fs, ShaderStage::Fragment)
             .with_samplers(1)
-            .with_entrypoint(c"main")
-            .build()
-            .map_err(|e| e.to_string())?;
-
-        let solid_vs_shader = device
-            .create_shader()
-            .with_code(ShaderFormat::SpirV, solid_vs, ShaderStage::Vertex)
-            .with_uniform_buffers(1)
-            .with_entrypoint(c"main")
-            .build()
-            .map_err(|e| e.to_string())?;
-
-        let solid_fs_shader = device
-            .create_shader()
-            .with_code(ShaderFormat::SpirV, solid_fs, ShaderStage::Fragment)
             .with_entrypoint(c"main")
             .build()
             .map_err(|e| e.to_string())?;
@@ -250,54 +222,6 @@ impl GpuRenderer {
 
         eprintln!("Quad pipeline created successfully");
 
-        // Create solid pipeline (for non-textured rendering)
-        let solid_pipeline = device
-            .create_graphics_pipeline()
-            .with_vertex_shader(&solid_vs_shader)
-            .with_fragment_shader(&solid_fs_shader)
-            .with_primitive_type(PrimitiveType::TriangleList)
-            .with_fill_mode(FillMode::Fill)
-            .with_vertex_input_state(
-                VertexInputState::new()
-                    .with_vertex_buffer_descriptions(&[VertexBufferDescription::new()
-                        .with_slot(0)
-                        .with_pitch(std::mem::size_of::<SolidVertex>() as u32)
-                        .with_input_rate(VertexInputRate::Vertex)])
-                    .with_vertex_attributes(&[
-                        VertexAttribute::new()
-                            .with_format(VertexElementFormat::Float2)
-                            .with_location(0)
-                            .with_buffer_slot(0)
-                            .with_offset(0), // pos: [f32; 2] at offset 0
-                        VertexAttribute::new()
-                            .with_format(VertexElementFormat::Float4)
-                            .with_location(1)
-                            .with_buffer_slot(0)
-                            .with_offset(8), // color: [f32; 4] at offset 8 (after 2 * f32)
-                    ]),
-            )
-            .with_target_info(
-                GraphicsPipelineTargetInfo::new().with_color_target_descriptions(&[ColorTargetDescription::new()
-                    .with_format(swapchain_format)
-                    .with_blend_state(
-                        ColorTargetBlendState::new()
-                            .with_enable_blend(true)
-                            .with_src_color_blendfactor(BlendFactor::SrcAlpha)
-                            .with_dst_color_blendfactor(BlendFactor::OneMinusSrcAlpha)
-                            .with_color_blend_op(BlendOp::Add)
-                            .with_src_alpha_blendfactor(BlendFactor::SrcAlpha)
-                            .with_dst_alpha_blendfactor(BlendFactor::OneMinusSrcAlpha)
-                            .with_alpha_blend_op(BlendOp::Add),
-                    )]),
-            )
-            .build()
-            .map_err(|e| {
-                eprintln!("Failed to create solid pipeline: {}", e);
-                e.to_string()
-            })?;
-
-        eprintln!("Solid pipeline created successfully");
-
         // Create sampler
         let sampler = device
             .create_sampler(
@@ -334,30 +258,23 @@ impl GpuRenderer {
 
         // Upload white pixel
         let white_pixel: [u8; 4] = [255, 255, 255, 255];
-        let cmd = device.acquire_command_buffer().map_err(|e| e.to_string())?;
+        let white_tex_cmd = device.acquire_command_buffer().map_err(|e| e.to_string())?;
 
         // Map transfer buffer and copy data
         let mut map = transfer_buffer.map::<u8>(&device, false);
         map.mem_mut()[..4].copy_from_slice(&white_pixel);
         map.unmap();
 
-        let copy_pass = device.begin_copy_pass(&cmd).map_err(|e| e.to_string())?;
+        let copy_pass = device.begin_copy_pass(&white_tex_cmd).map_err(|e| e.to_string())?;
         copy_pass.upload_to_gpu_texture(
             sdl3::gpu::TextureTransferInfo::new().with_transfer_buffer(&transfer_buffer).with_offset(0),
             sdl3::gpu::TextureRegion::new().with_texture(&white_texture).with_width(1).with_height(1).with_depth(1),
             false,
         );
         device.end_copy_pass(copy_pass);
-        cmd.submit().map_err(|e| e.to_string())?;
+        white_tex_cmd.submit().map_err(|e| e.to_string())?;
 
-        // Create vertex buffers
-        let solid_vertex_buffer = device
-            .create_buffer()
-            .with_size(10000 * std::mem::size_of::<SolidVertex>() as u32)
-            .with_usage(BufferUsageFlags::Vertex)
-            .build()
-            .map_err(|e| e.to_string())?;
-
+        // Create vertex buffer
         let quad_vertex_buffer = device
             .create_buffer()
             .with_size(10000 * std::mem::size_of::<QuadVertex>() as u32)
@@ -365,19 +282,94 @@ impl GpuRenderer {
             .build()
             .map_err(|e| e.to_string())?;
 
+        // Create textures HashMap and store white texture with ID 0
+        let mut textures = HashMap::new();
+        textures.insert(0, white_texture);
+
+        // Validate white texture was stored
+        if !textures.contains_key(&0) {
+            eprintln!("ERROR: White texture (ID 0) not in hashmap after insert!");
+        } else {
+            eprintln!("White texture (ID 0) created and stored successfully");
+        }
+
+        // Load font atlas as texture ID 1
+        // Note: We can't create other objects here since we're not in the object system context
+        // So we'll load the font data directly
+        let font_atlas_path = "fonts/owlet/owlet.png";
+        let font_atlas_data = std::fs::read(font_atlas_path)
+            .map_err(|e| format!("Failed to read font atlas {}: {}", font_atlas_path, e))?;
+
+        // Parse PNG to get dimensions and pixel data
+        let decoder = png::Decoder::new(font_atlas_data.as_slice());
+        let mut reader = decoder.read_info().map_err(|e| format!("Failed to decode font PNG: {}", e))?;
+
+        let info = reader.info();
+        let font_atlas_width = info.width;
+        let font_atlas_height = info.height;
+
+        // Read the image data
+        let mut atlas_data = vec![0u8; reader.output_buffer_size()];
+        reader.next_frame(&mut atlas_data).map_err(|e| format!("Failed to read font PNG data: {}", e))?;
+
+        // Convert grayscale-alpha to RGBA
+        let pixel_count = atlas_data.len() / 2;
+        let mut rgba_atlas = Vec::with_capacity(pixel_count * 4);
+        for i in (0..atlas_data.len()).step_by(2) {
+            let gray = atlas_data[i];
+            let alpha = atlas_data[i + 1];
+            rgba_atlas.extend_from_slice(&[gray, gray, gray, alpha]);
+        }
+
+        // Create font atlas texture
+        let font_texture = device
+            .create_texture(
+                TextureCreateInfo::new()
+                    .with_type(TextureType::_2D)
+                    .with_format(TextureFormat::R8g8b8a8Unorm)
+                    .with_width(font_atlas_width)
+                    .with_height(font_atlas_height)
+                    .with_layer_count_or_depth(1)
+                    .with_num_levels(1)
+                    .with_usage(TextureUsage::Sampler),
+            )
+            .map_err(|e| e.to_string())?;
+
+        // Upload font texture data
+        let font_tex_cmd = device.acquire_command_buffer().map_err(|e| e.to_string())?;
+
+        // Map transfer buffer and copy data
+        let mut map = transfer_buffer.map::<u8>(&device, false);
+        map.mem_mut()[..rgba_atlas.len()].copy_from_slice(&rgba_atlas);
+        map.unmap();
+
+        let copy_pass = device.begin_copy_pass(&font_tex_cmd).map_err(|e| e.to_string())?;
+        copy_pass.upload_to_gpu_texture(
+            sdl3::gpu::TextureTransferInfo::new().with_transfer_buffer(&transfer_buffer).with_offset(0),
+            sdl3::gpu::TextureRegion::new()
+                .with_texture(&font_texture)
+                .with_width(font_atlas_width)
+                .with_height(font_atlas_height)
+                .with_depth(1),
+            false,
+        );
+        device.end_copy_pass(copy_pass);
+        font_tex_cmd.submit().map_err(|e| e.to_string())?;
+
+        // Store font texture with ID 1
+        textures.insert(1, font_texture);
+
+        eprintln!("Font atlas loaded: {}x{} pixels, texture ID 1", font_atlas_width, font_atlas_height);
+
         let inner = Box::new(GpuRendererInner {
             device,
             quad_pipeline,
-            solid_pipeline,
             sampler,
-            textures: HashMap::new(),
-            white_texture,
+            textures,
             transfer_buffer,
             quad_vertex_buffer,
-            solid_vertex_buffer,
             quad_vertices: Vec::new(),
-            solid_vertices: Vec::new(),
-            next_texture_id: 1,
+            next_texture_id: 2, // Start at 2 since 0=white, 1=font atlas
             texture_batches: Vec::new(),
         });
 
@@ -451,7 +443,6 @@ impl GpuRenderer {
     pub fn begin_frame(&mut self) {
         let inner = self.inner_mut();
         inner.quad_vertices.clear();
-        inner.solid_vertices.clear();
         inner.texture_batches.clear();
     }
 
@@ -501,118 +492,60 @@ impl GpuRenderer {
     }
 
     pub fn add_solid_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
-        // Debug suspicious rectangles near origin
-        static mut RECT_COUNT: u32 = 0;
-        unsafe {
-            if RECT_COUNT < 5 && (x.abs() < 50.0 && y.abs() < 50.0) {
-                eprintln!("GpuRenderer: Solid rect near origin at ({}, {}) size {}x{}", x, y, w, h);
-                RECT_COUNT += 1;
-            }
+        // Validate white texture exists
+        let inner = self.inner_mut();
+        if !inner.textures.contains_key(&0) {
+            eprintln!(
+                "ERROR: add_solid_rect called but white texture (ID 0) missing! Available textures: {:?}",
+                inner.textures.keys().collect::<Vec<_>>()
+            );
+            return;
         }
 
-        // Don't add degenerate rectangles
-        if w <= 0.0 || h <= 0.0 {
-            return; // Silently reject
-        }
-
-        let vertices = [
-            SolidVertex { pos: [x, y], color },
-            SolidVertex { pos: [x + w, y], color },
-            SolidVertex { pos: [x, y + h], color },
-            SolidVertex { pos: [x + w, y], color },
-            SolidVertex { pos: [x + w, y + h], color },
-            SolidVertex { pos: [x, y + h], color },
-        ];
-        self.inner_mut().solid_vertices.extend_from_slice(&vertices);
+        // Use white texture (ID 0) for solid colors
+        self.add_textured_rect(x, y, w, h, 0, color);
     }
 
     pub fn add_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: [f32; 4]) {
-        // Debug log lines near origin
-        static mut LINE_COUNT: u32 = 0;
-        unsafe {
-            if LINE_COUNT < 10 && ((x1.abs() < 200.0 && y1.abs() < 200.0) || (x2.abs() < 200.0 && y2.abs() < 200.0)) {
-                eprintln!("Line near origin: ({}, {}) to ({}, {}), thickness={}", x1, y1, x2, y2, thickness);
-                LINE_COUNT += 1;
-            }
-        }
-
-        // Reject lines that have an endpoint very close to origin
-        // This is a defensive check to prevent spurious lines
-        const ORIGIN_THRESHOLD: f32 = 100.0;
-        if (x1.abs() < ORIGIN_THRESHOLD && y1.abs() < ORIGIN_THRESHOLD)
-            || (x2.abs() < ORIGIN_THRESHOLD && y2.abs() < ORIGIN_THRESHOLD)
-        {
-            eprintln!("REJECTED line due to origin proximity");
-            return; // Silently reject
-        }
-
         // Calculate perpendicular vector for line thickness
         let dx = x2 - x1;
         let dy = y2 - y1;
         let len = (dx * dx + dy * dy).sqrt();
         if len < 0.001 {
-            eprintln!("REJECTED degenerate line: len={}", len);
-            return;
+            return; // Degenerate line
         }
 
         let px = -dy / len * thickness / 2.0;
         let py = dx / len * thickness / 2.0;
 
-        // Create a quad for the line
+        // Create a quad for the line using textured vertices
         let vertices = [
-            SolidVertex { pos: [x1 - px, y1 - py], color },
-            SolidVertex { pos: [x2 - px, y2 - py], color },
-            SolidVertex { pos: [x1 + px, y1 + py], color },
-            SolidVertex { pos: [x2 - px, y2 - py], color },
-            SolidVertex { pos: [x2 + px, y2 + py], color },
-            SolidVertex { pos: [x1 + px, y1 + py], color },
+            QuadVertex { pos: [x1 - px, y1 - py], tex_coord: [0.0, 0.0], color },
+            QuadVertex { pos: [x2 - px, y2 - py], tex_coord: [1.0, 0.0], color },
+            QuadVertex { pos: [x1 + px, y1 + py], tex_coord: [0.0, 1.0], color },
+            QuadVertex { pos: [x2 - px, y2 - py], tex_coord: [1.0, 0.0], color },
+            QuadVertex { pos: [x2 + px, y2 + py], tex_coord: [1.0, 1.0], color },
+            QuadVertex { pos: [x1 + px, y1 + py], tex_coord: [0.0, 1.0], color },
         ];
-        self.inner_mut().solid_vertices.extend_from_slice(&vertices);
+
+        let inner = self.inner_mut();
+        let start_index = inner.quad_vertices.len();
+        inner.quad_vertices.extend_from_slice(&vertices);
+
+        // Use white texture (ID 0) for lines
+        if let Some(batch) = inner.texture_batches.last_mut() {
+            if batch.0 == 0 {
+                batch.2 += 6;
+            } else {
+                inner.texture_batches.push((0, start_index, 6));
+            }
+        } else {
+            inner.texture_batches.push((0, start_index, 6));
+        }
     }
 
     pub fn render_frame(&mut self, window: &sdl3::video::Window) -> Result<(), String> {
         let inner = self.inner_mut();
-
-        // Upload vertex data if we have any
-        if !inner.solid_vertices.is_empty() {
-            let solid_data = unsafe {
-                std::slice::from_raw_parts(
-                    inner.solid_vertices.as_ptr() as *const u8,
-                    inner.solid_vertices.len() * std::mem::size_of::<SolidVertex>(),
-                )
-            };
-
-            // Create a command buffer for copy operations
-            let copy_cmd = inner.device.acquire_command_buffer().map_err(|e| e.to_string())?;
-
-            // Create a copy pass to upload vertex data
-            let copy_pass = inner.device.begin_copy_pass(&copy_cmd).map_err(|e| e.to_string())?;
-
-            // Map transfer buffer and copy data
-            // Check if data fits in transfer buffer
-            if solid_data.len() > 32 * 1024 * 1024 {
-                eprintln!("Warning: Solid data size {} exceeds transfer buffer size, skipping", solid_data.len());
-                return Ok(());
-            }
-
-            // Use cycle=true for proper synchronization when updating buffers frequently
-            let mut map = inner.transfer_buffer.map::<u8>(&inner.device, true);
-            map.mem_mut()[..solid_data.len()].copy_from_slice(solid_data);
-            map.unmap();
-
-            copy_pass.upload_to_gpu_buffer(
-                sdl3::gpu::TransferBufferLocation::new().with_transfer_buffer(&inner.transfer_buffer).with_offset(0),
-                sdl3::gpu::BufferRegion::new()
-                    .with_buffer(&inner.solid_vertex_buffer)
-                    .with_offset(0)
-                    .with_size(solid_data.len() as u32),
-                true, // cycle=true for synchronization
-            );
-            inner.device.end_copy_pass(copy_pass);
-
-            // Submit the copy command buffer and wait for completion
-            copy_cmd.submit().map_err(|e| e.to_string())?;
-        }
 
         // Acquire command buffer for rendering
         let mut command_buffer = inner.device.acquire_command_buffer().map_err(|e| e.to_string())?;
@@ -635,41 +568,6 @@ impl GpuRenderer {
                     None,
                 )
                 .map_err(|e| e.to_string())?;
-
-            // Render solid colored geometry if we have any
-            if !inner.solid_vertices.is_empty() {
-                // Bind pipeline and vertex buffer
-                render_pass.bind_graphics_pipeline(&inner.solid_pipeline);
-                render_pass.bind_vertex_buffers(
-                    0,
-                    &[BufferBinding::new().with_buffer(&inner.solid_vertex_buffer).with_offset(0)],
-                );
-
-                // Set push constants after binding pipeline
-                let (screen_width, screen_height) = window.size();
-                let push_constants = [screen_width as f32, screen_height as f32];
-
-                // Debug screen size
-                static mut LOGGED_SIZE: bool = false;
-                unsafe {
-                    if !LOGGED_SIZE {
-                        eprintln!("Solid pipeline: screen_size = {}x{}", screen_width, screen_height);
-                        LOGGED_SIZE = true;
-                    }
-                    (*cmd_ptr).push_vertex_uniform_data(0, &push_constants);
-                }
-
-                // Draw all the vertices
-                let vertex_count = inner.solid_vertices.len();
-
-                // Ensure vertex count is a multiple of 3 (complete triangles)
-                if vertex_count % 3 != 0 {
-                    eprintln!("WARNING: Solid vertex count {} is not a multiple of 3!", vertex_count);
-                }
-
-                // draw_primitives expects the number of vertices
-                render_pass.draw_primitives(vertex_count, 1, 0, 0);
-            }
 
             // Render textured geometry in batches
             if !inner.quad_vertices.is_empty() {
@@ -755,8 +653,16 @@ impl GpuRenderer {
                         continue;
                     }
 
-                    // Get the texture or use white texture as fallback
-                    let texture = if let Some(tex) = inner.textures.get(&tex_id) { tex } else { &inner.white_texture };
+                    // Get the texture or use white texture (ID 0) as fallback
+                    let texture = inner.textures.get(&tex_id).unwrap_or_else(|| {
+                        if tex_id == 0 {
+                            panic!(
+                                "CRITICAL: White texture (ID 0) not found during render! Available textures: {:?}",
+                                inner.textures.keys().collect::<Vec<_>>()
+                            );
+                        }
+                        inner.textures.get(&0).expect("White texture (ID 0) should always exist")
+                    });
 
                     // Bind texture for this batch
                     render_pass.bind_fragment_samplers(

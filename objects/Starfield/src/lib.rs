@@ -367,15 +367,20 @@ hotline::object!({
 
             // Create posters for selected files
             for file_path in selected_files.iter() {
-                // Random position with bias towards camera forward (-Z direction)
-                let theta = rng.random_range(-std::f32::consts::PI / 3.0..std::f32::consts::PI / 3.0); // ±60 degrees
-                let phi = rng.random_range(std::f32::consts::PI / 3.0..2.0 * std::f32::consts::PI / 3.0); // 60-120 degrees
-                let r = rng.random_range(30.0..120.0); // Ensure within max_poster_distance
+                // Spawn in a cone in front of the camera (positive Z region)
+                // Use cylindrical coordinates for better distribution
+                let angle = rng.random_range(0.0..std::f32::consts::TAU); // Full circle around Z axis
+                let radius = rng.random_range(20.0..80.0); // Lateral distance from Z axis
+                let z = rng.random_range(40.0..120.0); // Positive Z (in front of camera)
 
-                // Bias towards negative Z (forward)
-                let x = r * phi.sin() * theta.sin();
-                let y = r * (phi.cos() - 0.5); // Slight vertical spread
-                let z = -r * phi.sin() * theta.cos().abs(); // Negative Z (forward)
+                // Convert to Cartesian
+                let x = radius * angle.cos();
+                let y = radius * angle.sin();
+                // z is already set
+
+                // Add some vertical variation
+                let y_offset = rng.random_range(-20.0..20.0);
+                let y = y + y_offset;
 
                 // Create display name
                 let display_name = file_path.strip_prefix(".").unwrap_or(&file_path).to_string_lossy().to_string();
@@ -1200,10 +1205,10 @@ hotline::object!({
 
                 // Draw poster background
                 let bg_color = [
-                    poster.color.0 as f32 / 255.0 * 0.2,
-                    poster.color.1 as f32 / 255.0 * 0.2,
-                    poster.color.2 as f32 / 255.0 * 0.2,
-                    0.8,
+                    poster.color.0 as f32 / 255.0 * 0.3,
+                    poster.color.1 as f32 / 255.0 * 0.3,
+                    poster.color.2 as f32 / 255.0 * 0.3,
+                    0.95,
                 ];
 
                 gpu_renderer.add_solid_rect(

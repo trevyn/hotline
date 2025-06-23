@@ -14,3 +14,5 @@
 - fix warnings as you go
 - #[serde(crate = "::hotline::serde")]
 - feel free to web search and web fetch
+- no general debug logging, but do generously debug log when something doesn't meet expectations
+- trace through the code and understand the root cause
