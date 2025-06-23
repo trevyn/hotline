@@ -843,29 +843,48 @@ hotline::object!({
                 let border_width = 2.0f32;
                 let border_color = [100.0 / 255.0, 100.0 / 255.0, 255.0 / 255.0, 1.0]; // Light blue
 
-                // Top border
-                gpu_renderer.add_solid_rect(rx as f32, ry as f32, rw as f32, border_width, border_color);
+                // Use the 1x1 white star texture for solid rectangles
+                if let Some(Some(white_tex)) = self.atlas_ids.get(0) {
+                    // Top border
+                    gpu_renderer.add_textured_rect(
+                        rx as f32,
+                        ry as f32,
+                        rw as f32,
+                        border_width,
+                        *white_tex,
+                        border_color,
+                    );
 
-                // Bottom border
-                gpu_renderer.add_solid_rect(
-                    rx as f32,
-                    (ry + rh - border_width as f64) as f32,
-                    rw as f32,
-                    border_width,
-                    border_color,
-                );
+                    // Bottom border
+                    gpu_renderer.add_textured_rect(
+                        rx as f32,
+                        (ry + rh - border_width as f64) as f32,
+                        rw as f32,
+                        border_width,
+                        *white_tex,
+                        border_color,
+                    );
 
-                // Left border
-                gpu_renderer.add_solid_rect(rx as f32, ry as f32, border_width, rh as f32, border_color);
+                    // Left border
+                    gpu_renderer.add_textured_rect(
+                        rx as f32,
+                        ry as f32,
+                        border_width,
+                        rh as f32,
+                        *white_tex,
+                        border_color,
+                    );
 
-                // Right border
-                gpu_renderer.add_solid_rect(
-                    (rx + rw - border_width as f64) as f32,
-                    ry as f32,
-                    border_width,
-                    rh as f32,
-                    border_color,
-                );
+                    // Right border
+                    gpu_renderer.add_textured_rect(
+                        (rx + rw - border_width as f64) as f32,
+                        ry as f32,
+                        border_width,
+                        rh as f32,
+                        *white_tex,
+                        border_color,
+                    );
+                }
 
                 // Draw stars
                 let mut _visible_count = 0;
@@ -1001,24 +1020,29 @@ hotline::object!({
                 if self.panel_visible {
                     let panel_y = ry + 10.0;
 
-                    // Draw panel background
-                    gpu_renderer.add_solid_rect(
-                        self.panel_x as f32,
-                        panel_y as f32,
-                        self.panel_width as f32,
-                        (rh - 20.0) as f32,
-                        [0.156, 0.156, 0.156, 0.784], // Semi-transparent dark background
-                    );
+                    // Use the 1x1 white star texture for solid rectangles
+                    if let Some(Some(white_tex)) = self.atlas_ids.get(0) {
+                        // Draw panel background
+                        gpu_renderer.add_textured_rect(
+                            self.panel_x as f32,
+                            panel_y as f32,
+                            self.panel_width as f32,
+                            (rh - 20.0) as f32,
+                            *white_tex,
+                            [0.156, 0.156, 0.156, 0.784], // Semi-transparent dark background
+                        );
 
-                    // Draw panel border
-                    // Left border
-                    gpu_renderer.add_solid_rect(
-                        self.panel_x as f32,
-                        panel_y as f32,
-                        1.0,
-                        (rh - 20.0) as f32,
-                        [0.5, 0.5, 0.5, 1.0], // Gray border
-                    );
+                        // Draw panel border
+                        // Left border
+                        gpu_renderer.add_textured_rect(
+                            self.panel_x as f32,
+                            panel_y as f32,
+                            1.0,
+                            (rh - 20.0) as f32,
+                            *white_tex,
+                            [0.5, 0.5, 0.5, 1.0], // Gray border
+                        );
+                    }
 
                     // Update and draw parameter displays
                     let mut y_offset = panel_y + 10.0;
@@ -1133,23 +1157,27 @@ hotline::object!({
                                 let bar_height = 10.0;
                                 let normalized = (value - min) / (max - min);
 
-                                // Background bar
-                                gpu_renderer.add_solid_rect(
-                                    bar_x as f32,
-                                    (y_offset + 2.0) as f32,
-                                    bar_width as f32,
-                                    bar_height as f32,
-                                    [60.0 / 255.0, 60.0 / 255.0, 60.0 / 255.0, 1.0], // Dark gray
-                                );
+                                if let Some(Some(white_tex)) = self.atlas_ids.get(0) {
+                                    // Background bar
+                                    gpu_renderer.add_textured_rect(
+                                        bar_x as f32,
+                                        (y_offset + 2.0) as f32,
+                                        bar_width as f32,
+                                        bar_height as f32,
+                                        *white_tex,
+                                        [60.0 / 255.0, 60.0 / 255.0, 60.0 / 255.0, 1.0], // Dark gray
+                                    );
 
-                                // Value bar
-                                gpu_renderer.add_solid_rect(
-                                    bar_x as f32,
-                                    (y_offset + 2.0) as f32,
-                                    (bar_width * normalized as f64) as f32,
-                                    bar_height as f32,
-                                    [255.0 / 255.0, 105.0 / 255.0, 180.0 / 255.0, 1.0], // Pink
-                                );
+                                    // Value bar
+                                    gpu_renderer.add_textured_rect(
+                                        bar_x as f32,
+                                        (y_offset + 2.0) as f32,
+                                        (bar_width * normalized as f64) as f32,
+                                        bar_height as f32,
+                                        *white_tex,
+                                        [255.0 / 255.0, 105.0 / 255.0, 180.0 / 255.0, 1.0], // Pink
+                                    );
+                                }
                             }
 
                             y_offset += self.param_height;
@@ -1259,54 +1287,60 @@ hotline::object!({
                 let poster_width = (poster.width as f64 * scale) as f32;
                 let poster_height = (poster.height as f64 * scale) as f32;
 
-                // Draw poster background
-                let bg_color = [
-                    poster.color.0 as f32 / 255.0 * 0.3,
-                    poster.color.1 as f32 / 255.0 * 0.3,
-                    poster.color.2 as f32 / 255.0 * 0.3,
-                    0.95,
-                ];
+                // Use the 1x1 white star texture for solid rectangles
+                if let Some(Some(white_tex)) = self.atlas_ids.get(0) {
+                    // Draw poster background
+                    let bg_color = [
+                        poster.color.0 as f32 / 255.0 * 0.3,
+                        poster.color.1 as f32 / 255.0 * 0.3,
+                        poster.color.2 as f32 / 255.0 * 0.3,
+                        0.95,
+                    ];
 
-                gpu_renderer.add_solid_rect(
-                    (screen_x - poster_width as f64 / 2.0) as f32,
-                    (screen_y - poster_height as f64 / 2.0) as f32,
-                    poster_width,
-                    poster_height,
-                    bg_color,
-                );
+                    gpu_renderer.add_textured_rect(
+                        (screen_x - poster_width as f64 / 2.0) as f32,
+                        (screen_y - poster_height as f64 / 2.0) as f32,
+                        poster_width,
+                        poster_height,
+                        *white_tex,
+                        bg_color,
+                    );
 
-                // Draw poster border
-                let border_color = [
-                    poster.color.0 as f32 / 255.0,
-                    poster.color.1 as f32 / 255.0,
-                    poster.color.2 as f32 / 255.0,
-                    poster.color.3 as f32 / 255.0,
-                ];
+                    // Draw poster border
+                    let border_color = [
+                        poster.color.0 as f32 / 255.0,
+                        poster.color.1 as f32 / 255.0,
+                        poster.color.2 as f32 / 255.0,
+                        poster.color.3 as f32 / 255.0,
+                    ];
 
-                let border_thickness = (2.0 * scale as f32 / 10.0).max(1.0);
-                let bx = (screen_x - poster_width as f64 / 2.0) as f32;
-                let by = (screen_y - poster_height as f64 / 2.0) as f32;
+                    let border_thickness = (scale as f32 / 5.0).max(2.0); // Increased thickness
+                    let bx = (screen_x - poster_width as f64 / 2.0) as f32;
+                    let by = (screen_y - poster_height as f64 / 2.0) as f32;
 
-                // Top border
-                gpu_renderer.add_solid_rect(bx, by, poster_width, border_thickness, border_color);
-                // Bottom border
-                gpu_renderer.add_solid_rect(
-                    bx,
-                    by + poster_height - border_thickness,
-                    poster_width,
-                    border_thickness,
-                    border_color,
-                );
-                // Left border
-                gpu_renderer.add_solid_rect(bx, by, border_thickness, poster_height, border_color);
-                // Right border
-                gpu_renderer.add_solid_rect(
-                    bx + poster_width - border_thickness,
-                    by,
-                    border_thickness,
-                    poster_height,
-                    border_color,
-                );
+                    // Top border
+                    gpu_renderer.add_textured_rect(bx, by, poster_width, border_thickness, *white_tex, border_color);
+                    // Bottom border
+                    gpu_renderer.add_textured_rect(
+                        bx,
+                        by + poster_height - border_thickness,
+                        poster_width,
+                        border_thickness,
+                        *white_tex,
+                        border_color,
+                    );
+                    // Left border
+                    gpu_renderer.add_textured_rect(bx, by, border_thickness, poster_height, *white_tex, border_color);
+                    // Right border
+                    gpu_renderer.add_textured_rect(
+                        bx + poster_width - border_thickness,
+                        by,
+                        border_thickness,
+                        poster_height,
+                        *white_tex,
+                        border_color,
+                    );
+                }
 
                 // Calculate line height and opacity
                 let line_height = 14.0 * scale as f64 / 20.0;
