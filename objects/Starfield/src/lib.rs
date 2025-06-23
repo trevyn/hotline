@@ -1166,11 +1166,20 @@ hotline::object!({
             let start = std::time::Instant::now();
 
             // Ensure registry is available for creating text renderers
+            let registry_start = std::time::Instant::now();
             if let Some(registry) = self.get_registry() {
                 ::hotline::set_library_registry(registry);
             }
+            let registry_elapsed = registry_start.elapsed();
+            if registry_elapsed.as_micros() > 500 {
+                eprintln!(
+                    "WARNING: render_code_posters registry setup took {}μs (>500μs budget)",
+                    registry_elapsed.as_micros()
+                );
+            }
 
             // Sort posters by distance (far to near) for proper rendering
+            let sorting_start = std::time::Instant::now();
             let mut poster_render_data: Vec<(usize, f32, f64, f64)> = Vec::new();
 
             for (idx, poster) in self.code_posters.iter().enumerate() {
@@ -1211,6 +1220,15 @@ hotline::object!({
             // Sort by depth (far to near)
             poster_render_data.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
+            let sorting_elapsed = sorting_start.elapsed();
+            if sorting_elapsed.as_micros() > 500 {
+                eprintln!(
+                    "WARNING: render_code_posters sorting/culling took {}μs (>500μs budget) for {} posters",
+                    sorting_elapsed.as_micros(),
+                    poster_render_data.len()
+                );
+            }
+
             // Conditional debug: warn if we have posters but none are visible
             if self.code_posters.len() > 0 && poster_render_data.is_empty() {
                 // Count how many have content and lines to show
@@ -1226,6 +1244,7 @@ hotline::object!({
 
             // Render each visible poster
             for (idx, view_z, screen_x, screen_y) in poster_render_data {
+                let poster_start = std::time::Instant::now();
                 let poster = &self.code_posters[idx];
 
                 // Calculate poster size based on distance
@@ -1300,17 +1319,23 @@ hotline::object!({
                     title_renderer.set_color(poster.color);
                     text_renderers.push(title_renderer);
                     let new_elapsed = new_start.elapsed();
-                    if new_elapsed.as_millis() > 16 {
+                    if new_elapsed.as_micros() > 500 {
                         eprintln!(
-                            "WARNING: TextRenderer::new for title took {}ms (>16ms frame budget)",
-                            new_elapsed.as_millis()
+                            "WARNING: TextRenderer::new for title '{}' took {}μs (>500μs budget)",
+                            poster.display_name,
+                            new_elapsed.as_micros()
                         );
                     }
                 }
 
+                let title_render_start = std::time::Instant::now();
                 text_renderers[0].set_x(screen_x - poster_width as f64 / 2.0 + 5.0);
                 text_renderers[0].set_y(title_y);
                 text_renderers[0].render_gpu(gpu_renderer);
+                let title_render_elapsed = title_render_start.elapsed();
+                if title_render_elapsed.as_micros() > 500 {
+                    eprintln!("WARNING: title render_gpu took {}μs (>500μs budget)", title_render_elapsed.as_micros());
+                }
 
                 // Render code lines
                 if let Some(content) = &poster.content {
@@ -1328,24 +1353,72 @@ hotline::object!({
                             text_renderers.push(line_renderer);
                         }
                         let create_elapsed = create_start.elapsed();
-                        if create_elapsed.as_millis() > 16 {
+                        if create_elapsed.as_millis() > 2 {
                             eprintln!(
-                                "WARNING: creating {} TextRenderers took {}ms (>16ms frame budget)",
+                                "WARNING: creating {} TextRenderers took {}ms (>2ms budget)",
                                 needed,
                                 create_elapsed.as_millis()
                             );
                         }
                     }
 
+                    let lines_render_start = std::time::Instant::now();
                     for (i, line) in lines.iter().enumerate() {
+                        let line_start = std::time::Instant::now();
                         let line_y = start_y + i as f64 * line_height;
                         let renderer_idx = i + 1; // +1 because title is at index 0
 
+                        let set_text_start = std::time::Instant::now();
                         text_renderers[renderer_idx].set_text(line.to_string());
+                        let set_text_elapsed = set_text_start.elapsed();
+                        if set_text_elapsed.as_micros() > 100 {
+                            eprintln!(
+                                "WARNING: set_text for line {} took {}μs (>100μs budget)",
+                                i,
+                                set_text_elapsed.as_micros()
+                            );
+                        }
+
                         text_renderers[renderer_idx].set_x(screen_x - poster_width as f64 / 2.0 + 10.0);
                         text_renderers[renderer_idx].set_y(line_y);
+
+                        let render_start = std::time::Instant::now();
                         text_renderers[renderer_idx].render_gpu(gpu_renderer);
+                        let render_elapsed = render_start.elapsed();
+                        if render_elapsed.as_micros() > 100 {
+                            eprintln!(
+                                "WARNING: render_gpu for line {} took {}μs (>100μs budget)",
+                                i,
+                                render_elapsed.as_micros()
+                            );
+                        }
+
+                        let line_elapsed = line_start.elapsed();
+                        if line_elapsed.as_micros() > 200 {
+                            eprintln!(
+                                "WARNING: rendering line {} took {}μs total (>200μs budget)",
+                                i,
+                                line_elapsed.as_micros()
+                            );
+                        }
                     }
+                    let lines_render_elapsed = lines_render_start.elapsed();
+                    if lines_render_elapsed.as_millis() > 2 {
+                        eprintln!(
+                            "WARNING: rendering {} lines took {}ms (>2ms budget)",
+                            lines.len(),
+                            lines_render_elapsed.as_millis()
+                        );
+                    }
+                }
+
+                let poster_elapsed = poster_start.elapsed();
+                if poster_elapsed.as_millis() > 2 {
+                    eprintln!(
+                        "WARNING: rendering poster '{}' took {}ms (>2ms budget)",
+                        poster.display_name,
+                        poster_elapsed.as_millis()
+                    );
                 }
             }
 
