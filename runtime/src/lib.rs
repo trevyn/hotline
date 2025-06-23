@@ -279,8 +279,6 @@ fn watch_and_reload_files(
             }
         }
     }
-
-    Ok(())
 }
 
 fn find_object_for_file(path: &Path) -> Option<String> {

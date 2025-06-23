@@ -33,28 +33,28 @@ hotline::object!({
 
             #[derive(Deserialize, Debug)]
             struct AnthropicResponse {
-                id: String,
+                _id: String,
                 #[serde(rename = "type")]
-                response_type: String,
-                role: String,
+                _response_type: String,
+                _role: String,
                 content: Vec<AnthropicContent>,
-                model: String,
-                stop_reason: Option<String>,
-                stop_sequence: Option<String>,
-                usage: Usage,
+                _model: String,
+                _stop_reason: Option<String>,
+                _stop_sequence: Option<String>,
+                _usage: Usage,
             }
 
             #[derive(Deserialize, Debug)]
             struct AnthropicContent {
                 #[serde(rename = "type")]
-                content_type: String,
+                _content_type: String,
                 text: String,
             }
 
             #[derive(Deserialize, Debug)]
             struct Usage {
-                input_tokens: u32,
-                output_tokens: u32,
+                _input_tokens: u32,
+                _output_tokens: u32,
             }
             let api_key = match &self.api_key {
                 Some(key) => key,

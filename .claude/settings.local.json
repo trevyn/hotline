@@ -26,10 +26,11 @@
       "Bash(echo:*)",
       "WebFetch(domain:wiki.libsdl.org)",
       "Bash(RUSTFLAGS=\"-Z macro-backtrace\" cargo +nightly build)",
-      "Bash(cargo run:*)"
+      "Bash(cargo run:*)",
+      "mcp__ide__getDiagnostics"
     ],
     "deny": [
-          "Bash(git checkout:*)"
+      "Bash(git checkout:*)"
     ]
   },
   "enableAllProjectMcpServers": false

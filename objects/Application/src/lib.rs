@@ -125,11 +125,7 @@ struct StarfieldAdapter {
     starfield: Starfield,
 }
 
-impl StarfieldAdapter {
-    fn starfield_mut(&mut self) -> &mut Starfield {
-        &mut self.starfield
-    }
-}
+impl StarfieldAdapter {}
 
 impl ChatInterfaceAdapter {
     fn new(chat: ChatInterface) -> Self {
@@ -309,7 +305,7 @@ hotline::object!({
                 wm.initialize();
 
                 // Set up GPU rendering
-                if let Some(ref mut gpu) = self.gpu_renderer {
+                if let Some(ref mut _gpu) = self.gpu_renderer {
                     // TODO: Update to use new GPU API
                     // wm.setup_gpu_rendering(gpu);
                 }
@@ -408,7 +404,7 @@ hotline::object!({
                 fps.set_text("FPS: 0".to_string());
 
                 // Register GPU atlas for FPS counter
-                if let Some(ref mut gpu) = self.gpu_renderer {
+                if let Some(ref mut _gpu) = self.gpu_renderer {
                     // TODO: Update to use new GPU API
                     // fps.register_atlas(gpu);
                 }
@@ -820,7 +816,7 @@ hotline::object!({
                                 }
                             }
                         }
-                        Event::ControllerAxisMotion { which, axis, value, .. } => {
+                        Event::ControllerAxisMotion { which: _, axis, value, .. } => {
                             if let Some(ref mut gc) = self.game_controller {
                                 // SDL3 axes: 0=LeftX, 1=LeftY, 2=RightX, 3=RightY, 4=LeftTrigger, 5=RightTrigger
                                 let axis_idx = axis as u8;
@@ -834,12 +830,12 @@ hotline::object!({
                                 gc.update_axis(axis_idx, normalized_value);
                             }
                         }
-                        Event::ControllerButtonDown { which, button, .. } => {
+                        Event::ControllerButtonDown { which: _, button, .. } => {
                             if let Some(ref mut gc) = self.game_controller {
                                 gc.update_button(button as u8, true);
                             }
                         }
-                        Event::ControllerButtonUp { which, button, .. } => {
+                        Event::ControllerButtonUp { which: _, button, .. } => {
                             if let Some(ref mut gc) = self.game_controller {
                                 gc.update_button(button as u8, false);
                             }
@@ -869,7 +865,7 @@ hotline::object!({
                             }
                         }
                         // Also handle raw joystick events as fallback
-                        Event::JoyAxisMotion { which, axis_idx, value, .. } => {
+                        Event::JoyAxisMotion { which: _, axis_idx, value, .. } => {
                             if let Some(ref mut gc) = self.game_controller {
                                 let normalized_value = if axis_idx >= 4 {
                                     // Triggers: 0 to 32767 -> 0.0 to 1.0
@@ -881,12 +877,12 @@ hotline::object!({
                                 gc.update_axis(axis_idx, normalized_value);
                             }
                         }
-                        Event::JoyButtonDown { which, button_idx, .. } => {
+                        Event::JoyButtonDown { which: _, button_idx, .. } => {
                             if let Some(ref mut gc) = self.game_controller {
                                 gc.update_button(button_idx, true);
                             }
                         }
-                        Event::JoyButtonUp { which, button_idx, .. } => {
+                        Event::JoyButtonUp { which: _, button_idx, .. } => {
                             if let Some(ref mut gc) = self.game_controller {
                                 gc.update_button(button_idx, false);
                             }
@@ -977,15 +973,15 @@ hotline::object!({
                     }
 
                     // Render ColorWheel
-                    if let Some(cw) = &mut self.color_wheel {
+                    if let Some(_cw) = &mut self.color_wheel {
                         // TODO: Update ColorWheel to use new GPU API
                     }
 
                     // Render checkboxes
-                    if let Some(cb) = &mut self.autonomy_checkbox {
+                    if let Some(_cb) = &mut self.autonomy_checkbox {
                         // TODO: Update Checkbox to use new GPU API
                     }
-                    if let Some(cb) = &mut self.render_time_checkbox {
+                    if let Some(_cb) = &mut self.render_time_checkbox {
                         // TODO: Update Checkbox to use new GPU API
                     }
 
@@ -995,7 +991,7 @@ hotline::object!({
                     }
 
                     // Render code editor through event handler
-                    for handler in &mut self.event_handlers {
+                    for _handler in &mut self.event_handlers {
                         // TODO: Update event handlers to support GPU rendering
                     }
                 }

@@ -51,7 +51,7 @@ impl Parse for ObjectInput {
                     let struct_name = &s.ident;
                     if i + 1 < items.len() {
                         if let Item::Impl(impl_block) = &items[i + 1] {
-                            if let Some((_, path, _)) = &impl_block.trait_ {
+                            if let Some((_, _path, _)) = &impl_block.trait_ {
                                 // This is a trait impl, not a direct impl
                                 continue;
                             }
@@ -109,7 +109,6 @@ impl Parse for ObjectInput {
                     } else if i == idx {
                         if let Item::Struct(s) = item {
                             struct_item = Some(s);
-                            found_main_struct = true;
                         }
                     } else {
                         match item {

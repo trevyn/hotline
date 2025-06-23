@@ -37,7 +37,7 @@ hotline::object!({
 
         pub fn handle_mouse_down(&mut self, x: f64, y: f64) -> bool {
             if let Some(ref bounds) = self.bounds {
-                let mut bounds_clone = bounds.clone();
+                let bounds_clone = bounds.clone();
                 let (_bx, by, _bw, bh) = bounds_clone.bounds();
                 let history_height = bh - self.input_height - self.separator_height;
 
@@ -108,7 +108,7 @@ hotline::object!({
 
         pub fn handle_mouse_wheel(&mut self, _x: f64, y: f64, delta_y: f64) {
             if let Some(ref bounds) = self.bounds {
-                let mut bounds_clone = bounds.clone();
+                let bounds_clone = bounds.clone();
                 let (_bx, by, _bw, bh) = bounds_clone.bounds();
                 let history_height = bh - self.input_height - self.separator_height;
 
@@ -248,7 +248,7 @@ hotline::object!({
 
         pub fn generate_commands(&mut self, gpu_renderer: &mut GPURenderer) {
             if let Some(ref bounds) = self.bounds {
-                let mut bounds_clone = bounds.clone();
+                let bounds_clone = bounds.clone();
                 let (x, y, w, h) = bounds_clone.bounds();
 
                 // generate commands for history area

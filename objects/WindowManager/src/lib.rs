@@ -485,20 +485,6 @@ hotline::object!({
             self.show_render_times = show;
         }
 
-        fn ensure_time_renderers(&mut self) {
-            if self.show_render_times {
-                if let Some(registry) = self.get_registry() {
-                    ::hotline::set_library_registry(registry);
-                }
-                if self.rect_time_labels.len() != self.rects.len() {
-                    self.rect_time_labels.resize_with(self.rects.len(), TextRenderer::new);
-                }
-                if self.polygon_time_labels.len() != self.polygons.len() {
-                    self.polygon_time_labels.resize_with(self.polygons.len(), TextRenderer::new);
-                }
-            }
-        }
-
         pub fn update_autonomy(&mut self, mouse_x: f64, mouse_y: f64) {
             for mover in &mut self.rect_movers {
                 mover.update(mouse_x, mouse_y);
