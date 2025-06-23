@@ -1,4 +1,8 @@
 hotline::object!({
+    use std::sync::OnceLock;
+
+    static FONT: OnceLock<Font> = OnceLock::new();
+
     #[derive(Clone, Default)]
     pub struct TextRenderer {
         #[setter]
@@ -12,7 +16,6 @@ hotline::object!({
         #[setter]
         #[default((255, 255, 255, 255))]
         color: (u8, u8, u8, u8), // ABGR
-        font: Option<Font>,
         initialized: bool,
     }
 
@@ -22,31 +25,34 @@ hotline::object!({
                 return;
             }
 
-            // Ensure registry is available for creating other objects
-            if let Some(registry) = self.get_registry() {
-                ::hotline::set_library_registry(registry);
-            }
+            FONT.get_or_init(|| {
+                // Ensure registry is available for creating other objects
+                if let Some(registry) = self.get_registry() {
+                    ::hotline::set_library_registry(registry);
+                }
 
-            // Create loaders via the proxy system
-            let mut json_loader = JSONLoader::new();
+                // Create loaders via the proxy system
+                let mut json_loader = JSONLoader::new();
 
-            // Load and parse font metadata
-            if let Err(e) = json_loader.load_json("fonts/owlet/owlet.json") {
-                panic!("Failed to load font JSON: {}", e);
-            }
+                // Load and parse font metadata
+                if let Err(e) = json_loader.load_json("fonts/owlet/owlet.json") {
+                    panic!("Failed to load font JSON: {}", e);
+                }
 
-            // Create a Font object (ensure registry is still set)
-            if let Some(registry) = self.get_registry() {
-                ::hotline::set_library_registry(registry);
-            }
-            let mut font = Font::new();
+                // Create a Font object (ensure registry is still set)
+                if let Some(registry) = self.get_registry() {
+                    ::hotline::set_library_registry(registry);
+                }
+                let mut font = Font::new();
 
-            // Parse JSON data into the Font object
-            if let Err(e) = json_loader.parse_into(&mut font) {
-                panic!("Failed to parse font data: {}", e);
-            }
+                // Parse JSON data into the Font object
+                if let Err(e) = json_loader.parse_into(&mut font) {
+                    panic!("Failed to parse font data: {}", e);
+                }
 
-            self.font = Some(font);
+                font
+            });
+
             self.initialized = true;
         }
 
@@ -60,10 +66,7 @@ hotline::object!({
                 self.initialize();
             }
 
-            let font = match &mut self.font {
-                Some(f) => f,
-                None => return,
-            };
+            let font = FONT.get().expect("Font not initialized");
 
             // Use hardcoded font atlas ID 1
             let atlas_id = 1;
@@ -127,7 +130,7 @@ hotline::object!({
         }
 
         pub fn char_width(&self, ch: char) -> f64 {
-            let font = match &self.font {
+            let font = match FONT.get() {
                 Some(f) => f,
                 None => return 0.0,
             };
@@ -142,7 +145,7 @@ hotline::object!({
         }
 
         pub fn measure_text(&self, text: &str) -> f64 {
-            let font = match &self.font {
+            let font = match FONT.get() {
                 Some(f) => f,
                 None => return 0.0,
             };
@@ -171,7 +174,7 @@ hotline::object!({
         }
 
         pub fn line_height(&self) -> f64 {
-            if let Some(font) = self.font.as_ref() { (font.size() + font.line_gap()) as f64 } else { 14.0 }
+            if let Some(font) = FONT.get() { (font.size() + font.line_gap()) as f64 } else { 14.0 }
         }
     }
 });

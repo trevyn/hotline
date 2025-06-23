@@ -685,6 +685,7 @@ hotline::object!({
 
             let poster = &mut self.code_posters[poster_idx];
             if poster.content.is_none() {
+                let start = std::time::Instant::now();
                 match std::fs::read_to_string(&poster.file_path) {
                     Ok(content) => {
                         poster.content = Some(content);
@@ -693,11 +694,21 @@ hotline::object!({
                         eprintln!("WARNING: Failed to load content for {}: {}", poster.display_name, e);
                     }
                 }
+                let elapsed = start.elapsed();
+                if elapsed.as_millis() > 16 {
+                    eprintln!(
+                        "WARNING: load_poster_content for '{}' took {}ms (>16ms frame budget)",
+                        poster.display_name,
+                        elapsed.as_millis()
+                    );
+                }
             }
         }
 
         // Update code posters based on camera position
         fn update_code_posters(&mut self) {
+            let start = std::time::Instant::now();
+
             // First pass: determine which posters need content based on distance
             let mut needs_content = Vec::new();
             for (idx, poster) in self.code_posters.iter().enumerate() {
@@ -712,8 +723,20 @@ hotline::object!({
             }
 
             // Load content for nearby posters
-            for idx in needs_content {
-                self.load_poster_content(idx);
+            if !needs_content.is_empty() {
+                let load_start = std::time::Instant::now();
+                let num_to_load = needs_content.len();
+                for idx in needs_content {
+                    self.load_poster_content(idx);
+                }
+                let load_elapsed = load_start.elapsed();
+                if load_elapsed.as_millis() > 16 {
+                    eprintln!(
+                        "WARNING: loading {} poster files took {}ms (>16ms frame budget)",
+                        num_to_load,
+                        load_elapsed.as_millis()
+                    );
+                }
             }
 
             // Second pass: update lines_to_show for all posters
@@ -729,6 +752,11 @@ hotline::object!({
                 } else {
                     poster.lines_to_show = 0;
                 }
+            }
+
+            let elapsed = start.elapsed();
+            if elapsed.as_millis() > 16 {
+                eprintln!("WARNING: update_code_posters took {}ms (>16ms frame budget)", elapsed.as_millis());
             }
 
             // TODO: Add spawning/despawning logic similar to stars
@@ -1135,6 +1163,8 @@ hotline::object!({
             screen_center_y: f64,
             fov_scale: f64,
         ) {
+            let start = std::time::Instant::now();
+
             // Ensure registry is available for creating text renderers
             if let Some(registry) = self.get_registry() {
                 ::hotline::set_library_registry(registry);
@@ -1264,10 +1294,18 @@ hotline::object!({
                 let title_y = screen_y - poster_height as f64 / 2.0 + 5.0;
 
                 if text_renderers.is_empty() {
+                    let new_start = std::time::Instant::now();
                     let mut title_renderer = TextRenderer::new();
                     title_renderer.set_text(poster.display_name.clone());
                     title_renderer.set_color(poster.color);
                     text_renderers.push(title_renderer);
+                    let new_elapsed = new_start.elapsed();
+                    if new_elapsed.as_millis() > 16 {
+                        eprintln!(
+                            "WARNING: TextRenderer::new for title took {}ms (>16ms frame budget)",
+                            new_elapsed.as_millis()
+                        );
+                    }
                 }
 
                 text_renderers[0].set_x(screen_x - poster_width as f64 / 2.0 + 5.0);
@@ -1281,10 +1319,22 @@ hotline::object!({
                     let start_y = title_y + 20.0 * scale as f64 / 20.0;
 
                     // Ensure we have enough text renderers
-                    while text_renderers.len() <= lines.len() {
-                        let mut line_renderer = TextRenderer::new();
-                        line_renderer.set_color((200, 200, 200, 255));
-                        text_renderers.push(line_renderer);
+                    if text_renderers.len() <= lines.len() {
+                        let create_start = std::time::Instant::now();
+                        let needed = lines.len() + 1 - text_renderers.len();
+                        while text_renderers.len() <= lines.len() {
+                            let mut line_renderer = TextRenderer::new();
+                            line_renderer.set_color((200, 200, 200, 255));
+                            text_renderers.push(line_renderer);
+                        }
+                        let create_elapsed = create_start.elapsed();
+                        if create_elapsed.as_millis() > 16 {
+                            eprintln!(
+                                "WARNING: creating {} TextRenderers took {}ms (>16ms frame budget)",
+                                needed,
+                                create_elapsed.as_millis()
+                            );
+                        }
                     }
 
                     for (i, line) in lines.iter().enumerate() {
@@ -1297,6 +1347,11 @@ hotline::object!({
                         text_renderers[renderer_idx].render_gpu(gpu_renderer);
                     }
                 }
+            }
+
+            let elapsed = start.elapsed();
+            if elapsed.as_millis() > 16 {
+                eprintln!("WARNING: render_code_posters took {}ms (>16ms frame budget)", elapsed.as_millis());
             }
         }
 

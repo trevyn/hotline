@@ -932,6 +932,7 @@ hotline::object!({
                 }
 
                 // Begin GPU frame
+                let frame_render_start = std::time::Instant::now();
                 if let Some(gpu) = &mut self.gpu_renderer {
                     // Begin frame
                     gpu.begin_frame();
@@ -970,7 +971,15 @@ hotline::object!({
 
                     // Render Starfield
                     if let Some(sf) = &mut self.starfield {
+                        let start = std::time::Instant::now();
                         sf.render_gpu(gpu);
+                        let elapsed = start.elapsed();
+                        if elapsed.as_millis() > 16 {
+                            eprintln!(
+                                "WARNING: Starfield::render_gpu took {}ms (>16ms frame budget)",
+                                elapsed.as_millis()
+                            );
+                        }
                     }
 
                     // Render ColorWheel
@@ -1000,9 +1009,22 @@ hotline::object!({
                 // Render using SDL3 GPU API
                 if let Some(gpu) = &mut self.gpu_renderer {
                     // Render frame
+                    let start = std::time::Instant::now();
                     gpu.render_frame(&window)?;
+                    let elapsed = start.elapsed();
+                    if elapsed.as_millis() > 16 {
+                        eprintln!("WARNING: gpu.render_frame took {}ms (>16ms frame budget)", elapsed.as_millis());
+                    }
                 } else {
                     eprintln!("[Application] ERROR: gpu_renderer is None during render!");
+                }
+
+                let frame_render_elapsed = frame_render_start.elapsed();
+                if frame_render_elapsed.as_millis() > 16 {
+                    eprintln!(
+                        "WARNING: total frame render (begin_frame to render_frame) took {}ms (>16ms frame budget)",
+                        frame_render_elapsed.as_millis()
+                    );
                 }
             }
 
