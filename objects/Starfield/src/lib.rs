@@ -1,5 +1,7 @@
 hotline::object!({
     use rand::Rng;
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
 
     // 3D star representation
     #[derive(Clone, Copy, Debug, ::hotline::serde::Serialize, ::hotline::serde::Deserialize)]
@@ -10,10 +12,28 @@ hotline::object!({
         size: f32,
     }
 
+    // Code poster representation
+    #[derive(Clone, Debug)]
+    struct CodePoster {
+        pos: (f32, f32, f32),    // World position
+        file_path: PathBuf,      // Path to the source file
+        display_name: String,    // Short name to display
+        content: Option<String>, // Cached file content
+        lines_to_show: usize,    // How many lines to display based on distance
+        color: (u8, u8, u8, u8), // RGBA color based on file type
+        width: f32,              // Poster width in world units
+        height: f32,             // Poster height in world units
+    }
+
     #[derive(Default, Clone)]
     pub struct Starfield {
         // 3D star field
         stars: Vec<StarData>,
+
+        // Code posters
+        code_posters: Vec<CodePoster>,
+        all_source_files: Vec<PathBuf>, // All discovered source files
+        poster_text_renderers: HashMap<usize, Vec<TextRenderer>>, // Poster index -> text renderers
 
         // Camera state
         camera_pos: (f32, f32, f32),      // Camera position in world space
@@ -54,6 +74,13 @@ hotline::object!({
         spawn_radius: f32,   // Radius around camera to spawn stars
         despawn_radius: f32, // Radius beyond which to remove stars
 
+        // Code poster parameters
+        poster_spawn_radius: f32,   // Radius around camera to spawn posters
+        poster_despawn_radius: f32, // Radius beyond which to remove posters
+        poster_density: f32,        // Posters per cubic unit
+        max_poster_distance: f32,   // Maximum distance to render text
+        poster_scale: f32,          // Base scale for posters
+
         // UI elements
         speed_display: Option<TextRenderer>,
         param_displays: Vec<TextRenderer>,
@@ -80,9 +107,57 @@ hotline::object!({
     }
 
     impl Starfield {
+        // Scan the codebase for source files
+        fn scan_source_files(&mut self) {
+            self.all_source_files.clear();
+
+            // Scan different directories
+            let dirs_to_scan = ["objects", "hotline", "runtime", "hotline-macros"];
+
+            for dir in &dirs_to_scan {
+                if let Ok(_entries) = std::fs::read_dir(dir) {
+                    self.scan_directory_recursive(&Path::new(dir));
+                }
+            }
+
+            if self.all_source_files.is_empty() {
+                eprintln!("WARNING: No source files found! Searched dirs: {:?}", dirs_to_scan);
+            }
+        }
+
+        fn scan_directory_recursive(&mut self, dir: &Path) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        self.scan_directory_recursive(&path);
+                    } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                        self.all_source_files.push(path);
+                    }
+                }
+            }
+        }
+
+        // Get color based on file path
+        fn get_file_color(path: &Path) -> (u8, u8, u8, u8) {
+            if let Some(first_component) = path.components().next() {
+                match first_component.as_os_str().to_str() {
+                    Some("objects") => (100, 200, 255, 255),        // Light blue for objects
+                    Some("hotline") => (255, 200, 100, 255),        // Orange for hotline core
+                    Some("runtime") => (200, 255, 100, 255),        // Light green for runtime
+                    Some("hotline-macros") => (255, 100, 200, 255), // Pink for macros
+                    _ => (200, 200, 200, 255),                      // Gray for others
+                }
+            } else {
+                (200, 200, 200, 255)
+            }
+        }
+
         pub fn initialize(&mut self) {
-            // Clear existing stars
+            // Clear existing stars and posters
             self.stars.clear();
+            self.code_posters.clear();
+            self.poster_text_renderers.clear();
 
             // Initialize camera at origin looking down -Z
             self.camera_pos = (0.0, 0.0, 0.0);
@@ -114,6 +189,13 @@ hotline::object!({
             self.star_density = 0.0001; // Stars per cubic unit (reduced for performance)
             self.spawn_radius = 300.0;
             self.despawn_radius = 400.0;
+
+            // Code poster parameters
+            self.poster_spawn_radius = 200.0;
+            self.poster_despawn_radius = 300.0;
+            self.poster_density = 0.0001; // Increased to spawn ~3-4 posters
+            self.max_poster_distance = 150.0;
+            self.poster_scale = 30.0; // Base size of posters
 
             // UI state
             self.panel_visible = true;
@@ -192,6 +274,10 @@ hotline::object!({
 
             // Spawn initial stars around origin
             self.spawn_initial_stars();
+
+            // Scan for source files and spawn initial posters
+            self.scan_source_files();
+            self.spawn_initial_posters();
         }
 
         pub fn set_rect(&mut self, rect: Rect) {
@@ -248,6 +334,71 @@ hotline::object!({
                 let size = rng.random_range(0.5..2.0);
 
                 self.stars.push(StarData { pos: (x, y, z), brightness, size });
+            }
+        }
+
+        // Spawn initial code posters around origin
+        fn spawn_initial_posters(&mut self) {
+            let mut rng = rand::rng();
+            let volume = (4.0 / 3.0) * std::f32::consts::PI * self.poster_spawn_radius.powi(3);
+            let poster_count = ((volume * self.poster_density) as usize).min(self.all_source_files.len());
+
+            if poster_count == 0 && !self.all_source_files.is_empty() {
+                eprintln!(
+                    "WARNING: Poster count is 0! volume={}, density={}, files={}",
+                    volume,
+                    self.poster_density,
+                    self.all_source_files.len()
+                );
+            }
+
+            // Randomly select files to display
+            let mut selected_files: Vec<PathBuf> = Vec::new();
+            let mut available_indices: Vec<usize> = (0..self.all_source_files.len()).collect();
+
+            for _ in 0..poster_count {
+                if available_indices.is_empty() {
+                    break;
+                }
+                let idx = rng.random_range(0..available_indices.len());
+                let file_idx = available_indices.remove(idx);
+                selected_files.push(self.all_source_files[file_idx].clone());
+            }
+
+            // Create posters for selected files
+            for file_path in selected_files.iter() {
+                // Random position with bias towards camera forward (-Z direction)
+                let theta = rng.random_range(-std::f32::consts::PI / 3.0..std::f32::consts::PI / 3.0); // ±60 degrees
+                let phi = rng.random_range(std::f32::consts::PI / 3.0..2.0 * std::f32::consts::PI / 3.0); // 60-120 degrees
+                let r = rng.random_range(30.0..120.0); // Ensure within max_poster_distance
+
+                // Bias towards negative Z (forward)
+                let x = r * phi.sin() * theta.sin();
+                let y = r * (phi.cos() - 0.5); // Slight vertical spread
+                let z = -r * phi.sin() * theta.cos().abs(); // Negative Z (forward)
+
+                // Create display name
+                let display_name = file_path.strip_prefix(".").unwrap_or(&file_path).to_string_lossy().to_string();
+
+                let poster = CodePoster {
+                    pos: (x, y, z),
+                    file_path: file_path.clone(),
+                    display_name,
+                    content: None,
+                    lines_to_show: 0,
+                    color: Self::get_file_color(&file_path),
+                    width: self.poster_scale,
+                    height: self.poster_scale * 1.5,
+                };
+
+                self.code_posters.push(poster);
+            }
+
+            if self.code_posters.is_empty() && !self.all_source_files.is_empty() {
+                eprintln!(
+                    "WARNING: No code posters spawned despite {} source files available",
+                    self.all_source_files.len()
+                );
             }
         }
 
@@ -468,6 +619,9 @@ hotline::object!({
 
             // Spawn/despawn stars based on camera movement
             self.update_star_field();
+
+            // Update code posters
+            self.update_code_posters();
         }
 
         // Manage star spawning and despawning
@@ -516,6 +670,63 @@ hotline::object!({
                     self.stars.push(StarData { pos: (x, y, z), brightness, size });
                 }
             }
+        }
+
+        // Load content for a poster if needed
+        fn load_poster_content(&mut self, poster_idx: usize) {
+            if poster_idx >= self.code_posters.len() {
+                return;
+            }
+
+            let poster = &mut self.code_posters[poster_idx];
+            if poster.content.is_none() {
+                match std::fs::read_to_string(&poster.file_path) {
+                    Ok(content) => {
+                        poster.content = Some(content);
+                    }
+                    Err(e) => {
+                        eprintln!("WARNING: Failed to load content for {}: {}", poster.display_name, e);
+                    }
+                }
+            }
+        }
+
+        // Update code posters based on camera position
+        fn update_code_posters(&mut self) {
+            // First pass: determine which posters need content based on distance
+            let mut needs_content = Vec::new();
+            for (idx, poster) in self.code_posters.iter().enumerate() {
+                let dx = poster.pos.0 - self.camera_pos.0;
+                let dy = poster.pos.1 - self.camera_pos.1;
+                let dz = poster.pos.2 - self.camera_pos.2;
+                let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+
+                if dist < self.max_poster_distance && poster.content.is_none() {
+                    needs_content.push(idx);
+                }
+            }
+
+            // Load content for nearby posters
+            for idx in needs_content {
+                self.load_poster_content(idx);
+            }
+
+            // Second pass: update lines_to_show for all posters
+            for poster in self.code_posters.iter_mut() {
+                let dx = poster.pos.0 - self.camera_pos.0;
+                let dy = poster.pos.1 - self.camera_pos.1;
+                let dz = poster.pos.2 - self.camera_pos.2;
+                let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+
+                if dist < self.max_poster_distance {
+                    let visibility = 1.0 - (dist / self.max_poster_distance);
+                    poster.lines_to_show = (visibility * 50.0) as usize; // Max 50 lines
+                } else {
+                    poster.lines_to_show = 0;
+                }
+            }
+
+            // TODO: Add spawning/despawning logic similar to stars
         }
 
         pub fn setup_gpu_rendering(&mut self, gpu_renderer: &mut dyn ::hotline::GpuRenderingContext) {
@@ -736,6 +947,9 @@ hotline::object!({
                     }
                 }
 
+                // Draw code posters
+                self.render_code_posters(gpu_renderer, rx, ry, rw, rh, screen_center_x, screen_center_y, fov_scale);
+
                 // Draw speed display
                 if let Some(ref mut display) = self.speed_display {
                     display.set_x(rx + 10.0);
@@ -900,6 +1114,182 @@ hotline::object!({
 
                             y_offset += self.param_height;
                         }
+                    }
+                }
+            }
+        }
+
+        fn render_code_posters(
+            &mut self,
+            gpu_renderer: &mut dyn ::hotline::GpuRenderingContext,
+            rx: f64,
+            ry: f64,
+            rw: f64,
+            rh: f64,
+            screen_center_x: f64,
+            screen_center_y: f64,
+            fov_scale: f64,
+        ) {
+            // Ensure registry is available for creating text renderers
+            if let Some(registry) = self.get_registry() {
+                ::hotline::set_library_registry(registry);
+            }
+
+            // Sort posters by distance (far to near) for proper rendering
+            let mut poster_render_data: Vec<(usize, f32, f64, f64)> = Vec::new();
+
+            for (idx, poster) in self.code_posters.iter().enumerate() {
+                if poster.lines_to_show == 0 || poster.content.is_none() {
+                    continue;
+                }
+
+                // Transform poster position to view space
+                let dx = poster.pos.0 - self.camera_pos.0;
+                let dy = poster.pos.1 - self.camera_pos.1;
+                let dz = poster.pos.2 - self.camera_pos.2;
+
+                // Apply view matrix
+                let view_x = self.camera_right.0 * dx + self.camera_right.1 * dy + self.camera_right.2 * dz;
+                let view_y = self.camera_up.0 * dx + self.camera_up.1 * dy + self.camera_up.2 * dz;
+                let view_z = -(self.camera_forward.0 * dx + self.camera_forward.1 * dy + self.camera_forward.2 * dz);
+
+                // Skip posters behind camera
+                if view_z <= 0.1 {
+                    continue;
+                }
+
+                // Project to screen space
+                let screen_x = screen_center_x + (view_x / view_z) as f64 * fov_scale;
+                let screen_y = screen_center_y + (view_y / view_z) as f64 * fov_scale;
+
+                // Check if poster would be on screen (with some margin)
+                let margin = 100.0;
+                if screen_x >= rx - margin
+                    && screen_x <= rx + rw + margin
+                    && screen_y >= ry - margin
+                    && screen_y <= ry + rh + margin
+                {
+                    poster_render_data.push((idx, view_z, screen_x, screen_y));
+                }
+            }
+
+            // Sort by depth (far to near)
+            poster_render_data.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+            // Conditional debug: warn if we have posters but none are visible
+            if self.code_posters.len() > 0 && poster_render_data.is_empty() {
+                // Count how many have content and lines to show
+                let with_content = self.code_posters.iter().filter(|p| p.content.is_some()).count();
+                let with_lines = self.code_posters.iter().filter(|p| p.lines_to_show > 0).count();
+                eprintln!(
+                    "WARNING: No posters visible! total={}, with_content={}, with_lines={}",
+                    self.code_posters.len(),
+                    with_content,
+                    with_lines
+                );
+            }
+
+            // Render each visible poster
+            for (idx, view_z, screen_x, screen_y) in poster_render_data {
+                let poster = &self.code_posters[idx];
+
+                // Calculate poster size based on distance
+                let scale = fov_scale / view_z as f64;
+                let poster_width = (poster.width as f64 * scale) as f32;
+                let poster_height = (poster.height as f64 * scale) as f32;
+
+                // Draw poster background
+                let bg_color = [
+                    poster.color.0 as f32 / 255.0 * 0.2,
+                    poster.color.1 as f32 / 255.0 * 0.2,
+                    poster.color.2 as f32 / 255.0 * 0.2,
+                    0.8,
+                ];
+
+                gpu_renderer.add_solid_rect(
+                    (screen_x - poster_width as f64 / 2.0) as f32,
+                    (screen_y - poster_height as f64 / 2.0) as f32,
+                    poster_width,
+                    poster_height,
+                    bg_color,
+                );
+
+                // Draw poster border
+                let border_color = [
+                    poster.color.0 as f32 / 255.0,
+                    poster.color.1 as f32 / 255.0,
+                    poster.color.2 as f32 / 255.0,
+                    poster.color.3 as f32 / 255.0,
+                ];
+
+                let border_thickness = (2.0 * scale as f32 / 10.0).max(1.0);
+                let bx = (screen_x - poster_width as f64 / 2.0) as f32;
+                let by = (screen_y - poster_height as f64 / 2.0) as f32;
+
+                // Top border
+                gpu_renderer.add_solid_rect(bx, by, poster_width, border_thickness, border_color);
+                // Bottom border
+                gpu_renderer.add_solid_rect(
+                    bx,
+                    by + poster_height - border_thickness,
+                    poster_width,
+                    border_thickness,
+                    border_color,
+                );
+                // Left border
+                gpu_renderer.add_solid_rect(bx, by, border_thickness, poster_height, border_color);
+                // Right border
+                gpu_renderer.add_solid_rect(
+                    bx + poster_width - border_thickness,
+                    by,
+                    border_thickness,
+                    poster_height,
+                    border_color,
+                );
+
+                // Create or update text renderers for this poster
+                if !self.poster_text_renderers.contains_key(&idx) {
+                    self.poster_text_renderers.insert(idx, Vec::new());
+                }
+
+                let text_renderers = self.poster_text_renderers.get_mut(&idx).unwrap();
+
+                // Render file path as title
+                let _title_scale = (scale as f32 / 20.0).clamp(0.5, 2.0);
+                let title_y = screen_y - poster_height as f64 / 2.0 + 5.0;
+
+                if text_renderers.is_empty() {
+                    let mut title_renderer = TextRenderer::new();
+                    title_renderer.set_text(poster.display_name.clone());
+                    title_renderer.set_color(poster.color);
+                    text_renderers.push(title_renderer);
+                }
+
+                text_renderers[0].set_x(screen_x - poster_width as f64 / 2.0 + 5.0);
+                text_renderers[0].set_y(title_y);
+                text_renderers[0].render_gpu(gpu_renderer);
+
+                // Render code lines
+                if let Some(content) = &poster.content {
+                    let lines: Vec<&str> = content.lines().take(poster.lines_to_show).collect();
+                    let line_height = 14.0 * scale as f64 / 20.0;
+                    let start_y = title_y + 20.0 * scale as f64 / 20.0;
+
+                    // Ensure we have enough text renderers
+                    while text_renderers.len() <= lines.len() {
+                        let mut line_renderer = TextRenderer::new();
+                        line_renderer.set_color((200, 200, 200, 255));
+                        text_renderers.push(line_renderer);
+                    }
+
+                    for (i, line) in lines.iter().enumerate() {
+                        let line_y = start_y + i as f64 * line_height;
+                        let renderer_idx = i + 1; // +1 because title is at index 0
+
+                        text_renderers[renderer_idx].set_text(line.to_string());
+                        text_renderers[renderer_idx].set_x(screen_x - poster_width as f64 / 2.0 + 10.0);
+                        text_renderers[renderer_idx].set_y(line_y);
+                        text_renderers[renderer_idx].render_gpu(gpu_renderer);
                     }
                 }
             }

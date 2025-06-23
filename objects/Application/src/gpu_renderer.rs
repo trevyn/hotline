@@ -573,20 +573,6 @@ impl GpuRenderer {
     pub fn render_frame(&mut self, window: &sdl3::video::Window) -> Result<(), String> {
         let inner = self.inner_mut();
 
-        // Debug log vertex counts (only occasionally)
-        static mut FRAME_COUNT: u32 = 0;
-        unsafe {
-            FRAME_COUNT += 1;
-            if FRAME_COUNT % 60 == 0 {
-                eprintln!(
-                    "render_frame: solid_vertices={}, quad_vertices={}, texture_batches={}",
-                    inner.solid_vertices.len(),
-                    inner.quad_vertices.len(),
-                    inner.texture_batches.len()
-                );
-            }
-        }
-
         // Upload vertex data if we have any
         if !inner.solid_vertices.is_empty() {
             let solid_data = unsafe {

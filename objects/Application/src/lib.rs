@@ -2,6 +2,7 @@ use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton;
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 pub mod gpu_renderer;
