@@ -34,7 +34,7 @@ hotline::object!({
         code_posters: Vec<CodePoster>,
         all_source_files: Vec<PathBuf>, // All discovered source files
         cpu_text_renderer: Option<CpuTextRenderer>,
-        line_texture_cache: HashMap<u64, (u32, f32, f32)>, // hash -> (tex_id, width, height)
+        line_texture_cache: HashMap<u64, (u32, f32, f32, f32)>, // hash -> (tex_id, logical_w, texture_w, h)
 
         // Camera state
         camera_pos: (f32, f32, f32),      // Camera position in world space
@@ -1355,17 +1355,18 @@ hotline::object!({
                     std::hash::Hasher::finish(&hasher)
                 };
 
-                let (title_tex_id, title_width, title_height) = if let Some(&cached) =
+                let (title_tex_id, logical_width, texture_width, title_height) = if let Some(&cached) =
                     self.line_texture_cache.get(&title_hash)
                 {
                     cached
                 } else {
-                    let (rgba_data, w, h) =
+                    let (rgba_data, logical_w, tex_w, h) =
                         self.cpu_text_renderer.as_ref().unwrap().render_line(poster.display_name.clone(), poster.color);
-                    match gpu_renderer.create_rgba_texture(&rgba_data, w, h) {
+                    match gpu_renderer.create_rgba_texture(&rgba_data, tex_w, h) {
                         Ok(tex_id) => {
-                            self.line_texture_cache.insert(title_hash, (tex_id, w as f32, h as f32));
-                            (tex_id, w as f32, h as f32)
+                            let cached_data = (tex_id, logical_w as f32, tex_w as f32, h as f32);
+                            self.line_texture_cache.insert(title_hash, cached_data);
+                            cached_data
                         }
                         Err(e) => {
                             eprintln!("Failed to create texture for title: {}", e);
@@ -1374,12 +1375,18 @@ hotline::object!({
                     }
                 };
 
-                gpu_renderer.add_textured_rect(
+                // Use logical_width for the quad size, and texture_width for texture coords.
+                let u1 = logical_width / texture_width;
+                gpu_renderer.add_textured_rect_with_coords(
                     (screen_x - poster_width as f64 / 2.0 + 5.0) as f32,
                     title_y as f32,
-                    title_width,
+                    logical_width,
                     title_height,
                     title_tex_id,
+                    0.0,
+                    0.0,
+                    u1,
+                    1.0,
                     [1.0, 1.0, 1.0, opacity],
                 );
 
@@ -1400,29 +1407,36 @@ hotline::object!({
                             std::hash::Hasher::finish(&hasher)
                         };
 
-                        let (tex_id, width, height) = if let Some(&cached) = self.line_texture_cache.get(&line_hash) {
-                            cached
-                        } else {
-                            let (rgba_data, w, h) =
-                                self.cpu_text_renderer.as_ref().unwrap().render_line(line.to_string(), line_color);
-                            match gpu_renderer.create_rgba_texture(&rgba_data, w, h) {
-                                Ok(tex_id) => {
-                                    self.line_texture_cache.insert(line_hash, (tex_id, w as f32, h as f32));
-                                    (tex_id, w as f32, h as f32)
+                        let (tex_id, logical_width, texture_width, height) =
+                            if let Some(&cached) = self.line_texture_cache.get(&line_hash) {
+                                cached
+                            } else {
+                                let (rgba_data, logical_w, tex_w, h) =
+                                    self.cpu_text_renderer.as_ref().unwrap().render_line(line.to_string(), line_color);
+                                match gpu_renderer.create_rgba_texture(&rgba_data, tex_w, h) {
+                                    Ok(tex_id) => {
+                                        let cached_data = (tex_id, logical_w as f32, tex_w as f32, h as f32);
+                                        self.line_texture_cache.insert(line_hash, cached_data);
+                                        cached_data
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to create texture for line: {}", e);
+                                        continue;
+                                    }
                                 }
-                                Err(e) => {
-                                    eprintln!("Failed to create texture for line: {}", e);
-                                    continue;
-                                }
-                            }
-                        };
+                            };
 
-                        gpu_renderer.add_textured_rect(
-                            (screen_x - poster_width as f64 / 2.0 + 10.0) as f32,
+                        let u1 = logical_width / texture_width;
+                        gpu_renderer.add_textured_rect_with_coords(
+                            (screen_x - poster_width as f64 / 2.0 + 5.0) as f32,
                             line_y as f32,
-                            width,
+                            logical_width,
                             height,
                             tex_id,
+                            0.0,
+                            0.0,
+                            u1,
+                            1.0,
                             [1.0, 1.0, 1.0, opacity],
                         );
                     }

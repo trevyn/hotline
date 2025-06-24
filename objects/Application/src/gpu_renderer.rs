@@ -261,13 +261,16 @@ impl GpuRenderer {
         let white_tex_cmd = device.acquire_command_buffer().map_err(|e| e.to_string())?;
 
         // Map transfer buffer and copy data
-        let mut map = transfer_buffer.map::<u8>(&device, false);
+        let mut map = transfer_buffer.map::<u8>(&device, true);
         map.mem_mut()[..4].copy_from_slice(&white_pixel);
         map.unmap();
 
         let copy_pass = device.begin_copy_pass(&white_tex_cmd).map_err(|e| e.to_string())?;
         copy_pass.upload_to_gpu_texture(
-            sdl3::gpu::TextureTransferInfo::new().with_transfer_buffer(&transfer_buffer).with_offset(0),
+            sdl3::gpu::TextureTransferInfo::new()
+                .with_transfer_buffer(&transfer_buffer)
+                .with_offset(0)
+                .with_pixels_per_row(1),
             sdl3::gpu::TextureRegion::new().with_texture(&white_texture).with_width(1).with_height(1).with_depth(1),
             false,
         );
@@ -339,13 +342,16 @@ impl GpuRenderer {
         let font_tex_cmd = device.acquire_command_buffer().map_err(|e| e.to_string())?;
 
         // Map transfer buffer and copy data
-        let mut map = transfer_buffer.map::<u8>(&device, false);
+        let mut map = transfer_buffer.map::<u8>(&device, true);
         map.mem_mut()[..rgba_atlas.len()].copy_from_slice(&rgba_atlas);
         map.unmap();
 
         let copy_pass = device.begin_copy_pass(&font_tex_cmd).map_err(|e| e.to_string())?;
         copy_pass.upload_to_gpu_texture(
-            sdl3::gpu::TextureTransferInfo::new().with_transfer_buffer(&transfer_buffer).with_offset(0),
+            sdl3::gpu::TextureTransferInfo::new()
+                .with_transfer_buffer(&transfer_buffer)
+                .with_offset(0)
+                .with_pixels_per_row(font_atlas_width),
             sdl3::gpu::TextureRegion::new()
                 .with_texture(&font_texture)
                 .with_width(font_atlas_width)
@@ -423,13 +429,19 @@ impl GpuRenderer {
         let cmd = inner.device.acquire_command_buffer().map_err(|e| e.to_string())?;
 
         // Map transfer buffer and copy data
-        let mut map = inner.transfer_buffer.map::<u8>(&inner.device, false);
+        let mut map = inner.transfer_buffer.map::<u8>(&inner.device, true);
         map.mem_mut()[..data.len()].copy_from_slice(data);
         map.unmap();
 
         let copy_pass = inner.device.begin_copy_pass(&cmd).map_err(|e| e.to_string())?;
+
+        // The key fix: tell the GPU the pitch of the data we are uploading.
+        // For tightly-packed RGBA data, pixels_per_row is the width in pixels.
         copy_pass.upload_to_gpu_texture(
-            sdl3::gpu::TextureTransferInfo::new().with_transfer_buffer(&inner.transfer_buffer).with_offset(0),
+            sdl3::gpu::TextureTransferInfo::new()
+                .with_transfer_buffer(&inner.transfer_buffer)
+                .with_offset(0)
+                .with_pixels_per_row(width),
             sdl3::gpu::TextureRegion::new().with_texture(&texture).with_width(width).with_height(height).with_depth(1),
             false,
         );

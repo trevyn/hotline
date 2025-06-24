@@ -106,7 +106,7 @@ hotline::object!({
             );
         }
 
-        pub fn render_line(&self, text: String, color: (u8, u8, u8, u8)) -> (Vec<u8>, u32, u32) {
+        pub fn render_line(&self, text: String, color: (u8, u8, u8, u8)) -> (Vec<u8>, u32, u32, u32) {
             // Calculate line dimensions by finding the bounding box of all glyphs
             let mut cursor_x = 0i32;
             let mut min_x = 0i32;
@@ -130,6 +130,7 @@ hotline::object!({
                     cursor_x += glyph.advance as i32;
                 } else {
                     cursor_x += self.space_width as i32; // fallback
+                    eprintln!("WARNING: Missing glyph for character '{}' (U+{:04X}) in text='{}'", ch, ch as u32, text);
                 }
                 prev_char = Some(ch);
             }
@@ -137,12 +138,53 @@ hotline::object!({
             // If there was no text, max_x would be 0, but we should make sure it's at least the final cursor position
             max_x = max_x.max(cursor_x);
 
-            let width = (max_x - min_x).max(0) as u32;
+            let mut width = (max_x - min_x).max(0) as u32;
             let height = self.font_size + self.line_gap;
-            let mut buffer = vec![0u8; (width * height * 4) as usize];
 
-            // Debug: verify buffer size matches our stride calculations
-            debug_assert_eq!(buffer.len(), (width * height * 4) as usize);
+            // Check for unusual height values that might indicate a mismatch
+            if height < self.font_size || height > self.font_size * 2 {
+                eprintln!(
+                    "WARNING: Unusual buffer height {} for font_size {}, text='{}'",
+                    height, self.font_size, text
+                );
+            }
+
+            // Cap width to prevent excessively large buffers that might cause rendering issues
+            let max_width = 2048; // Increased to handle wider lines
+            if width > max_width {
+                eprintln!(
+                    "WARNING: Line width capped at {} from {} for text='{}', consider splitting long lines",
+                    max_width, width, text
+                );
+                width = max_width;
+            }
+
+            let logical_width = width;
+
+            // The GPU requires texture rows to be aligned to 256 bytes. We create a
+            // tightly-packed buffer first, then copy it into a padded destination buffer.
+            let mut temp_buffer = vec![0u8; (width * height * 4) as usize];
+            let row_pitch = (width * 4 + 255) & !255;
+            let mut buffer = vec![0u8; (row_pitch * height) as usize];
+
+            // Verify buffer size is correct
+            assert_eq!(
+                temp_buffer.len(),
+                (width * height * 4) as usize,
+                "Buffer size mismatch: expected {}, got {}",
+                (width * height * 4),
+                temp_buffer.len()
+            );
+
+            // Removed logging to reduce clutter, only critical errors will be logged
+
+            // Check for potential issues with negative min_x
+            if min_x < 0 {
+                eprintln!(
+                    "WARNING: Negative min_x detected, min_x={} for text='{}', this might cause clipping",
+                    min_x, text
+                );
+            }
 
             // Render glyphs, offsetting by min_x to fit in the buffer
             cursor_x = -min_x;
@@ -169,7 +211,7 @@ hotline::object!({
                             "WARNING: Glyph '{}' out of atlas bounds: pos=({},{}) size=({},{}) atlas={}x{}",
                             ch, glyph.x, glyph.y, glyph.width, glyph.height, self.atlas_width, self.atlas_height
                         );
-                        cursor_x += self.space_width as i32;
+                        cursor_x += glyph.advance as i32;
                         prev_char = Some(ch);
                         continue;
                     }
@@ -177,13 +219,17 @@ hotline::object!({
                     // Calculate glyph destination bounds
                     let glyph_left = cursor_x + glyph.offset_x;
                     let glyph_right = glyph_left + glyph.width as i32;
-                    // Original calculation: offset_y + font_size gives the baseline position
+                    // Revert to original calculation: offset_y + font_size gives the baseline position
                     let glyph_top = glyph.offset_y + self.font_size as i32;
                     let glyph_bottom = glyph_top + glyph.height as i32;
 
                     // Check if entire glyph would be out of bounds
                     if glyph_right <= 0 || glyph_left >= width as i32 || glyph_bottom <= 0 || glyph_top >= height as i32
                     {
+                        eprintln!(
+                            "WARNING: Glyph '{}' skipped due to out of bounds: x=[{},{}] y=[{},{}] buffer={}x{}",
+                            ch, glyph_left, glyph_right, glyph_top, glyph_bottom, width, height
+                        );
                         cursor_x += glyph.advance as i32;
                         prev_char = Some(ch);
                         continue;
@@ -192,7 +238,7 @@ hotline::object!({
                     // Debug log for glyphs that partially exceed bounds
                     if glyph_left < 0 || glyph_right > width as i32 || glyph_top < 0 || glyph_bottom > height as i32 {
                         eprintln!(
-                            "DEBUG: Glyph '{}' partially out of bounds: x=[{},{}] y=[{},{}] buffer={}x{}",
+                            "WARNING: Glyph '{}' partially out of bounds: x=[{},{}] y=[{},{}] buffer={}x{}",
                             ch, glyph_left, glyph_right, glyph_top, glyph_bottom, width, height
                         );
                     }
@@ -223,12 +269,12 @@ hotline::object!({
                                 );
                                 continue;
                             }
-                            if dst_idx_end > buffer.len() {
+                            if dst_idx_end > temp_buffer.len() {
                                 eprintln!(
                                     "ERROR: Dest index out of bounds for '{}': {} > {} (x={}, y={}, width={})",
                                     ch,
                                     dst_idx_end,
-                                    buffer.len(),
+                                    temp_buffer.len(),
                                     dst_x,
                                     dst_y,
                                     width
@@ -236,13 +282,20 @@ hotline::object!({
                                 panic!("Buffer overflow detected!");
                             }
 
+                            debug_assert!(
+                                dst_idx_end <= temp_buffer.len(),
+                                "Buffer overflow: dst_idx_end={} > buffer.len={}",
+                                dst_idx_end,
+                                temp_buffer.len()
+                            );
+
                             let alpha = self.font_atlas[src_idx as usize + 3];
                             if alpha > 0 {
                                 let idx = dst_idx as usize;
-                                buffer[idx] = color.2; // R (from BGR)
-                                buffer[idx + 1] = color.1; // G
-                                buffer[idx + 2] = color.0; // B
-                                buffer[idx + 3] = (alpha as u32 * color.3 as u32 / 255) as u8;
+                                temp_buffer[idx] = color.0; // R (changed from BGR to RGB)
+                                temp_buffer[idx + 1] = color.1; // G
+                                temp_buffer[idx + 2] = color.2; // B
+                                temp_buffer[idx + 3] = (alpha as u32 * color.3 as u32 / 255) as u8;
                             }
                         }
                     }
@@ -257,10 +310,21 @@ hotline::object!({
                 prev_char = Some(ch);
             }
 
-            // Verify buffer size is correct
-            assert_eq!(buffer.len(), (width * height * 4) as usize);
+            // Copy the tightly-packed temp buffer into the final, row-padded buffer.
+            for y in 0..height {
+                let src_offset = (y * width * 4) as usize;
+                let dst_offset = (y * row_pitch) as usize;
+                let row_bytes = (width * 4) as usize;
+                if src_offset + row_bytes <= temp_buffer.len() && dst_offset + row_bytes <= buffer.len() {
+                    buffer[dst_offset..dst_offset + row_bytes]
+                        .copy_from_slice(&temp_buffer[src_offset..src_offset + row_bytes]);
+                }
+            }
 
-            (buffer, width, height)
+            // The new texture width for the GPU is the row_pitch / 4
+            let texture_width = row_pitch / 4;
+
+            (buffer, logical_width, texture_width, height)
         }
     }
 });
