@@ -27,7 +27,8 @@
       "WebFetch(domain:wiki.libsdl.org)",
       "Bash(RUSTFLAGS=\"-Z macro-backtrace\" cargo +nightly build)",
       "Bash(cargo run:*)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(cat:*)"
     ],
     "deny": [
       "Bash(git checkout:*)"
